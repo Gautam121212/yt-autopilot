@@ -31,9 +31,12 @@ export async function forecast(o: {
   feasible: number;
 }): Promise<Forecast> {
   // Calibration: if past predictions ran high, the model is told so and should mark itself down.
-  const bias = o.history.length >= 3
+  // Needs a real sample, and the nudge is capped: a couple of bad videos must not make every
+  // future script look hopeless (that is how a pipeline talks itself into producing nothing).
+  const raw = o.history.length >= 4
     ? o.history.reduce((n, h) => n + (h.predicted - h.actual), 0) / o.history.length
     : 0;
+  const bias = Math.max(-1.5, Math.min(1.5, raw));
 
   return askJson({
     tier: "heavy",
@@ -53,8 +56,8 @@ Judge the cardHeadline values too: a card carrying a concrete figure works, a ca
 
 verdict: "proceed" if likely >= 7; "repair" if the listed fixes would plausibly get it there; "abandon" if the
 topic itself cannot carry a good video (thin sourcing, nothing surprising, nothing to show).${
-  bias > 0.4 ? `\n\nCALIBRATION: your recent predictions have been ${bias.toFixed(1)} points too generous. Mark down accordingly.`
-  : bias < -0.4 ? `\n\nCALIBRATION: your recent predictions have been ${Math.abs(bias).toFixed(1)} points too harsh. Adjust up accordingly.` : ""}`,
+  bias > 0.4 ? `\n\nCALIBRATION: recent predictions ran about ${bias.toFixed(1)} points generous. Shade down by roughly that much — no more.`
+  : bias < -0.4 ? `\n\nCALIBRATION: recent predictions ran about ${Math.abs(bias).toFixed(1)} points harsh. Shade up by roughly that much — no more.` : ""}`,
     prompt: `SCRIPT:\n${JSON.stringify(o.script)}\n\nDOSSIER (what can be supported):\n${JSON.stringify(o.dossier)}${
       o.history.length ? `\n\nYOUR PAST PREDICTIONS vs WHAT THE REVIEWER ACTUALLY GAVE:\n${JSON.stringify(o.history)}` : ""}`,
   });

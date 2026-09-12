@@ -177,7 +177,14 @@ async function main() {
         await updateVideo(video.id, { script, title: script.title });
       }
       await updateVideo(video.id, { predicted_score: fc.likely });
-      if (fc.verdict === "abandon" || fc.likely < cfg.approval.minScore - 1.5) {
+      const [{ n: abandonedRecently }] = await q<{ n: number }>(
+        "select count(*)::int as n from videos where status = 'abandoned' and id < $1 and id >= $1 - 2", [video.id],
+      );
+      const forceThrough = abandonedRecently >= 2;
+      if (forceThrough) {
+        log(`#${video.id} ${abandonedRecently} topics abandoned in a row — producing this one anyway so the loop gets real data`);
+      }
+      if (!forceThrough && (fc.verdict === "abandon" || fc.likely < cfg.approval.minScore - 1.5)) {
         await updateVideo(video.id, { status: "abandoned" });
         await incident("forecast.abandoned", new Error(`predicted ${fc.likely}/10: ${fc.weakest}`), video.id);
         return log(`#${video.id} abandoned before production (predicted ${fc.likely}/10). Next run starts a new topic.`);
