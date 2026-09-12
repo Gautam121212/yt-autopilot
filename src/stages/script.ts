@@ -21,6 +21,10 @@ HARD RULES
    motion: "clip" when the line describes movement, a process, scale or a place you would pan across
    (water flowing, machinery turning, a storm, a crowd of stars); "still" for objects, documents and portraits of things.
    Aim for roughly one "clip" in every three scenes.
+   NEVER request: anything "under a microscope" or magnified beyond a normal photo; a "group photo" or any
+   query containing people, workers, crowds or portraits; a texture with no subject ("fibers", "grain", "surface");
+   a brand-name product (a fridge, a car) since those carry logos. Ask for the OBJECT or the PLACE instead
+   ("ice house barn", "sawdust pile", "harbour warehouse", "ledger page").
    When a scene uses an analogy or metaphor, the imageQuery names the LITERAL object of the analogy
    ("sugar cube dissolving in water", not "dissolution"); when it describes an event with no photo
    (an evacuation, a decision, a calculation), name a concrete object from that setting

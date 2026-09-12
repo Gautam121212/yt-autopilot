@@ -71,6 +71,7 @@ export async function imageQa(o: {
   if (!providerSupportsVision()) return { files: o.files, credits: o.credits, rejected: 0 };
   let rejected = 0;
 
+  const attempts = new Map<number, number>();
   const stillIdx = o.files.map((f, i) => (/\.(mp4|mov|webm)$/i.test(f) ? -1 : i)).filter((i) => i >= 0);
   for (let round = 0; round < (o.rounds ?? 2); round++) {
     const bad = new Set<number>();

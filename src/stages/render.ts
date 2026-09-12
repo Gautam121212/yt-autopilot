@@ -30,7 +30,8 @@ export const VERTICAL: Size = { w: 1080, h: 1920 };
 const isVideo = (f: string) => /\.(mp4|mov|webm)$/i.test(f);
 
 async function sceneClip(img: string, audio: SceneAudio, motion: number, out: string, size: Size) {
-  const bw = Math.round(size.w * 1.5), bh = Math.round(size.h * 1.5);
+  // 1.25x (not 1.5x) is enough headroom for a 1.28 zoom and costs far less to scale.
+  const bw = Math.round(size.w * 1.25), bh = Math.round(size.h * 1.25);
   const dur = audio.duration + PAD;
   const frames = Math.ceil(dur * FPS);
 
@@ -43,7 +44,7 @@ async function sceneClip(img: string, audio: SceneAudio, motion: number, out: st
         `crop=${size.w}:${size.h}:'(in_w-out_w)/2+(in_w-out_w)/2*sin(t/6)':'(in_h-out_h)/2',fps=${FPS},format=yuv420p[v];` +
         `[1:a]apad=pad_dur=${PAD},aresample=48000[a]`,
       "-map", "[v]", "-map", "[a]", "-t", dur.toFixed(3),
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", String(FPS),
+      "-c:v", "libx264", "-preset", "superfast", "-crf", "18", "-r", String(FPS),
       "-c:a", "aac", "-b:a", "192k", "-ac", "2", out,
     ]);
     return;
@@ -56,7 +57,7 @@ async function sceneClip(img: string, audio: SceneAudio, motion: number, out: st
       `zoompan=${MOTIONS[motion]!(frames)}:d=${frames}:s=${size.w}x${size.h}:fps=${FPS},format=yuv420p[v];` +
       `[1:a]apad=pad_dur=${PAD},aresample=48000[a]`,
     "-map", "[v]", "-map", "[a]", "-t", dur.toFixed(3),
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", String(FPS),
+    "-c:v", "libx264", "-preset", "superfast", "-crf", "18", "-r", String(FPS),
     "-c:a", "aac", "-b:a", "192k", "-ac", "2", out,
   ]);
 }
@@ -101,7 +102,8 @@ export async function renderVideo(o: { scenes: Narrated[]; images: string[]; aud
   await fs.mkdir(clipsDir, { recursive: true });
 
   // Encode scene clips in parallel (zoompan is single-threaded per clip).
-  const parallel = process.env.LOW_POWER === "true" ? 1 : Math.max(1, Math.min(4, Math.floor(os.cpus().length / 2) || 1));
+  // Encoding is not perfectly parallel inside one ffmpeg, so run one job per core (min 2).
+  const parallel = process.env.LOW_POWER === "true" ? 1 : Math.max(2, Math.min(4, os.cpus().length));
   const clips = await mapLimit(o.scenes, parallel, async (_s, i) => {
     const out = path.join(clipsDir, `${String(i).padStart(3, "0")}.mp4`);
     await sceneClip(o.images[i]!, o.audio[i]!, (i + o.seed) % MOTIONS.length, out, size);
