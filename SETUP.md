@@ -102,9 +102,24 @@ npm run setup          # pick "Groq / OpenRouter / Cerebras / Mistral"
 npm run check
 npm run github         # push the new secrets
 ```
-Free options, no card, as of 2026: Groq (~30 requests/min), Cerebras (~30 RPM, 8K context cap),
-Mistral free tier, OpenRouter free models (`:free`, ~50 requests/day). Rate limits and model names on
-free tiers change often, so check the provider's own docs before relying on one.
+Choose a provider whose free limit is **per day**, not per minute of output. Measured the hard way:
+
+| Provider | Works as a backup? |
+|---|---|
+| OpenRouter (`:free` models) | yes — per-day request limit, full-length scripts fine |
+| Groq free tier | **no** — caps output at ~1000 tokens/minute and rejects a script request outright |
+| Cerebras free | partial — small context, fine for topic/feasibility only |
+
+```bash
+# .env
+OPENAI_COMPAT_BASE_URL=https://openrouter.ai/api/v1
+OPENAI_COMPAT_API_KEY=...
+# then let the provider name its own models:
+npm run models:backup
+```
+`OPENAI_COMPAT_MAX_TOKENS` (default 4096) caps what the backup is asked to produce. If a provider rejects
+requests as "too large", lower it — but a value below 4096 means the backup can only handle the light steps
+(topic, feasibility), and script writing waits for Gemini's quota to reset.
 
 ## GitHub Actions minutes
 

@@ -130,6 +130,10 @@ async function anthropic(model: string, system: string, prompt: string, maxToken
 // ---------------- openai-compatible (Groq, OpenRouter, Cerebras, Mistral, DeepSeek, ...) ----------------
 async function openaiCompatible(model: string, system: string, prompt: string, maxTokens: number, images?: string[]): Promise<string> {
   const base = (process.env.OPENAI_COMPAT_BASE_URL || "").replace(/\/$/, "");
+  // Some free tiers cap output tokens per minute (Groq's is 1000), and reject the request outright
+  // if max_tokens is larger than that — so keep the ask small and configurable.
+  const cap = Number(process.env.OPENAI_COMPAT_MAX_TOKENS ?? 4096);
+  maxTokens = Math.min(maxTokens, cap);
   if (!base) throw new Error("Set OPENAI_COMPAT_BASE_URL (e.g. https://api.groq.com/openai/v1)");
   const content: unknown[] = [];
   for (const f of images ?? []) {
@@ -146,7 +150,14 @@ async function openaiCompatible(model: string, system: string, prompt: string, m
       temperature: 0.8,
       response_format: { type: "json_object" },
     }),
-  }), `openai-compat ${model}`, 5);
+  }), `openai-compat ${model}`, 3).catch((e: Error) => {
+    if (/Request too large|enforced limit|tokens per minute|OTPM/i.test(e.message)) {
+      throw new QuotaError(`${model} rejected the request: this provider's free tier caps output tokens per minute, ` +
+        `which is too small for a full script.\nEither lower OPENAI_COMPAT_MAX_TOKENS for light tasks only, ` +
+        `or use a provider with per-day rather than per-minute output limits (see SETUP.md "Backup provider").\n${e.message.slice(0, 200)}`);
+    }
+    throw e;
+  });
   const j = (await res.json()) as { choices?: { message?: { content?: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number } };
   usage.calls++;
   usage.inputTokens += j.usage?.prompt_tokens ?? 0;
@@ -250,6 +261,10 @@ export async function askJson<T>(o: {
         : PROVIDER === "openai-compatible" ? await openaiCompatible(model, o.system, body, o.maxTokens ?? 16000, o.images)
         : await geminiWithFallback(model, o.system, body, o.maxTokens ?? 32000, o.images).catch(async (e) => {
             if (!isQuota(e) || !backupReady) throw e;
+            const cap = Number(process.env.OPENAI_COMPAT_MAX_TOKENS ?? 4096);
+            if ((o.maxTokens ?? 16000) > cap && cap < 4096) {
+              throw new QuotaError(`${(e as Error).message}\n\nThe backup provider's output cap (OPENAI_COMPAT_MAX_TOKENS=${cap}) is too small for this step.`);
+            }
             const backup = (o.tier === "heavy" ? process.env.OPENAI_COMPAT_MODEL_HEAVY : process.env.OPENAI_COMPAT_MODEL_LIGHT) || process.env.OPENAI_COMPAT_MODEL_HEAVY!;
             console.warn(`Gemini is out of quota; falling back to ${backup} via OPENAI_COMPAT_BASE_URL`);
             return openaiCompatible(backup, o.system, body, o.maxTokens ?? 16000, o.images);
