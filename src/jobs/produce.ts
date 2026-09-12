@@ -19,11 +19,11 @@ import { pickSlot } from "../stages/schedule";
 import { ensureIllustratable } from "../stages/feasibility";
 import { forecast } from "../stages/forecast";
 import { repairScript, reviseScript, writeScript } from "../stages/script";
-import { makeThumbnail } from "../stages/thumbnail";
+import { makeThumbnail, safeThumbnailText } from "../stages/thumbnail";
 import { pickTopic } from "../stages/topic";
 import { verify } from "../stages/verify";
 import { imageQa } from "../stages/image-qa";
-import { replaceSceneImage, sceneImages } from "../stages/visuals";
+import { replaceSceneImage, sceneImages, topicFallbacks } from "../stages/visuals";
 import { synthesize } from "../stages/voice";
 import type { Dossier, Script, Topic, Verification } from "../types";
 
@@ -186,24 +186,25 @@ async function main() {
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(path.join(dir, "script.json"), JSON.stringify(script, null, 2));
       const used = new Set<string>();
+      const fallbacks = topicFallbacks(video.topic.chosen.subject, cfg);
 
       // Network-bound image downloads run while the CPU-bound voice model works.
       log(`#${video.id} images (NASA) + voice (${cfg.voice.provider}) in parallel`);
       const [long, audio] = await Promise.all([
-        sceneImages(cfg, script.scenes, path.join(dir, "images"), video.id, used),
+        sceneImages(cfg, script.scenes, path.join(dir, "images"), video.id, used, fallbacks),
         synthesize(cfg, script.scenes, path.join(dir, "audio")),
       ]);
       const shortAssets = cfg.makeShorts
         ? await Promise.all([
-          sceneImages(cfg, script.short.scenes, path.join(dir, "short-images"), video.id, used),
+          sceneImages(cfg, script.short.scenes, path.join(dir, "short-images"), video.id, used, fallbacks),
           synthesize(cfg, script.short.scenes, path.join(dir, "short-audio")),
         ])
         : undefined;
 
       log(`#${video.id} image QA`);
-      const qa = await imageQa({ cfg, dir, videoId: video.id, used, scenes: script.scenes, files: long.files, credits: long.credits });
+      const qa = await imageQa({ cfg, dir, videoId: video.id, used, scenes: script.scenes, files: long.files, credits: long.credits, fallbacks });
       if (shortAssets) {
-        await imageQa({ cfg, dir, videoId: video.id, used, scenes: script.short.scenes, files: shortAssets[0].files, credits: shortAssets[0].credits, rounds: 2 });
+        await imageQa({ cfg, dir, videoId: video.id, used, scenes: script.short.scenes, files: shortAssets[0].files, credits: shortAssets[0].credits, rounds: 2, fallbacks });
       }
       log(`#${video.id} image QA replaced ${qa.rejected} image(s)`);
 
@@ -213,7 +214,12 @@ async function main() {
         ? await renderVideo({ scenes: script.short.scenes, images: shortAssets[0].files, audio: shortAssets[1], dir, seed: video.id + 1, size: VERTICAL, name: "short", burnCaptions: true })
         : undefined;
       // A thumbnail problem must never throw away a finished render.
-      let thumbPath = await makeThumbnail(cfg, script.thumbnailQuery, script.thumbnailText, dir, used, long.files[0]!)
+      const thumbText = safeThumbnailText(script.thumbnailText, script.title, script.scenes.map((sc) => sc.narration).join(" "));
+      if (thumbText !== script.thumbnailText) {
+        await incident("thumbnail.text-rejected", new Error(`"${script.thumbnailText}" -> "${thumbText}" (word not in title or narration)`), video.id);
+        script.thumbnailText = thumbText;
+      }
+      let thumbPath = await makeThumbnail(cfg, script.thumbnailQuery, thumbText, dir, used, long.files[0]!)
         .catch(async (e) => { await incident("thumbnail", e, video.id); return long.files[0]!; });
       const allCredits = [...long.credits];
       let description = buildDescription(script, script.scenes, timings, video.dossier!, allCredits);
@@ -235,7 +241,7 @@ async function main() {
         for (const issue of imageIssues) {
           const idx = script.scenes.findIndex((sc) => sc.id === issue.sceneId);
           if (idx >= 0) {
-            const got = await replaceSceneImage(cfg, script.scenes[idx]!, long.files[idx]!, used, video.id).catch(() => null);
+            const got = await replaceSceneImage(cfg, script.scenes[idx]!, long.files[idx]!, used, video.id, fallbacks).catch(() => null);
             if (got) long.credits[idx] = got;
           }
         }
@@ -252,7 +258,7 @@ async function main() {
               const f = fresh.find((x) => x.sceneId === sc.id);
               if (f) { audio[i] = f; audioChanged = true; }
               if (before.get(sc.id) !== sc.narration || script.scenes[i]?.imageQuery !== sc.imageQuery) {
-                const got = await replaceSceneImage(cfg, sc, long.files[i]!, used, video.id).catch(() => null);
+                const got = await replaceSceneImage(cfg, sc, long.files[i]!, used, video.id, fallbacks).catch(() => null);
                 if (got) long.credits[i] = got;
               }
             }
@@ -262,7 +268,9 @@ async function main() {
 
         // 3. re-render, re-thumbnail, re-check
         rendered = await renderVideo({ scenes: script.scenes, images: long.files, audio, dir, seed: video.id + repairs, name: `final-r${repairs}` });
-        const newThumb = await makeThumbnail(cfg, script.thumbnailQuery, script.thumbnailText, dir, used, long.files[0]!).catch(() => thumbPath);
+        const newThumb = await makeThumbnail(cfg, script.thumbnailQuery,
+          safeThumbnailText(script.thumbnailText, script.title, script.scenes.map((sc) => sc.narration).join(" ")),
+          dir, used, long.files[0]!).catch(() => thumbPath);
         description = buildDescription(script, script.scenes, rendered.timings, video.dossier!, allCredits);
         review = await finalReview({ dir, script, verification: video.verification!, description, videoPath: rendered.videoPath, shortPath: shortOut?.videoPath, credits: long.credits });
         await updateVideo(video.id, { script, title: script.title, repairs, actual_score: review.overall, scene_timings: rendered.timings, assets: { images: allCredits, review, forecast: fc } });

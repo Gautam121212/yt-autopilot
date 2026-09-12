@@ -15,11 +15,11 @@ const FINDERS: Record<string, (q: string, used: Set<string>, file: string) => Pr
 
 /** Fetch a different image for one scene, avoiding everything already used in this video. */
 export async function replaceSceneImage(
-  cfg: ChannelConfig, scene: { id: string; imageQuery: string; altQueries?: string[]; era?: string }, file: string, used: Set<string>, videoId: number,
+  cfg: ChannelConfig, scene: { id: string; imageQuery: string; altQueries?: string[]; era?: string }, file: string, used: Set<string>, videoId: number, fallbacks?: string[],
 ): Promise<ImageCredit | null> {
   const sources = cfg.imageSources.filter((n) => !(scene.era === "historical" && n === "pexels")).map((n) => FINDERS[n]!).filter(Boolean);
   const parts = scene.imageQuery.split(/\s+/).filter(Boolean);
-  for (const q of [...(scene.altQueries ?? []), scene.imageQuery, parts.slice(0, 2).join(" "), ...cfg.fallbackImageQueries]) {
+  for (const q of [...(scene.altQueries ?? []), scene.imageQuery, parts.slice(0, 2).join(" "), ...(fallbacks ?? cfg.fallbackImageQueries)]) {
     for (const find of sources) {
       const got = await find(q, used, file).catch(() => null);
       if (got) return { source: got.source, id: got.id, title: got.title, attribution: got.attribution };
@@ -34,10 +34,19 @@ export async function replaceSceneImage(
  * Tries each configured source with progressively broader queries, keeps the best-scoring hit,
  * and only uses a generic fallback query when nothing relevant exists anywhere.
  */
+/** On-topic fallbacks beat generic ones: another photo of the subject is always better than a stock clock. */
+export function topicFallbacks(subject: string, cfg: ChannelConfig): string[] {
+  const core = subject.replace(/[^A-Za-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 3).slice(0, 4);
+  const out: string[] = [];
+  if (core.length) out.push(core.join(" "), core.slice(0, 2).join(" "), core[0]!);
+  return [...new Set([...out, ...cfg.fallbackImageQueries])];
+}
+
 export async function sceneImages(
   cfg: ChannelConfig, scenes: { id: string; imageQuery: string; altQueries?: string[]; motion?: string; era?: string }[],
-  dir: string, videoId: number, used: Set<string>,
+  dir: string, videoId: number, used: Set<string>, fallbacks?: string[],
 ): Promise<{ files: string[]; credits: ImageCredit[] }> {
+  const fallbackList = fallbacks?.length ? fallbacks : cfg.fallbackImageQueries;
   await fs.mkdir(dir, { recursive: true });
   if (!cfg.imageSources.length) throw new Error(`imageSources must name known sources: ${Object.keys(FINDERS).join(", ")}`);
   // Pexels is modern stock; a 19th-century subject must never be illustrated from it.
@@ -76,7 +85,7 @@ export async function sceneImages(
     // A confidently wrong picture is worse than a neutral one: below 0.3 prefer the fallback set.
     if (best && best.score < 0.3) best = null;
     if (!best) {
-      for (const q of [...cfg.fallbackImageQueries].sort(() => Math.random() - 0.5)) {
+      for (const q of fallbackList) {
         for (const find of sources) {
           best = await find(q, used, file).catch(() => null);
           if (best) break;

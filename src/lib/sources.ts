@@ -46,6 +46,22 @@ const THIRD_PARTY = /©|copyright|courtesy of/i;
 const STOP = new Set(["the", "a", "an", "of", "in", "on", "and", "view", "picture", "image", "photo", "shot", "scene", "surface"]);
 const words = (q: string) => q.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !STOP.has(w));
 
+const GENERIC_CAPS = new Set(["Port", "River", "Lake", "Mount", "Bay", "North", "South", "East", "West", "New", "Great", "Old", "The"]);
+/** Capitalised words that are not generic geography words: a place or proper name that MUST be present. */
+const mustHave = (q: string) =>
+  (q.match(/\b[A-Z][a-z]{2,}\b/g) ?? []).filter((w) => !GENERIC_CAPS.has(w)).map((w) => w.toLowerCase());
+
+/** Rejects candidates missing a required proper noun; otherwise scores by word overlap. */
+function relevance(query: string, title: string, extra = ""): number {
+  const need = mustHave(query);
+  const hay = `${title} ${extra}`.toLowerCase();
+  if (need.length && !need.every((n) => hay.includes(n))) return 0; // wrong place / wrong subject entirely
+  const terms = words(query);
+  if (!terms.length) return 0;
+  const hits = terms.filter((t) => title.toLowerCase().includes(t)).length * 2 + terms.filter((t) => extra.toLowerCase().includes(t)).length;
+  return Math.min(1, hits / (terms.length * 2));
+}
+
 /**
  * Finds a usable NASA image for `query` and reports how well it matched, so callers can
  * retry with a broader query instead of silently shipping an unrelated picture.
@@ -62,13 +78,7 @@ export async function nasaImage(query: string, used: Set<string>, file: string):
       const meta = `${d.title ?? ""} ${d.description ?? ""} ${(d.keywords ?? []).join(" ")}`;
       return !PEOPLE.test(meta) && !MARKS.test(meta) && !THIRD_PARTY.test(`${meta} ${d.photographer ?? ""} ${d.secondary_creator ?? ""}`);
     })
-    .map((d) => {
-      // Score on how many of the query's words appear, title weighted over description/keywords.
-      const title = (d.title ?? "").toLowerCase();
-      const rest = `${d.description ?? ""} ${(d.keywords ?? []).join(" ")}`.toLowerCase();
-      const hits = terms.filter((t) => title.includes(t)).length * 2 + terms.filter((t) => rest.includes(t)).length;
-      return { d, score: terms.length ? hits / (terms.length * 2) : 0 };
-    })
+    .map((d) => ({ d, score: relevance(query, d.title ?? "", `${d.description ?? ""} ${(d.keywords ?? []).join(" ")}`) }))
     .sort((a, b) => b.score - a.score);
 
   for (const { d, score } of candidates.slice(0, 6)) {
@@ -124,8 +134,7 @@ export async function commonsImage(query: string, used: Set<string>, file: strin
       const restrictions = stripHtml(meta.Restrictions?.value ?? "");
       const title = p.title.replace(/^File:/, "").replace(/\.[a-z0-9]+$/i, "").replace(/[_-]+/g, " ");
       const hay = `${title} ${stripHtml(meta.ImageDescription?.value ?? "")} ${stripHtml(meta.Categories?.value ?? "")}`.toLowerCase();
-      const hits = terms.filter((t) => title.toLowerCase().includes(t)).length * 2 + terms.filter((t) => hay.includes(t)).length;
-      return { p, info, title, licence, usage, artist, restrictions, score: terms.length ? hits / (terms.length * 2) : 0 };
+      return { p, info, title, licence, usage, artist, restrictions, score: relevance(query, title, hay) };
     })
     .filter((c) =>
       c.info && /^image\/(jpeg|png|webp)$/.test(c.info.mime) && (c.info.width ?? 0) >= 1000 &&
@@ -159,6 +168,9 @@ export async function commonsImage(query: string, used: Set<string>, file: strin
 type PexelsPhoto = { id: number; alt?: string; width: number; photographer?: string; url?: string; src: { large2x?: string; large?: string; original?: string } };
 type PexelsVideo = { id: number; width: number; height: number; duration: number; user?: { name?: string }; url?: string; video_files: { link: string; width: number; height: number; file_type: string }[] };
 
+// Stock photo captions that mean "a person", which this channel never wants.
+const LIFESTYLE = /\b(man|woman|men|women|person|people|boy|girl|guy|lady|model|couple|family|child|kid|teen|hand|hands|legs?|feet|face|portrait|tattoo|selfie|smiling|posing|standing|sitting|walking|wearing|holding)\b/i;
+
 const pexelsKey = () => process.env.PEXELS_API_KEY ?? "";
 
 export async function pexelsImage(query: string, used: Set<string>, file: string): Promise<ImageHit | null> {
@@ -170,11 +182,8 @@ export async function pexelsImage(query: string, used: Set<string>, file: string
   const { photos = [] } = (await r.json()) as { photos?: PexelsPhoto[] };
   const scored = photos
     .filter((p) => p.width >= 1600 && !used.has(`pexels:${p.id}`))
-    .map((p) => {
-      const alt = (p.alt ?? "").toLowerCase();
-      const hits = terms.filter((t) => alt.includes(t)).length * 2;
-      return { p, score: terms.length ? hits / (terms.length * 2) : 0 };
-    })
+    .filter((p) => !LIFESTYLE.test(p.alt ?? ""))   // stock libraries are full of people; we never want them
+    .map((p) => ({ p, score: relevance(query, p.alt ?? "") }))
     .sort((a, b) => b.score - a.score);
 
   for (const { p, score } of scored.slice(0, 5)) {
@@ -200,7 +209,7 @@ export async function pexelsVideo(query: string, used: Set<string>, file: string
     { headers: { Authorization: pexelsKey() } }).catch(() => null);
   if (!r?.ok) return null;
   const { videos = [] } = (await r.json()) as { videos?: PexelsVideo[] };
-  for (const v of videos.filter((v) => v.duration >= 5 && v.duration <= 60 && !used.has(`pexelsv:${v.id}`)).slice(0, 5)) {
+  for (const v of videos.filter((v) => v.duration >= 5 && v.duration <= 60 && !used.has(`pexelsv:${v.id}`) && !LIFESTYLE.test(v.user?.name ?? "")).slice(0, 5)) {
     const id = `pexelsv:${v.id}`;
     used.add(id);
     const f = v.video_files
@@ -223,8 +232,7 @@ export async function pexelsVideo(query: string, used: Set<string>, file: string
  * queries no archive can satisfy, which is the main cause of mismatched pictures.
  */
 export async function probeQuery(query: string, era: "historical" | "modern" | "any" = "any"): Promise<{ score: number; best: string }> {
-  const terms = words(query);
-  if (!terms.length) return { score: 0, best: "" };
+  if (!words(query).length) return { score: 0, best: "" };
   const q = era === "historical" ? `${query} ${HISTORICAL_HINT}` : query;
   const api = `https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=search` +
     `&gsrsearch=${encodeURIComponent(`filetype:bitmap ${q}`)}&gsrnamespace=6&gsrlimit=12&prop=imageinfo&iiprop=size|mime|extmetadata`;
@@ -232,8 +240,7 @@ export async function probeQuery(query: string, era: "historical" | "modern" | "
   let best = { score: 0, best: "" };
   for (const p of Object.values(res?.query?.pages ?? {})) {
     const title = p.title.replace(/^File:/, "").replace(/\.[a-z0-9]+$/i, "").replace(/[_-]+/g, " ");
-    const hits = terms.filter((t) => title.toLowerCase().includes(t)).length * 2;
-    const score = hits / (terms.length * 2);
+    const score = relevance(query, title);
     if (score > best.score) best = { score: +score.toFixed(2), best: title };
   }
   return best;

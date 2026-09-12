@@ -30,6 +30,41 @@ async function firstFont(): Promise<string | null> {
   return null;
 }
 
+// Everyday words that may appear in thumbnail text without being in the script.
+const COMMON = new Set(["the","a","an","and","or","but","of","in","on","to","for","with","from","by","at","is","was",
+  "this","that","how","why","what","when","where","who","not","no","never","always","all","one","two","first","last",
+  "new","old","big","huge","tiny","real","true","best","worst","most","more","less","problem","mystery","secret",
+  "story","truth","reason","answer","question","inside","behind","before","after","almost","nearly","still","yet",
+  "working","broken","missing","hidden","lost","found","built","made","saved","killed","changed","failed","fixed",
+  "impossible","possible","simple","strange","wrong","right","safe","cost","price","years","days","ways"]);
+
+/** Conservative stemmer: only strips a suffix when at least 4 characters remain. */
+function stem(w: string): string {
+  const x = w.toLowerCase();
+  for (const suf of ["ies", "ing", "ed", "es", "s"]) {
+    if (x.endsWith(suf) && x.length - suf.length >= 4) return suf === "ies" ? `${x.slice(0, -3)}y` : x.slice(0, -suf.length);
+  }
+  return x;
+}
+
+/**
+ * Thumbnail text must be words the script actually uses (or everyday words). This catches invented or
+ * garbled text — "800 MILES UNBURNT" — before it is burned into an image nobody can edit afterwards.
+ */
+export function safeThumbnailText(proposed: string, title: string, narration: string): string {
+  const vocab = new Set((`${title} ${narration}`.toLowerCase().replace(/-/g, " ").match(/[a-z0-9']+/g) ?? []).map(stem));
+  const words = proposed.match(/[A-Za-z0-9']+/g) ?? [];
+  const known = (w: string) => /^[0-9]/.test(w) || w.length <= 3 || COMMON.has(w.toLowerCase()) || vocab.has(stem(w));
+  if (words.length && words.every(known)) return proposed;
+
+  // Rebuild from the title, keeping word order so it still reads like English.
+  const t = title.match(/[A-Za-z0-9'-]+/g) ?? [];
+  const keep = t.map((w) => w.replace(/-$/, ""))
+    .filter((w) => /^[0-9]/.test(w) || (w.length > 4 && !COMMON.has(w.toLowerCase())));
+  const built = keep.slice(0, 3).join(" ");
+  return built || title.split(/\s+/).slice(0, 3).join(" ");
+}
+
 /** Wrap to at most 2 lines and shrink the font until the longest line fits inside the safe area. */
 function fitText(text: string): { lines: string[]; fontsize: number } {
   const words = text.toUpperCase().split(/\s+/).filter(Boolean);

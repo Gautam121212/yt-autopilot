@@ -66,7 +66,7 @@ async function sheet(files: string[], out: string, labels = true) {
 export async function imageQa(o: {
   cfg: ChannelConfig; dir: string; videoId: number; used: Set<string>;
   scenes: { id: string; imageQuery: string; narration: string; era?: string; altQueries?: string[] }[];
-  files: string[]; credits: ImageCredit[]; rounds?: number;
+  files: string[]; credits: ImageCredit[]; rounds?: number; fallbacks?: string[];
 }): Promise<{ files: string[]; credits: ImageCredit[]; rejected: number }> {
   if (!providerSupportsVision()) return { files: o.files, credits: o.credits, rejected: 0 };
   let rejected = 0;
@@ -126,7 +126,7 @@ List ONLY the images to reject.`,
     for (const idx of bad) {
       const scene = o.scenes[idx]!;
       if (++done % 3 === 0) log(`  replacing image ${done}/${bad.size}`);
-      const got = await replaceSceneImage(o.cfg, scene, o.files[idx]!, o.used, o.videoId).catch(() => null);
+      const got = await replaceSceneImage(o.cfg, scene, o.files[idx]!, o.used, o.videoId, o.fallbacks).catch(() => null);
       if (got) o.credits[idx] = got;
     }
   }
