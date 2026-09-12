@@ -38,6 +38,11 @@ export type CallOpts = {
 };
 
 /** claude-code can search the live web; the Gemini free path cannot (grounding + JSON output conflict). */
+export class QuotaError extends Error {}
+export const isQuota = (e: unknown) =>
+  e instanceof QuotaError ||
+  /\b429\b|exceeded your current quota|rate[- ]?limit|out of daily quota|RESOURCE_EXHAUSTED/i.test((e as Error)?.message ?? "");
+
 export const providerSupportsWeb = () => PROVIDER === "claude-code";
 /** every supported provider can look at images, by different means. */
 export const providerSupportsVision = () => PROVIDER === "claude-code" || PROVIDER === "gemini" || process.env.OPENAI_COMPAT_VISION === "true";
@@ -208,7 +213,7 @@ async function geminiWithFallback(spec: string, system: string, prompt: string, 
       console.warn(`${model} is busy; trying the next model listed in GEMINI_MODEL_* ...`);
     }
   }
-  throw new Error(`Every model in "${spec}" is overloaded or rate-limited right now.\nList more models in GEMINI_MODEL_HEAVY/LIGHT (comma-separated), or add a backup provider (see SETUP.md).\n${last?.message.slice(0, 300)}`);
+  throw new QuotaError(`Every model in "${spec}" is rate-limited or out of daily quota.\nThe Gemini free tier resets at midnight Pacific. Add a backup provider to keep going (see SETUP.md "Backup provider").\n${last?.message.slice(0, 300)}`);
 }
 
 export function extractJson(text: string): unknown {
@@ -240,9 +245,15 @@ export async function askJson<T>(o: {
         : PROVIDER === "openai-compatible" ? "OPENAI_COMPAT_MODEL_HEAVY/LIGHT are not set in .env."
         : `Unknown LLM_PROVIDER ${PROVIDER}`);
       const body = `${o.prompt}\n\nReturn ONE JSON object only matching this JSON Schema:\n${JSON.stringify(jsonSchema)}${feedback}`;
+      const backupReady = !!(process.env.OPENAI_COMPAT_BASE_URL && process.env.OPENAI_COMPAT_API_KEY && process.env.OPENAI_COMPAT_MODEL_HEAVY);
       const text = PROVIDER === "anthropic" ? await anthropic(model, o.system, body, o.maxTokens ?? 32000)
         : PROVIDER === "openai-compatible" ? await openaiCompatible(model, o.system, body, o.maxTokens ?? 16000, o.images)
-        : await geminiWithFallback(model, o.system, body, o.maxTokens ?? 32000, o.images);
+        : await geminiWithFallback(model, o.system, body, o.maxTokens ?? 32000, o.images).catch(async (e) => {
+            if (!isQuota(e) || !backupReady) throw e;
+            const backup = (o.tier === "heavy" ? process.env.OPENAI_COMPAT_MODEL_HEAVY : process.env.OPENAI_COMPAT_MODEL_LIGHT) || process.env.OPENAI_COMPAT_MODEL_HEAVY!;
+            console.warn(`Gemini is out of quota; falling back to ${backup} via OPENAI_COMPAT_BASE_URL`);
+            return openaiCompatible(backup, o.system, body, o.maxTokens ?? 16000, o.images);
+          });
       try { raw = extractJson(text); } catch (e) { raw = undefined; lastErr = (e as Error).message; }
     }
     const parsed = o.schema.safeParse(raw);

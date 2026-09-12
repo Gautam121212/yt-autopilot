@@ -9,7 +9,7 @@ import path from "node:path";
 import { isDryRun, loadChannel, loadPlaybook, WORK, type ChannelConfig } from "../config";
 import { closeDb, q, updateVideo } from "../lib/db";
 import { createIssue } from "../lib/github";
-import { usage } from "../lib/llm";
+import { isQuota, usage } from "../lib/llm";
 import { incident, log } from "../lib/log";
 import { buildDescription, buildShortDescription, schedulePublic, upload } from "../stages/publish";
 import { renderVideo, VERTICAL } from "../stages/render";
@@ -309,7 +309,13 @@ async function main() {
     if (stage === "uploaded") await handoff(cfg, video);
   } catch (e) {
     await incident(`produce.${stage}`, e, video.id);
-    await q("update videos set attempts = attempts + 1, status = case when attempts + 1 >= $2 then 'failed' else status end where id = $1", [video.id, MAX_ATTEMPTS]);
+    if (isQuota(e)) {
+      // Out of daily model quota: the video keeps its place and its attempts; the next run resumes it.
+      log(`#${video.id} paused at "${stage}" — model quota exhausted. The next scheduled run resumes from here.`);
+      log(`   Gemini's free daily quota resets at midnight Pacific. To keep going now, add a backup provider (SETUP.md).`);
+    } else {
+      await q("update videos set attempts = attempts + 1, status = case when attempts + 1 >= $2 then 'failed' else status end where id = $1", [video.id, MAX_ATTEMPTS]);
+    }
     process.exitCode = 1;
   } finally {
     const u = video.usage ?? {};
