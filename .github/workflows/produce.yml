@@ -16,7 +16,7 @@ permissions: { contents: read, issues: write }
 jobs:
   produce:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

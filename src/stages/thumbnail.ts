@@ -85,6 +85,8 @@ function fitText(text: string): { lines: string[]; fontsize: number } {
   return { lines, fontsize };
 }
 
+const isVideoFile = (f: string) => /\.(mp4|mov|webm)$/i.test(f);
+
 export async function makeThumbnail(cfg: ChannelConfig, query: string, text: string, dir: string, used: Set<string>, fallbackImage: string): Promise<string> {
   const raw = path.join(dir, "thumb-raw.jpg");
   let got = null;
@@ -94,6 +96,8 @@ export async function makeThumbnail(cfg: ChannelConfig, query: string, text: str
   }
   const src = got ? raw : fallbackImage;
   const out = path.join(dir, "thumbnail.jpg");
+  // A single JPEG from a video input needs -update 1; without it ffmpeg wants a %03d pattern and fails.
+  const single = isVideoFile(src) ? ["-frames:v", "1", "-update", "1"] : [];
   const base = "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,eq=contrast=1.15:saturation=1.25";
 
   const font = await firstFont();
@@ -105,10 +109,10 @@ export async function makeThumbnail(cfg: ChannelConfig, query: string, text: str
     await sh("ffmpeg", ["-y", "-i", src, "-vf",
       `${base},drawtext=fontfile='${font}':textfile='${textFile}':fontsize=${fontsize}:line_spacing=12:` +
       `fontcolor=white:borderw=${Math.max(5, Math.round(fontsize / 12))}:bordercolor=black:x=(w-text_w)/2:y=h-text_h-64`,
-      "-q:v", "3", out]);
+      ...single, "-q:v", "3", out]);
   } else {
     if (!font) console.warn("⚠️  No bold system font found; thumbnail text skipped.");
-    await sh("ffmpeg", ["-y", "-i", src, "-vf", base, "-q:v", "3", out]);
+    await sh("ffmpeg", ["-y", "-i", src, "-vf", base, ...single, "-q:v", "3", out]);
   }
   return out;
 }

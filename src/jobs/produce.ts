@@ -29,7 +29,7 @@ import type { Dossier, Script, Topic, Verification } from "../types";
 
 const MAX_ATTEMPTS = 3;
 const MAX_REVISIONS = 2;
-const MAX_REPAIRS = 2; // rebuild-and-recheck rounds after the final check says hold
+const MAX_REPAIRS = 2; // rebuild-and-recheck rounds after the final check says hold (cheap now: clips are cached)
 
 type VideoRow = {
   id: number; status: string; attempts: number; sub_niche: string; structure: string;
@@ -202,7 +202,7 @@ async function main() {
         : undefined;
 
       log(`#${video.id} image QA`);
-      const qa = await imageQa({ cfg, dir, videoId: video.id, used, scenes: script.scenes, files: long.files, credits: long.credits, fallbacks });
+      const qa = await imageQa({ cfg, dir, videoId: video.id, used, scenes: script.scenes, files: long.files, credits: long.credits, fallbacks, rounds: 1 });
       if (shortAssets) {
         await imageQa({ cfg, dir, videoId: video.id, used, scenes: script.short.scenes, files: shortAssets[0].files, credits: shortAssets[0].credits, rounds: 2, fallbacks });
       }
@@ -219,7 +219,8 @@ async function main() {
         await incident("thumbnail.text-rejected", new Error(`"${script.thumbnailText}" -> "${thumbText}" (word not in title or narration)`), video.id);
         script.thumbnailText = thumbText;
       }
-      let thumbPath = await makeThumbnail(cfg, script.thumbnailQuery, thumbText, dir, used, long.files[0]!)
+      const stillFallback = long.files.find((f) => !/\.(mp4|mov|webm)$/i.test(f)) ?? long.files[0]!;
+      let thumbPath = await makeThumbnail(cfg, script.thumbnailQuery, thumbText, dir, used, stillFallback)
         .catch(async (e) => { await incident("thumbnail", e, video.id); return long.files[0]!; });
       const allCredits = [...long.credits];
       let description = buildDescription(script, script.scenes, timings, video.dossier!, allCredits);
@@ -270,7 +271,7 @@ async function main() {
         rendered = await renderVideo({ scenes: script.scenes, images: long.files, audio, dir, seed: video.id + repairs, name: `final-r${repairs}` });
         const newThumb = await makeThumbnail(cfg, script.thumbnailQuery,
           safeThumbnailText(script.thumbnailText, script.title, script.scenes.map((sc) => sc.narration).join(" ")),
-          dir, used, long.files[0]!).catch(() => thumbPath);
+          dir, used, stillFallback).catch(() => thumbPath);
         description = buildDescription(script, script.scenes, rendered.timings, video.dossier!, allCredits);
         review = await finalReview({ dir, script, verification: video.verification!, description, videoPath: rendered.videoPath, shortPath: shortOut?.videoPath, credits: long.credits });
         await updateVideo(video.id, { script, title: script.title, repairs, actual_score: review.overall, scene_timings: rendered.timings, assets: { images: allCredits, review, forecast: fc } });

@@ -29,6 +29,8 @@ export const VERTICAL: Size = { w: 1080, h: 1920 };
 
 const isVideo = (f: string) => /\.(mp4|mov|webm)$/i.test(f);
 
+const FADE = 0.35; // fade in/out baked into each clip so the join can be a stream copy
+
 async function sceneClip(img: string, audio: SceneAudio, motion: number, out: string, size: Size) {
   // 1.25x (not 1.5x) is enough headroom for a 1.28 zoom and costs far less to scale.
   const bw = Math.round(size.w * 1.25), bh = Math.round(size.h * 1.25);
@@ -41,8 +43,9 @@ async function sceneClip(img: string, audio: SceneAudio, motion: number, out: st
       "-y", "-stream_loop", "-1", "-i", img, "-i", audio.file,
       "-filter_complex",
       `[0:v]scale=${Math.round(size.w * 1.15)}:${Math.round(size.h * 1.15)}:force_original_aspect_ratio=increase,` +
-        `crop=${size.w}:${size.h}:'(in_w-out_w)/2+(in_w-out_w)/2*sin(t/6)':'(in_h-out_h)/2',fps=${FPS},format=yuv420p[v];` +
-        `[1:a]apad=pad_dur=${PAD},aresample=48000[a]`,
+        `crop=${size.w}:${size.h}:'(in_w-out_w)/2+(in_w-out_w)/2*sin(t/6)':'(in_h-out_h)/2',fps=${FPS},` +
+        `fade=t=in:st=0:d=${FADE},fade=t=out:st=${(dur - FADE).toFixed(2)}:d=${FADE},format=yuv420p[v];` +
+        `[1:a]apad=pad_dur=${PAD},aresample=48000,afade=t=in:st=0:d=0.12,afade=t=out:st=${(dur - 0.2).toFixed(2)}:d=0.2[a]`,
       "-map", "[v]", "-map", "[a]", "-t", dur.toFixed(3),
       "-c:v", "libx264", "-preset", "superfast", "-crf", "18", "-r", String(FPS),
       "-c:a", "aac", "-b:a", "192k", "-ac", "2", out,
@@ -54,8 +57,9 @@ async function sceneClip(img: string, audio: SceneAudio, motion: number, out: st
     "-y", "-i", img, "-i", audio.file,
     "-filter_complex",
     `[0:v]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},` +
-      `zoompan=${MOTIONS[motion]!(frames)}:d=${frames}:s=${size.w}x${size.h}:fps=${FPS},format=yuv420p[v];` +
-      `[1:a]apad=pad_dur=${PAD},aresample=48000[a]`,
+      `zoompan=${MOTIONS[motion]!(frames)}:d=${frames}:s=${size.w}x${size.h}:fps=${FPS},` +
+      `fade=t=in:st=0:d=${FADE},fade=t=out:st=${(dur - FADE).toFixed(2)}:d=${FADE},format=yuv420p[v];` +
+      `[1:a]apad=pad_dur=${PAD},aresample=48000,afade=t=in:st=0:d=0.12,afade=t=out:st=${(dur - 0.2).toFixed(2)}:d=0.2[a]`,
     "-map", "[v]", "-map", "[a]", "-t", dur.toFixed(3),
     "-c:v", "libx264", "-preset", "superfast", "-crf", "18", "-r", String(FPS),
     "-c:a", "aac", "-b:a", "192k", "-ac", "2", out,
@@ -117,46 +121,19 @@ export async function renderVideo(o: { scenes: Narrated[]; images: string[]; aud
   });
   if (reused) console.log(`  reused ${reused}/${o.scenes.length} unchanged scene clips`);
 
-  const XFADE = clips.length > 1 && clips.length <= 40 ? 0.4 : 0;
   const timings: SceneTiming[] = [];
   let t = 0;
   for (let i = 0; i < clips.length; i++) {
     const d = await durationSec(clips[i]!);
     timings.push({ sceneId: o.scenes[i]!.id, start: t, end: t + d, speechSec: o.audio[i]!.duration });
-    t += d - (i < clips.length - 1 ? XFADE : 0);
+    t += d;
   }
 
   const joined = path.join(o.dir, `joined-${name}.mp4`);
-  const XF = 0.4; // crossfade length in seconds
-  const TRANSITIONS = ["fade", "fadeblack", "smoothleft", "smoothright", "smoothup", "circleopen", "dissolve"];
-  if (clips.length > 1 && clips.length <= 40) {
-    // xfade chain: each clip dissolves into the next, so scenes flow instead of snapping.
-    const inputs = clips.flatMap((c) => ["-i", c]);
-    const durs = await Promise.all(clips.map(durationSec));
-    let vPrev = "0:v";
-    let aPrev = "0:a";
-    let offset = durs[0]!;
-    const filters: string[] = [];
-    for (let i = 1; i < clips.length; i++) {
-      const v = `v${i}`;
-      const a = `a${i}`;
-      // A chapter start gets a firmer transition; everything else dissolves.
-      const t = TRANSITIONS[(i + o.seed) % TRANSITIONS.length]!;
-      filters.push(`[${vPrev}][${i}:v]xfade=transition=${t}:duration=${XF}:offset=${(offset - XF).toFixed(3)}[${v}]`);
-      filters.push(`[${aPrev}][${i}:a]acrossfade=d=${XF}[${a}]`);
-      vPrev = v;
-      aPrev = a;
-      offset += durs[i]! - XF;
-    }
-    await sh("ffmpeg", ["-y", ...inputs, "-filter_complex", filters.join(";"),
-      "-map", `[${vPrev}]`, "-map", `[${aPrev}]`,
-      "-c:v", "libx264", "-preset", "faster", "-crf", "20", "-r", String(FPS),
-      "-c:a", "aac", "-b:a", "192k", "-ar", "48000", joined]);
-  } else {
-    const list = path.join(o.dir, `clips-${name}.txt`);
-    await fs.writeFile(list, clips.map((c) => `file '${c}'`).join("\n"));
-    await sh("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", list, "-c", "copy", joined]);
-  }
+  const list = path.join(o.dir, `clips-${name}.txt`);
+  await fs.writeFile(list, clips.map((c) => `file '${c}'`).join("\n"));
+  // Stream copy: no re-encode, so joining 28 clips takes seconds instead of ~17 minutes.
+  await sh("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", list, "-c", "copy", joined]);
 
   const final = path.join(o.dir, `${name}.mp4`);
   const music = await pickMusic();
