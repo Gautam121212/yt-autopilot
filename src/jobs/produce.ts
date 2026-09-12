@@ -191,12 +191,12 @@ async function main() {
       // Network-bound image downloads run while the CPU-bound voice model works.
       log(`#${video.id} images (NASA) + voice (${cfg.voice.provider}) in parallel`);
       const [long, audio] = await Promise.all([
-        sceneImages(cfg, script.scenes, path.join(dir, "images"), video.id, used, fallbacks),
+        sceneImages(cfg, script.scenes, path.join(dir, "images"), video.id, used, fallbacks, { w: 1920, h: 1080 }),
         synthesize(cfg, script.scenes, path.join(dir, "audio")),
       ]);
       const shortAssets = cfg.makeShorts
         ? await Promise.all([
-          sceneImages(cfg, script.short.scenes, path.join(dir, "short-images"), video.id, used, fallbacks),
+          sceneImages(cfg, script.short.scenes, path.join(dir, "short-images"), video.id, used, fallbacks, { w: 1080, h: 1920 }),
           synthesize(cfg, script.short.scenes, path.join(dir, "short-audio")),
         ])
         : undefined;

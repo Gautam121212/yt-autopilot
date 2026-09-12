@@ -22,6 +22,9 @@ HARD RULES
    (water flowing, machinery turning, a storm, a crowd of stars); "still" for objects, documents and portraits of things.
    Aim for roughly one "clip" in every three scenes. A "clip" scene must be era "modern" or "any" —
    stock video is always modern footage, so never mark a pre-1950 subject as "clip".
+   cardHeadline / cardSub: what this scene should say as a DESIGNED CARD if no honest photograph exists.
+   Headline is 2-5 words, ideally the scene's key number ("800 MILES", "2 HOURS", "NINE SECONDS"); cardSub is one
+   short clause. Write these for every scene — a card is always better than a picture of the wrong thing.
    era: "historical" for any subject before about 1950 (it forces period engravings and photographs and blocks
    modern stock), "modern" for present-day subjects, "any" for timeless objects and landscapes.
    NEVER request: anything "under a microscope" or magnified beyond a normal photo; a "group photo" or any
@@ -42,8 +45,8 @@ ${playbook}`;
 }
 
 const SHAPE = `JSON: { "title", "altTitles": [3], "description" (2-3 short paragraphs, no links), "tags": [<=15], "thumbnailText" (2-4 words),
-"thumbnailQuery" (a concrete photo search for the thumbnail), "scenes": [{ "id": "sc01", "chapter"?, "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "era": "historical"|"modern"|"any", "claimIds" }],
-"claims": [{ "id": "C1", "text", "sourceIds" }], "short": { "title", "scenes": [{ "id": "sh01", "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "era": "historical"|"modern"|"any" }] } }`;
+"thumbnailQuery" (a concrete photo search for the thumbnail), "scenes": [{ "id": "sc01", "chapter"?, "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "era": "historical"|"modern"|"any", "cardHeadline", "cardSub", "claimIds" }],
+"claims": [{ "id": "C1", "text", "sourceIds" }], "short": { "title", "scenes": [{ "id": "sh01", "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "era": "historical"|"modern"|"any", "cardHeadline", "cardSub" }] } }`;
 
 export async function writeScript(o: {
   cfg: ChannelConfig; playbook: string; structure: { id: string; description: string };

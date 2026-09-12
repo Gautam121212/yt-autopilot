@@ -26,7 +26,8 @@
     "why": "tsx --env-file-if-exists=.env scripts/why.ts",
     "retry": "tsx --env-file-if-exists=.env scripts/retry.ts",
     "preflight": "tsx --env-file-if-exists=.env scripts/preflight.ts",
-    "logs": "gh run watch $(gh run list -w produce -L 1 --json databaseId -q '.[0].databaseId')"
+    "logs": "gh run watch $(gh run list -w produce -L 1 --json databaseId -q '.[0].databaseId')",
+    "models:backup": "tsx --env-file-if-exists=.env scripts/list-compat-models.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

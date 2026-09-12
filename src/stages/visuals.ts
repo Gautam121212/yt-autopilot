@@ -4,8 +4,11 @@ import type { ChannelConfig } from "../config";
 import { incident } from "../lib/log";
 import { mapLimit } from "../lib/media";
 import { commonsImage, HISTORICAL_HINT, nasaImage, pexelsImage, pexelsVideo, type ImageHit } from "../lib/sources";
+import { makeCard } from "./cards";
 
 export type ImageCredit = { source: string; id: string; title: string; attribution?: string };
+
+const MIN_USABLE = 0.35; // below this, a designed card beats whatever the archive returned
 
 const FINDERS: Record<string, (q: string, used: Set<string>, file: string) => Promise<ImageHit | null>> = {
   commons: commonsImage,
@@ -43,8 +46,9 @@ export function topicFallbacks(subject: string, cfg: ChannelConfig): string[] {
 }
 
 export async function sceneImages(
-  cfg: ChannelConfig, scenes: { id: string; imageQuery: string; altQueries?: string[]; motion?: string; era?: string }[],
-  dir: string, videoId: number, used: Set<string>, fallbacks?: string[],
+  cfg: ChannelConfig,
+  scenes: { id: string; imageQuery: string; altQueries?: string[]; motion?: string; era?: string; cardHeadline?: string; cardSub?: string }[],
+  dir: string, videoId: number, used: Set<string>, fallbacks?: string[], size?: { w: number; h: number },
 ): Promise<{ files: string[]; credits: ImageCredit[] }> {
   const fallbackList = fallbacks?.length ? fallbacks : cfg.fallbackImageQueries;
   await fs.mkdir(dir, { recursive: true });
@@ -82,20 +86,27 @@ export async function sceneImages(
         if (best && best.score >= 0.5) break outer; // clearly on-topic
       }
     }
-    // A confidently wrong picture is worse than a neutral one: below 0.3 prefer the fallback set.
-    if (best && best.score < 0.3) best = null;
-    if (!best) {
+    // Try on-topic fallbacks (another photo of the subject) before giving up on a photo entirely.
+    if (!best || best.score < MIN_USABLE) {
       for (const q of fallbackList) {
-        for (const find of sources) {
-          best = await find(q, used, file).catch(() => null);
-          if (best) break;
-        }
-        if (best) break;
+        const alt = await sources.reduce<Promise<ImageHit | null>>(
+          async (acc, find) => (await acc) ?? (await find(q, used, file).catch(() => null)), Promise.resolve(null));
+        if (alt && alt.score >= MIN_USABLE) { best = alt; break; }
       }
     }
-    if (!best) throw new Error(`no usable image for scene ${s.id} ("${s.imageQuery}")`);
-    if (best.score < 0.5) {
-      await incident("visuals.weak-match", new Error(`"${s.imageQuery}" -> "${best.title}" (${best.source}, score ${best.score})`), videoId);
+    // Still nothing honest? Render a card from the scene's own words — always relevant, always licence-clean.
+    if (!best || best.score < MIN_USABLE) {
+      const card = path.join(dir, `${String(i).padStart(3, "0")}-card.jpg`);
+      await makeCard({
+        headline: s.cardHeadline || s.imageQuery,
+        sub: s.cardSub,
+        index: i,
+        width: size?.w ?? 1920,
+        height: size?.h ?? 1080,
+        out: card,
+      });
+      await incident("visuals.card", new Error(`no archive match for "${s.imageQuery}" — rendered a card instead`), videoId);
+      return { file: card, credit: { source: "card", id: `card-${s.id}`, title: s.cardHeadline || s.imageQuery } };
     }
     return { file, credit: { source: best.source, id: best.id, title: best.title, attribution: best.attribution } };
   });

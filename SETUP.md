@@ -190,3 +190,25 @@ Now, before any production:
 3. **Era routing** — scenes are marked historical/modern/any. Historical scenes search with period terms
    (engraving, lithograph, vintage photograph) and never touch modern stock photos or stock video.
 4. **Fewer, longer scenes** — 14-20 instead of 25-31. Every scene is a chance for a picture to go wrong.
+
+## Backup provider: never hand-type a model id
+
+`grok 4` is xAI's model, not a Groq id — that error cost a run. Let the provider tell you:
+
+```bash
+# after putting OPENAI_COMPAT_BASE_URL and OPENAI_COMPAT_API_KEY in .env
+npm run models:backup
+```
+
+It lists what your provider actually serves, probes the largest ones with a real JSON request, and writes
+working ids into `OPENAI_COMPAT_MODEL_HEAVY` / `_LIGHT`. Same idea as `npm run models` for Gemini.
+
+## Generated cards
+
+Some scenes have no honest photograph — a figure, a comparison, a process. Hunting the archive for those is
+what produced pocket watches in a pipeline video. Now, when no image scores above 0.35 relevance, the scene
+renders as a designed card built from the writer's own `cardHeadline` / `cardSub` (usually the scene's key
+number). Cards are relevant by construction, licence-clean, and skipped by image QA.
+
+The forecast judges the MIX: mostly photographs with a few cards reads as deliberate; more than half cards
+caps the score at 6.

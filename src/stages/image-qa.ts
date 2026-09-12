@@ -72,7 +72,10 @@ export async function imageQa(o: {
   let rejected = 0;
 
   const attempts = new Map<number, number>();
-  const stillIdx = o.files.map((f, i) => (/\.(mp4|mov|webm)$/i.test(f) ? -1 : i)).filter((i) => i >= 0);
+  // Skip video clips (no contact sheet) and generated cards (relevant by construction).
+  const stillIdx = o.files
+    .map((f, i) => (/\.(mp4|mov|webm)$/i.test(f) || /-card\.jpg$/.test(f) ? -1 : i))
+    .filter((i) => i >= 0);
   for (let round = 0; round < (o.rounds ?? 2); round++) {
     const bad = new Set<number>();
     for (let start = 0; start < stillIdx.length; start += SHEET) {

@@ -45,9 +45,11 @@ claim, a weak or generic first 20 seconds, encyclopedia-flavoured writing, advic
 a title that overpromises, or scenes that cannot be illustrated with a real archive photograph.
 
 Illustratability is MEASURED, not guessed: ${Math.round(o.feasible * 100)}% of this script's scenes returned a
-genuinely matching picture when searched against the real archive. Treat that number as the hard ceiling on
-visualsMatch, because scenes that scored badly WILL end up with an unrelated picture and the reviewer holds the
-video for exactly that. Below 80% feasible, "likely" cannot exceed 6.
+genuinely matching picture when searched against the real archive. The rest will be rendered as designed
+typographic cards built from each scene's own cardHeadline/cardSub — relevant by construction, never a wrong
+photograph. So score visualsMatch on the MIX: a video that is mostly real photographs with a few cards reads as
+deliberate; one that is more than half cards reads as a slideshow of text and cannot exceed 6.
+Judge the cardHeadline values too: a card carrying a concrete figure works, a card repeating an abstraction does not.
 
 verdict: "proceed" if likely >= 7; "repair" if the listed fixes would plausibly get it there; "abandon" if the
 topic itself cannot carry a good video (thin sourcing, nothing surprising, nothing to show).${
