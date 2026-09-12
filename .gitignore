@@ -1,0 +1,6 @@
+.claude-runtime/
+.env
+.model-cache/
+downloads/
+node_modules/
+work/

@@ -1,0 +1,45 @@
+{
+  "name": "yt-autopilot",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "setup": "tsx --env-file-if-exists=.env scripts/setup.ts",
+    "check": "tsx --env-file-if-exists=.env scripts/check.ts",
+    "auth:youtube": "tsx --env-file-if-exists=.env scripts/auth-youtube.ts",
+    "migrate": "tsx --env-file-if-exists=.env src/jobs/migrate.ts",
+    "video:local": "bash scripts/local.sh",
+    "github": "bash scripts/github.sh",
+    "video:cloud": "bash scripts/cloud.sh dry",
+    "video:live": "bash scripts/cloud.sh live",
+    "produce": "tsx --env-file-if-exists=.env src/jobs/produce.ts",
+    "approve": "tsx --env-file-if-exists=.env src/jobs/approve.ts",
+    "analytics": "tsx --env-file-if-exists=.env src/jobs/analytics.ts",
+    "learn": "tsx --env-file-if-exists=.env src/jobs/learn.ts",
+    "models": "tsx --env-file-if-exists=.env scripts/list-models.ts",
+    "typecheck": "tsc --noEmit",
+    "test:voice": "tsx --env-file-if-exists=.env scripts/test-voice.ts",
+    "voice:system": "tsx scripts/voice-system.ts",
+    "voice:kokoro": "tsx scripts/voice-kokoro.ts",
+    "why": "tsx --env-file-if-exists=.env scripts/why.ts",
+    "retry": "tsx --env-file-if-exists=.env scripts/retry.ts",
+    "preflight": "tsx --env-file-if-exists=.env scripts/preflight.ts",
+    "logs": "gh run watch $(gh run list -w produce -L 1 --json databaseId -q '.[0].databaseId')"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.125.0",
+    "googleapis": "^180.0.0",
+    "kokoro-js": "^1.2.1",
+    "pg": "^8.13.0",
+    "tsx": "^4.19.0",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.25.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "typescript": "^5.6.0"
+  }
+}

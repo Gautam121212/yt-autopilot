@@ -1,0 +1,82 @@
+name: produce
+on:
+  schedule:
+    - cron: "30 3 * * *"   # daily 09:00 IST; config maxVideosPerWeek decides how many actually get made
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Render but do not upload (videos attached as artifact)"
+        type: boolean
+        default: true
+      sub_niche:
+        description: "Force a sub-niche id (optional)"
+        required: false
+concurrency: { group: produce, cancel-in-progress: false }
+permissions: { contents: read, issues: write }
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core espeak-ng
+      - run: npm ci
+      - name: Install Claude Code CLI (only when using a Claude subscription)
+        env:
+          LLM_PROVIDER: ${{ secrets.LLM_PROVIDER }}
+        run: '[ "$LLM_PROVIDER" = "claude-code" ] && npm install -g @anthropic-ai/claude-code || echo "skipped"'
+      - name: Cache voice model
+        uses: actions/cache@v4
+        with:
+          path: .model-cache
+          key: kokoro-v1-q8
+      - run: npm run produce
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+          FORCE_SUB_NICHE: ${{ inputs.sub_niche }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CLAUDE_MODEL_HEAVY: ${{ secrets.CLAUDE_MODEL_HEAVY }}
+          CLAUDE_MODEL_LIGHT: ${{ secrets.CLAUDE_MODEL_LIGHT }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL_HEAVY: ${{ secrets.GEMINI_MODEL_HEAVY }}
+          GEMINI_MODEL_LIGHT: ${{ secrets.GEMINI_MODEL_LIGHT }}
+          OPENAI_COMPAT_BASE_URL: ${{ secrets.OPENAI_COMPAT_BASE_URL }}
+          OPENAI_COMPAT_API_KEY: ${{ secrets.OPENAI_COMPAT_API_KEY }}
+          OPENAI_COMPAT_MODEL_HEAVY: ${{ secrets.OPENAI_COMPAT_MODEL_HEAVY }}
+          OPENAI_COMPAT_MODEL_LIGHT: ${{ secrets.OPENAI_COMPAT_MODEL_LIGHT }}
+          OPENAI_COMPAT_VISION: ${{ secrets.OPENAI_COMPAT_VISION }}
+          LLM_PROVIDER: ${{ secrets.LLM_PROVIDER }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Debug artifacts (scripts, captions, thumbnail)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: work-${{ github.run_id }}
+          path: |
+            work/**/*.json
+            work/**/*.srt
+            work/**/thumbnail.jpg
+            work/**/contact-*.jpg
+            work/**/review-pack.md
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Dry-run videos
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: videos-${{ github.run_id }}
+          path: |
+            work/**/final.mp4
+            work/**/short.mp4
+          retention-days: 3
+          if-no-files-found: ignore

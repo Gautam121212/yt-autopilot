@@ -1,0 +1,220 @@
+{
+  "channelName": "Brainy Broadcast",
+  "niche": "educational explainers: one surprising, well-documented idea per video, told as a story",
+  "language": "en",
+  "audienceTimezone": "America/New_York",
+  "targetMinutes": [
+    8,
+    10
+  ],
+  "wordsPerMinute": 150,
+  "maxVideosPerWeek": 2,
+  "maxAwaitingApproval": 3,
+  "makeShorts": true,
+  "categoryId": "27",
+  "approval": {
+    "mode": "claude",
+    "humanReviewFirst": 3,
+    "minScore": 7
+  },
+  "imageSources": [
+    "commons",
+    "pexels",
+    "nasa"
+  ],
+  "videoClipRatio": 0.25,
+  "subNiches": [
+    {
+      "id": "science",
+      "label": "Science explainers (physics, chemistry, earth)",
+      "weight": 1.2,
+      "adRisk": "low",
+      "examples": [
+        "Why glass is technically a liquid myth",
+        "What actually happens when lightning strikes sand"
+      ],
+      "searchQueries": [
+        "science explained documentary",
+        "physics explained",
+        "how does it actually work"
+      ]
+    },
+    {
+      "id": "history",
+      "label": "History with a mechanism",
+      "weight": 1.2,
+      "adRisk": "low",
+      "examples": [
+        "The map error that created a country",
+        "How one shipping container changed the world"
+      ],
+      "searchQueries": [
+        "history documentary short",
+        "how history changed",
+        "forgotten history story"
+      ]
+    },
+    {
+      "id": "psychology",
+      "label": "Psychology and human behaviour",
+      "weight": 1.2,
+      "adRisk": "low",
+      "examples": [
+        "Why you remember insults better than praise",
+        "The experiment that broke social psychology"
+      ],
+      "searchQueries": [
+        "psychology explained",
+        "why do people behave",
+        "famous psychology experiment"
+      ]
+    },
+    {
+      "id": "engineering",
+      "label": "How things are built and why",
+      "weight": 1,
+      "adRisk": "low",
+      "examples": [
+        "Why skyscrapers sway on purpose",
+        "The standard that quietly runs the internet"
+      ],
+      "searchQueries": [
+        "engineering explained",
+        "how it's built documentary",
+        "why engineers design"
+      ]
+    },
+    {
+      "id": "biology",
+      "label": "Biology and the body",
+      "weight": 1,
+      "adRisk": "low",
+      "examples": [
+        "The organ nobody could explain until recently",
+        "How a seed knows which way is up"
+      ],
+      "searchQueries": [
+        "biology explained",
+        "how the body works",
+        "nature documentary explained"
+      ]
+    },
+    {
+      "id": "economics",
+      "label": "Money, markets and incentives",
+      "weight": 1,
+      "adRisk": "low",
+      "examples": [
+        "Why identical goods cost different amounts",
+        "The price signal nobody notices"
+      ],
+      "searchQueries": [
+        "economics explained",
+        "why things cost",
+        "market explained documentary"
+      ]
+    },
+    {
+      "id": "space",
+      "label": "Space and astronomy",
+      "weight": 1,
+      "adRisk": "low",
+      "examples": [
+        "Why Venus is hotter than Mercury",
+        "How Voyager still talks to Earth"
+      ],
+      "searchQueries": [
+        "space documentary explained",
+        "astronomy explained",
+        "nasa mission story"
+      ]
+    },
+    {
+      "id": "technology",
+      "label": "Technology and computing",
+      "weight": 0.8,
+      "adRisk": "low",
+      "examples": [
+        "The bug that cost a spacecraft",
+        "Why your photos take up so much space"
+      ],
+      "searchQueries": [
+        "technology explained",
+        "computer science explained",
+        "how software works"
+      ]
+    }
+  ],
+  "structures": [
+    {
+      "id": "question_answer",
+      "description": "Open with a startling question, give the intuitive wrong answer, then build to the real answer with escalating reveals."
+    },
+    {
+      "id": "journey",
+      "description": "Take the viewer on a journey (outward, inward, forward in time), each stop a new reveal."
+    },
+    {
+      "id": "story",
+      "description": "Tell a true story with a human problem at its core and a clear climax that reveals the idea."
+    },
+    {
+      "id": "countdown_of_extremes",
+      "description": "Escalating sequence of 5-7 examples, each more surprising than the last, biggest saved for the end."
+    },
+    {
+      "id": "mechanism_first",
+      "description": "State a surprising principle up front, then prove it with two or three concrete cases."
+    }
+  ],
+  "voice": {
+    "provider": "kokoro",
+    "voiceId": "af_heart",
+    "model": "onnx-community/Kokoro-82M-v1.0-ONNX",
+    "speed": 0.95
+  },
+  "fallbackImageQueries": [
+    "laboratory",
+    "archive photograph",
+    "landscape",
+    "machinery",
+    "library manuscript",
+    "microscope"
+  ],
+  "discovery": {
+    "lookbackDays": 180,
+    "queriesPerRun": 3,
+    "minViews": 50000
+  },
+  "publish": {
+    "candidateSlots": [
+      {
+        "dow": 2,
+        "hour": 12
+      },
+      {
+        "dow": 4,
+        "hour": 15
+      },
+      {
+        "dow": 6,
+        "hour": 10
+      },
+      {
+        "dow": 0,
+        "hour": 14
+      }
+    ],
+    "epsilon": 0.25,
+    "minSamplesPerSlot": 3,
+    "minHoursAhead": 6,
+    "minGapHours": 48
+  },
+  "learning": {
+    "minVideosForLearning": 8,
+    "maxWeightChangePerCycle": 0.5,
+    "cadenceCeiling": 4,
+    "maxLearnedSubNiches": 4,
+    "autoApply": false
+  }
+}
