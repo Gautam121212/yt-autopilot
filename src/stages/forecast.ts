@@ -24,7 +24,12 @@ export const ForecastSchema = z.object({
 });
 export type Forecast = z.infer<typeof ForecastSchema>;
 
-export async function forecast(o: { cfg: ChannelConfig; script: Script; dossier: Dossier; history: { predicted: number; actual: number }[] }): Promise<Forecast> {
+export async function forecast(o: {
+  cfg: ChannelConfig; script: Script; dossier: Dossier;
+  history: { predicted: number; actual: number }[];
+  /** share of scenes with a findable archive picture, measured against the real archive */
+  feasible: number;
+}): Promise<Forecast> {
   // Calibration: if past predictions ran high, the model is told so and should mark itself down.
   const bias = o.history.length >= 3
     ? o.history.reduce((n, h) => n + (h.predicted - h.actual), 0) / o.history.length
@@ -39,9 +44,10 @@ The reviewer who will actually rate it scores like this: 10 = would send to a fr
 claim, a weak or generic first 20 seconds, encyclopedia-flavoured writing, advice or self-diagnosis framing,
 a title that overpromises, or scenes that cannot be illustrated with a real archive photograph.
 
-Score "illustratability" honestly: count how many scenes name a concrete object a photo archive would actually
-hold. Abstractions, analogies without a literal object, and events with no photographable subject drag it down,
-because those scenes end up with irrelevant pictures and sink the real review.
+Illustratability is MEASURED, not guessed: ${Math.round(o.feasible * 100)}% of this script's scenes returned a
+genuinely matching picture when searched against the real archive. Treat that number as the hard ceiling on
+visualsMatch, because scenes that scored badly WILL end up with an unrelated picture and the reviewer holds the
+video for exactly that. Below 80% feasible, "likely" cannot exceed 6.
 
 verdict: "proceed" if likely >= 7; "repair" if the listed fixes would plausibly get it there; "abandon" if the
 topic itself cannot carry a good video (thin sourcing, nothing surprising, nothing to show).${

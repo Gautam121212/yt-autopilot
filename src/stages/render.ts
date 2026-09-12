@@ -98,17 +98,24 @@ async function pickMusic(): Promise<string | undefined> {
 export async function renderVideo(o: { scenes: Narrated[]; images: string[]; audio: SceneAudio[]; dir: string; seed: number; size?: Size; name?: string; burnCaptions?: boolean }) {
   const size = o.size ?? LANDSCAPE;
   const name = o.name ?? "final";
-  const clipsDir = path.join(o.dir, `clips-${name}`);
+  // One shared clip cache per video: a repair round only re-encodes the scenes whose
+  // image or audio actually changed, instead of rebuilding all 25 clips.
+  const clipsDir = path.join(o.dir, `clips-${o.size === VERTICAL ? "v" : "h"}`);
   await fs.mkdir(clipsDir, { recursive: true });
+  const mtime = async (f: string) => (await fs.stat(f).then((x) => x.mtimeMs, () => Infinity));
 
   // Encode scene clips in parallel (zoompan is single-threaded per clip).
   // Encoding is not perfectly parallel inside one ffmpeg, so run one job per core (min 2).
   const parallel = process.env.LOW_POWER === "true" ? 1 : Math.max(2, Math.min(4, os.cpus().length));
+  let reused = 0;
   const clips = await mapLimit(o.scenes, parallel, async (_s, i) => {
     const out = path.join(clipsDir, `${String(i).padStart(3, "0")}.mp4`);
+    const [clipT, imgT, audT] = await Promise.all([mtime(out), mtime(o.images[i]!), mtime(o.audio[i]!.file)]);
+    if (clipT !== Infinity && clipT > imgT && clipT > audT) { reused++; return out; }
     await sceneClip(o.images[i]!, o.audio[i]!, (i + o.seed) % MOTIONS.length, out, size);
     return out;
   });
+  if (reused) console.log(`  reused ${reused}/${o.scenes.length} unchanged scene clips`);
 
   const XFADE = clips.length > 1 && clips.length <= 40 ? 0.4 : 0;
   const timings: SceneTiming[] = [];
@@ -143,7 +150,7 @@ export async function renderVideo(o: { scenes: Narrated[]; images: string[]; aud
     }
     await sh("ffmpeg", ["-y", ...inputs, "-filter_complex", filters.join(";"),
       "-map", `[${vPrev}]`, "-map", `[${aPrev}]`,
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", String(FPS),
+      "-c:v", "libx264", "-preset", "faster", "-crf", "20", "-r", String(FPS),
       "-c:a", "aac", "-b:a", "192k", "-ar", "48000", joined]);
   } else {
     const list = path.join(o.dir, `clips-${name}.txt`);

@@ -20,7 +20,10 @@ HARD RULES
    if the first finds nothing ("sugar cube in water" / "salt crystal macro" / "limestone cave pool").
    motion: "clip" when the line describes movement, a process, scale or a place you would pan across
    (water flowing, machinery turning, a storm, a crowd of stars); "still" for objects, documents and portraits of things.
-   Aim for roughly one "clip" in every three scenes.
+   Aim for roughly one "clip" in every three scenes. A "clip" scene must be era "modern" or "any" —
+   stock video is always modern footage, so never mark a pre-1950 subject as "clip".
+   era: "historical" for any subject before about 1950 (it forces period engravings and photographs and blocks
+   modern stock), "modern" for present-day subjects, "any" for timeless objects and landscapes.
    NEVER request: anything "under a microscope" or magnified beyond a normal photo; a "group photo" or any
    query containing people, workers, crowds or portraits; a texture with no subject ("fibers", "grain", "surface");
    a brand-name product (a fridge, a car) since those carry logos. Ask for the OBJECT or the PLACE instead
@@ -39,8 +42,8 @@ ${playbook}`;
 }
 
 const SHAPE = `JSON: { "title", "altTitles": [3], "description" (2-3 short paragraphs, no links), "tags": [<=15], "thumbnailText" (2-4 words),
-"thumbnailQuery" (a concrete photo search for the thumbnail), "scenes": [{ "id": "sc01", "chapter"?, "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "claimIds" }],
-"claims": [{ "id": "C1", "text", "sourceIds" }], "short": { "title", "scenes": [{ "id": "sh01", "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip" }] } }`;
+"thumbnailQuery" (a concrete photo search for the thumbnail), "scenes": [{ "id": "sc01", "chapter"?, "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "era": "historical"|"modern"|"any", "claimIds" }],
+"claims": [{ "id": "C1", "text", "sourceIds" }], "short": { "title", "scenes": [{ "id": "sh01", "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "era": "historical"|"modern"|"any" }] } }`;
 
 export async function writeScript(o: {
   cfg: ChannelConfig; playbook: string; structure: { id: string; description: string };

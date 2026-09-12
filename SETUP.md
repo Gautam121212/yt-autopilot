@@ -175,3 +175,18 @@ Nothing is thrown away, and the week's slot is not lost.
 
 `npm run why` shows the repair count and every issue with its area and scene.
 `npm run retry` resets the newest video to redo media and checks from scratch.
+
+## Why videos were being held (and what changed)
+
+The first videos scored 4-5/10 almost entirely on `visualsMatch`. The cause was ordering: the script was written
+first, then pictures were hunted to match it — so scenes about "sawdust under a microscope" or "an 1833 sailing
+vessel" ended up with bread crumb macros and modern warships.
+
+Now, before any production:
+1. **Feasibility probe** — every scene's search runs against the real archive (metadata only, no downloads).
+   Scenes with no genuine match get their searches rewritten, then re-probed.
+2. **The forecast is told the measured number.** Below 80% findable, the predicted score is capped at 6,
+   which triggers a pre-repair or abandons the topic before a minute of CPU is spent.
+3. **Era routing** — scenes are marked historical/modern/any. Historical scenes search with period terms
+   (engraving, lithograph, vintage photograph) and never touch modern stock photos or stock video.
+4. **Fewer, longer scenes** — 14-20 instead of 25-31. Every scene is a chance for a picture to go wrong.

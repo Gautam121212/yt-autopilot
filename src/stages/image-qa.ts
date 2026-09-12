@@ -65,7 +65,7 @@ async function sheet(files: string[], out: string, labels = true) {
  */
 export async function imageQa(o: {
   cfg: ChannelConfig; dir: string; videoId: number; used: Set<string>;
-  scenes: { id: string; imageQuery: string; narration: string }[];
+  scenes: { id: string; imageQuery: string; narration: string; era?: string; altQueries?: string[] }[];
   files: string[]; credits: ImageCredit[]; rounds?: number;
 }): Promise<{ files: string[]; credits: ImageCredit[]; rejected: number }> {
   if (!providerSupportsVision()) return { files: o.files, credits: o.credits, rejected: 0 };
@@ -90,11 +90,13 @@ REJECT an image if ANY of these is true:
 - an identifiable person's face is visible, or it is a photo of people posing, working or at an event;
 - it carries a watermark, stock-photo overlay, caption bar or large embedded text;
 - it does not depict the subject of its caption;
+- the period is wrong: a modern photograph (modern ships, cars, clothing, buildings, equipment) used for a
+  pre-1950 subject, or vice versa. This is a rejection on its own, however attractive the picture is;
 - it is blurry, tiny, a collage, or a screenshot of a webpage.
 Otherwise keep it. Be strict: a rejected image costs one retry, a bad image published costs the channel.`,
         prompt: `The attached contact sheet has ${batch.length} images in a grid, numbered left to right, top to bottom starting at 1.
 Each image is meant to illustrate this narration:
-${idxBatch.map((sceneIdx, i) => `${i + 1}. "${o.scenes[sceneIdx]?.imageQuery}" — ${o.scenes[sceneIdx]?.narration.slice(0, 160)}`).join("\n")}
+${idxBatch.map((sceneIdx, i) => `${i + 1}. [${o.scenes[sceneIdx]?.era ?? "any"}] "${o.scenes[sceneIdx]?.imageQuery}" — ${o.scenes[sceneIdx]?.narration.slice(0, 160)}`).join("\n")}
 
 List ONLY the images to reject.`,
       }).catch(async (e) => { await incident("image-qa", e, o.videoId); return { rejects: [] as z.infer<typeof QaSchema>["rejects"] }; });

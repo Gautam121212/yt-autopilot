@@ -107,7 +107,7 @@ const stripHtml = (h: string) => h.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").
  * description must carry for CC-BY / CC-BY-SA works.
  */
 export async function commonsImage(query: string, used: Set<string>, file: string): Promise<ImageHit | null> {
-  const terms = words(query);
+  const terms = words(query.replace(HISTORICAL_HINT, ""));
   const api = `https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=search` +
     `&gsrsearch=${encodeURIComponent(`filetype:bitmap ${query}`)}&gsrnamespace=6&gsrlimit=40` +
     `&prop=imageinfo&iiprop=url|size|mime|extmetadata&iiurlwidth=1920`;
@@ -216,6 +216,30 @@ export async function pexelsVideo(query: string, used: Set<string>, file: string
   }
   return null;
 }
+
+// ---------- Feasibility probe ----------
+/**
+ * How well a query would match, WITHOUT downloading anything. Used before production to catch
+ * queries no archive can satisfy, which is the main cause of mismatched pictures.
+ */
+export async function probeQuery(query: string, era: "historical" | "modern" | "any" = "any"): Promise<{ score: number; best: string }> {
+  const terms = words(query);
+  if (!terms.length) return { score: 0, best: "" };
+  const q = era === "historical" ? `${query} ${HISTORICAL_HINT}` : query;
+  const api = `https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=search` +
+    `&gsrsearch=${encodeURIComponent(`filetype:bitmap ${q}`)}&gsrnamespace=6&gsrlimit=12&prop=imageinfo&iiprop=size|mime|extmetadata`;
+  const res = await getJson<{ query?: { pages?: Record<string, CommonsPage> } }>(api).catch(() => null);
+  let best = { score: 0, best: "" };
+  for (const p of Object.values(res?.query?.pages ?? {})) {
+    const title = p.title.replace(/^File:/, "").replace(/\.[a-z0-9]+$/i, "").replace(/[_-]+/g, " ");
+    const hits = terms.filter((t) => title.toLowerCase().includes(t)).length * 2;
+    const score = hits / (terms.length * 2);
+    if (score > best.score) best = { score: +score.toFixed(2), best: title };
+  }
+  return best;
+}
+
+export const HISTORICAL_HINT = "19th century engraving lithograph vintage photograph";
 
 // ---------- YouTube demand signals ----------
 export type Outlier = { title: string; channel: string; views: number; subs: number; ratio: number; ageDays: number };

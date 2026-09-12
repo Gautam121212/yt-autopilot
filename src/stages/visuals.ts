@@ -3,7 +3,7 @@ import path from "node:path";
 import type { ChannelConfig } from "../config";
 import { incident } from "../lib/log";
 import { mapLimit } from "../lib/media";
-import { commonsImage, nasaImage, pexelsImage, pexelsVideo, type ImageHit } from "../lib/sources";
+import { commonsImage, HISTORICAL_HINT, nasaImage, pexelsImage, pexelsVideo, type ImageHit } from "../lib/sources";
 
 export type ImageCredit = { source: string; id: string; title: string; attribution?: string };
 
@@ -15,9 +15,9 @@ const FINDERS: Record<string, (q: string, used: Set<string>, file: string) => Pr
 
 /** Fetch a different image for one scene, avoiding everything already used in this video. */
 export async function replaceSceneImage(
-  cfg: ChannelConfig, scene: { id: string; imageQuery: string; altQueries?: string[] }, file: string, used: Set<string>, videoId: number,
+  cfg: ChannelConfig, scene: { id: string; imageQuery: string; altQueries?: string[]; era?: string }, file: string, used: Set<string>, videoId: number,
 ): Promise<ImageCredit | null> {
-  const sources = cfg.imageSources.map((n) => FINDERS[n]).filter(Boolean);
+  const sources = cfg.imageSources.filter((n) => !(scene.era === "historical" && n === "pexels")).map((n) => FINDERS[n]!).filter(Boolean);
   const parts = scene.imageQuery.split(/\s+/).filter(Boolean);
   for (const q of [...(scene.altQueries ?? []), scene.imageQuery, parts.slice(0, 2).join(" "), ...cfg.fallbackImageQueries]) {
     for (const find of sources) {
@@ -35,19 +35,21 @@ export async function replaceSceneImage(
  * and only uses a generic fallback query when nothing relevant exists anywhere.
  */
 export async function sceneImages(
-  cfg: ChannelConfig, scenes: { id: string; imageQuery: string; altQueries?: string[]; motion?: string }[],
+  cfg: ChannelConfig, scenes: { id: string; imageQuery: string; altQueries?: string[]; motion?: string; era?: string }[],
   dir: string, videoId: number, used: Set<string>,
 ): Promise<{ files: string[]; credits: ImageCredit[] }> {
   await fs.mkdir(dir, { recursive: true });
-  const sources = cfg.imageSources.map((s) => FINDERS[s]).filter(Boolean);
-  if (!sources.length) throw new Error(`imageSources must name known sources: ${Object.keys(FINDERS).join(", ")}`);
+  if (!cfg.imageSources.length) throw new Error(`imageSources must name known sources: ${Object.keys(FINDERS).join(", ")}`);
+  // Pexels is modern stock; a 19th-century subject must never be illustrated from it.
+  const sourcesFor = (era?: string) =>
+    cfg.imageSources.filter((n) => !(era === "historical" && n === "pexels")).map((n) => FINDERS[n]!).filter(Boolean);
 
   const clipsWanted = Math.round(scenes.length * cfg.videoClipRatio);
   let clipsUsed = 0;
 
   const results = await mapLimit(scenes, 4, async (s, i) => {
     // The writer marks which lines describe movement; those are the ones worth a real clip.
-    if (process.env.PEXELS_API_KEY && s.motion === "clip" && clipsUsed < clipsWanted) {
+    if (process.env.PEXELS_API_KEY && s.motion === "clip" && s.era !== "historical" && clipsUsed < clipsWanted) {
       clipsUsed++;
       const mp4 = path.join(dir, `${String(i).padStart(3, "0")}.mp4`);
       for (const q of [s.imageQuery, ...(s.altQueries ?? [])]) {
@@ -58,7 +60,9 @@ export async function sceneImages(
     }
     const file = path.join(dir, `${String(i).padStart(3, "0")}.jpg`);
     const parts = s.imageQuery.split(/\s+/).filter(Boolean);
-    const queries = [s.imageQuery, ...(s.altQueries ?? []), parts.slice(0, 2).join(" ")]
+    const sources = sourcesFor(s.era);
+    const hint = s.era === "historical" ? ` ${HISTORICAL_HINT}` : "";
+    const queries = [s.imageQuery + hint, ...(s.altQueries ?? []).map((q) => q + hint), parts.slice(0, 2).join(" ")]
       .filter((q, j, a) => q && a.indexOf(q) === j);
 
     let best: ImageHit | null = null;

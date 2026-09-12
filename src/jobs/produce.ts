@@ -16,6 +16,7 @@ import { renderVideo, VERTICAL } from "../stages/render";
 import { research } from "../stages/research";
 import { finalReview, type Review } from "../stages/review";
 import { pickSlot } from "../stages/schedule";
+import { ensureIllustratable } from "../stages/feasibility";
 import { forecast } from "../stages/forecast";
 import { repairScript, reviseScript, writeScript } from "../stages/script";
 import { makeThumbnail } from "../stages/thumbnail";
@@ -163,12 +164,15 @@ async function main() {
         "select predicted_score as predicted, actual_score as actual from videos where predicted_score is not null and actual_score is not null order by id desc limit 8",
       );
       const hist = history.map((h) => ({ predicted: Number(h.predicted), actual: Number(h.actual) }));
-      let fc = await forecast({ cfg, script, dossier: video.dossier!, history: hist });
+      // Check the archive before predicting: image availability dominates the final score.
+      const feas = await ensureIllustratable({ cfg, script });
+      script = feas.script;
+      let fc = await forecast({ cfg, script, dossier: video.dossier!, history: hist, feasible: feas.feasible });
       log(`#${video.id} forecast: likely ${fc.likely}/10, ceiling ${fc.ceiling}/10 — ${fc.verdict} (weakest: ${fc.weakest.slice(0, 70)})`);
 
       if (fc.verdict === "repair" || fc.likely < cfg.approval.minScore) {
         script = await repairScript({ cfg, playbook, script, dossier: video.dossier!, issues: fc.fixes });
-        fc = await forecast({ cfg, script, dossier: video.dossier!, history: hist });
+        fc = await forecast({ cfg, script, dossier: video.dossier!, history: hist, feasible: feas.feasible });
         log(`#${video.id} forecast after pre-repair: likely ${fc.likely}/10 — ${fc.verdict}`);
         await updateVideo(video.id, { script, title: script.title });
       }
@@ -199,7 +203,7 @@ async function main() {
       log(`#${video.id} image QA`);
       const qa = await imageQa({ cfg, dir, videoId: video.id, used, scenes: script.scenes, files: long.files, credits: long.credits });
       if (shortAssets) {
-        await imageQa({ cfg, dir, videoId: video.id, used, scenes: script.short.scenes.map((x) => ({ ...x, narration: x.narration })), files: shortAssets[0].files, credits: shortAssets[0].credits, rounds: 1 });
+        await imageQa({ cfg, dir, videoId: video.id, used, scenes: script.short.scenes, files: shortAssets[0].files, credits: shortAssets[0].credits, rounds: 2 });
       }
       log(`#${video.id} image QA replaced ${qa.rejected} image(s)`);
 

@@ -42,6 +42,7 @@ export const SceneSchema = z.object({
   imageQuery: z.string().describe("2-5 word photo-archive search naming ONE concrete object"),
   altQueries: z.array(z.string()).min(2).max(3).describe("two or three DIFFERENT concrete objects that could illustrate the same line"),
   motion: z.enum(["still", "clip"]).describe("'clip' for scenes describing movement, process or scale; 'still' otherwise"),
+  era: z.enum(["historical", "modern", "any"]).describe("'historical' for anything before ~1950 — forces period artwork and blocks modern stock photos"),
   claimIds: z.array(z.string()).default([]),
 });
 export type Scene = z.infer<typeof SceneSchema>;
@@ -60,6 +61,7 @@ export const ScriptSchema = z.object({
       id: z.string(), narration: z.string(), imageQuery: z.string(),
       altQueries: z.array(z.string()).min(2).max(3),
       motion: z.enum(["still", "clip"]),
+      era: z.enum(["historical", "modern", "any"]),
     })).min(3).max(8),
   }),
   claims: z.array(z.object({ id: z.string(), text: z.string(), sourceIds: z.array(z.string()).min(1) })),
