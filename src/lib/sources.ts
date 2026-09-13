@@ -1,6 +1,7 @@
 /** Free data sources: Wikipedia (research), NASA Image Library (visuals), YouTube search (demand signals). */
 import fs from "node:fs/promises";
 import { fetchOk, withRetry } from "./http";
+import { isPlayable } from "./media";
 import { yt } from "./youtube";
 
 const UA = `yt-autopilot/1.0 (https://github.com/${process.env.GITHUB_REPOSITORY ?? "local"})`;
@@ -217,7 +218,10 @@ export async function pexelsVideo(query: string, used: Set<string>, file: string
       .sort((a, b) => b.width - a.width)[0];
     const res = f ? await fetch(f.link).catch(() => null) : null;
     if (!res?.ok) { used.delete(id); continue; }
-    await fs.writeFile(file, Buffer.from(await res.arrayBuffer()));
+    const bytes = Buffer.from(await res.arrayBuffer());
+    if (bytes.length < 200_000) { used.delete(id); continue; } // truncated download
+    await fs.writeFile(file, bytes);
+    if (!(await isPlayable(file, 2))) { used.delete(id); continue; } // unreadable or too short to loop safely
     return {
       source: "pexels", id, title: `Pexels video ${v.id}`, score: 0.6,
       attribution: `Video by ${v.user?.name ?? "Pexels"} on Pexels${v.url ? ` — ${v.url}` : ""}`,

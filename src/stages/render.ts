@@ -39,8 +39,12 @@ async function sceneClip(img: string, audio: SceneAudio, motion: number, out: st
 
   if (isVideo(img)) {
     // Stock clip: loop it to the narration length, drop its own audio, keep our voice track.
+    // -stream_loop on an unreadable file spins forever, so bound the loop count explicitly.
+    const clipLen = await durationSec(img).catch(() => 0);
+    if (clipLen < 1) throw new Error(`stock clip ${img} is unreadable (${clipLen}s)`);
+    const loops = Math.max(0, Math.ceil(dur / clipLen));
     await sh("ffmpeg", [
-      "-y", "-stream_loop", "-1", "-i", img, "-i", audio.file,
+      "-y", "-stream_loop", String(loops), "-i", img, "-i", audio.file,
       "-filter_complex",
       `[0:v]scale=${Math.round(size.w * 1.15)}:${Math.round(size.h * 1.15)}:force_original_aspect_ratio=increase,` +
         `crop=${size.w}:${size.h}:'(in_w-out_w)/2+(in_w-out_w)/2*sin(t/6)':'(in_h-out_h)/2',fps=${FPS},` +

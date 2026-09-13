@@ -3,17 +3,34 @@ import { spawn } from "node:child_process";
 /** LOW_POWER caps ffmpeg threads so a laptop stays usable (and cooler) during a local run. */
 const LOW_POWER = process.env.LOW_POWER === "true";
 
-export function sh(cmd: string, args: string[]): Promise<string> {
+/** Hard ceiling for any external command. A hung ffmpeg used to stall the whole job for hours. */
+const CMD_TIMEOUT_MS = Number(process.env.CMD_TIMEOUT_MS ?? 10 * 60_000);
+
+export function sh(cmd: string, args: string[], timeoutMs = CMD_TIMEOUT_MS): Promise<string> {
   if (LOW_POWER && cmd === "ffmpeg" && !args.includes("-threads")) args = ["-threads", "2", ...args];
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
     let err = "";
+    let killed = false;
+    const timer = setTimeout(() => {
+      killed = true;
+      p.kill("SIGKILL");
+    }, timeoutMs);
     p.stdout.on("data", (d) => (out += d));
     p.stderr.on("data", (d) => { err = (err + d).slice(-8000); });
-    p.on("error", reject);
-    p.on("close", (code) => (code === 0 ? resolve(out) : reject(new Error(`${cmd} exited ${code}: ${err.slice(-2000)}`))));
+    p.on("error", (e) => { clearTimeout(timer); reject(e); });
+    p.on("close", (code) => {
+      clearTimeout(timer);
+      if (killed) return reject(new Error(`${cmd} was killed after ${Math.round(timeoutMs / 1000)}s (hung): ${args.slice(0, 6).join(" ")} ... ${err.slice(-500)}`));
+      code === 0 ? resolve(out) : reject(new Error(`${cmd} exited ${code}: ${err.slice(-2000)}`));
+    });
   });
+}
+
+/** True when the file is a real, readable media file with a sane duration. */
+export async function isPlayable(file: string, minSec = 0.4): Promise<boolean> {
+  return durationSec(file).then((d) => d >= minSec, () => false);
 }
 
 export async function durationSec(file: string): Promise<number> {

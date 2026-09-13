@@ -16,7 +16,7 @@ permissions: { contents: read, issues: write }
 jobs:
   produce:
     runs-on: ubuntu-latest
-    timeout-minutes: 100
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,6 +33,7 @@ jobs:
           path: .model-cache
           key: kokoro-v1-q8
       - run: npm run produce
+        timeout-minutes: 60
         env:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
           FORCE_SUB_NICHE: ${{ inputs.sub_niche }}
