@@ -12,7 +12,7 @@ import path from "node:path";
 import type { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { env, ROOT } from "../config";
-import { fetchOk, withRetry } from "./http";
+import { fetchOk, withRetry } from "./http";  // fetchOk carries a deadline
 
 export type Tier = "heavy" | "light";
 const PROVIDER = process.env.LLM_PROVIDER || "gemini";

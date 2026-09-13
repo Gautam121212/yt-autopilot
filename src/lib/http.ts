@@ -18,12 +18,19 @@ export async function withRetry<T>(fn: () => Promise<T>, label: string, tries = 
   throw new Error(`${label} failed after ${tries} attempts: ${String(last)}`);
 }
 
+/** Every network call needs a deadline: a socket that never answers used to stall the whole job. */
+export const NET_TIMEOUT_MS = Number(process.env.NET_TIMEOUT_MS ?? 45_000);
+
+export function hfetch(url: string, init: RequestInit = {}, timeoutMs = NET_TIMEOUT_MS): Promise<Response> {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+}
+
 export class HttpError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
-export async function fetchOk(url: string, init: RequestInit): Promise<Response> {
-  const res = await fetch(url, init);
+export async function fetchOk(url: string, init: RequestInit, timeoutMs = NET_TIMEOUT_MS): Promise<Response> {
+  const res = await hfetch(url, init, timeoutMs);
   if (!res.ok) throw new HttpError(res.status, `${init.method ?? "GET"} ${url} -> ${res.status}: ${(await res.text()).slice(0, 800)}`);
   return res;
 }

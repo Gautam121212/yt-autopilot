@@ -6,6 +6,7 @@ const day = (d: Date) => d.toISOString().slice(0, 10);
 
 async function main() {
   await q("update videos set status = 'published' where status = 'scheduled' and publish_at < now()");
+  await q("update videos set short_status = 'published' where short_status = 'scheduled' and short_publish_at < now()");
   const api = ytAnalytics();
   const vids = await q<{ id: number; youtube_id: string; publish_at: Date; has_ret: boolean }>(`
     select v.id, v.youtube_id, v.publish_at, exists(select 1 from retention r where r.video_id = v.id) as has_ret

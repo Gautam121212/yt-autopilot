@@ -100,6 +100,7 @@ async function openaiTts(cfg: ChannelConfig, text: string): Promise<Buffer> {
 export async function synthesize(cfg: ChannelConfig, scenes: Narrated[], dir: string): Promise<SceneAudio[]> {
   await fs.mkdir(dir, { recursive: true });
   if (cfg.voice.provider === "kokoro" || cfg.voice.provider === "system") {
+    console.log(`  voice: preparing ${cfg.voice.provider} for ${scenes.length} scenes`);
     const out: SceneAudio[] = [];
     for (const [i, s] of scenes.entries()) { // CPU-bound: sequential
       const file = path.join(dir, `${String(i).padStart(3, "0")}.wav`);

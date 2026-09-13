@@ -2,8 +2,6 @@ import { env, loadChannel } from "../config";
 import { closeDb, q, updateVideo } from "../lib/db";
 import { closeIssue, comment, listComments } from "../lib/github";
 import { log } from "../lib/log";
-import { schedulePublic } from "../stages/publish";
-import { pickSlot } from "../stages/schedule";
 
 async function main() {
   const issue = Number(env("ISSUE_NUMBER"));
@@ -16,17 +14,15 @@ async function main() {
 
   if (label === "approve") {
     const override = [...comments].reverse().map((c) => c.body.match(/^\/title\s+(.+)$/m)?.[1]).find(Boolean)?.trim();
-    const { slot, publishAt } = await pickSlot(loadChannel(), v.sub_niche);
-    let manual = "";
-    try {
-      await schedulePublic(v.youtube_id, publishAt, override);
-      if (v.short_youtube_id) await schedulePublic(v.short_youtube_id, new Date(publishAt.getTime() + 24 * 3600e3));
-    } catch (e) {
-      // Typical before the API compliance audit passes: uploads are locked private.
-      manual = `\n\n⚠️ YouTube refused the schedule (${(e as Error).message.slice(0, 200)}). Publish manually in Studio: long video at ${publishAt.toISOString()}${v.short_youtube_id ? `, short 24h later` : ""}.`;
+    if (override) {
+      const { yt } = await import("../lib/youtube");
+      const api = yt();
+      const cur = await api.videos.list({ part: ["snippet"], id: [v.youtube_id] });
+      const snippet = cur.data.items?.[0]?.snippet;
+      if (snippet) await api.videos.update({ part: ["snippet"], requestBody: { id: v.youtube_id, snippet: { ...snippet, title: override.slice(0, 100) } } });
     }
-    await updateVideo(v.id, { publish_slot: slot, publish_at: publishAt, status: "scheduled", ...(override ? { title: override } : {}) });
-    await comment(issue, `Scheduled for **${publishAt.toISOString()}** (slot dow=${slot.dow} hour=${slot.hour}).${override ? ` Title set to "${override}".` : ""}${manual}`);
+    await updateVideo(v.id, { status: "ready", ...(override ? { title: override } : {}) });
+    await comment(issue, `Added to the publish queue${override ? ` with the title "${override}"` : ""}. The queue job gives it a slot within the week's quota (${loadChannel().maxVideosPerWeek} long + ${loadChannel().shortsPerWeek} shorts).`);
     await closeIssue(issue);
   } else if (label === "reject") {
     const reason = comments.filter((c) => !c.body.startsWith("/title")).pop()?.body ?? "no reason given";

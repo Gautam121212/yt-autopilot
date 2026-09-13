@@ -121,7 +121,8 @@ should have been abandoned, and the topic bars in the playbook need raising.
 Also compare pre-release scores against actual performance: if videos the final check scored 8+ underperform,
 say so, because that means the check is measuring the wrong thing.
 
-EXPANSION — you may propose ONE new sub-niche per cycle. Propose one only when the data points somewhere
+EXPANSION — you may propose ONE new sub-niche per cycle, and you are expected to keep widening the channel's
+range over time rather than settling early: a channel with more proven topic areas has more ways to grow. Propose one only when the data points somewhere
 specific (a sub-niche outperforming, a retention pattern, a demand signal), never to "try something new".
 A new sub-niche must: be explainable from encyclopedic sources; be illustratable with real archive photographs;
 be advertiser-safe; and contain no advice. Reject anything that would breach YouTube's rules for monetization:
@@ -188,7 +189,7 @@ Statistical discipline:
   const learned = loadLearned();
   const added = [...(learned.addedSubNiches ?? [])];
   let expansionNote = "no change";
-  if (out.newSubNiche && published >= 8 && added.length < cfg.learning.maxLearnedSubNiches
+  if (out.newSubNiche && published >= 6 && added.length < cfg.learning.maxLearnedSubNiches
       && !cfg.subNiches.some((s) => s.id === out.newSubNiche!.id)) {
     const { policyCheck, rationale, ...niche } = out.newSubNiche;
     added.push({ ...niche, weight: Math.min(0.8, niche.weight) }); // starts small: it is an experiment

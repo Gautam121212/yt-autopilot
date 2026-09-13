@@ -19,6 +19,8 @@ create table if not exists videos (
   issue_number int,
   publish_slot jsonb,
   publish_at timestamptz,
+  short_publish_at timestamptz,
+  short_status text not null default 'none',
   rejection_reason text,
   usage jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
@@ -65,3 +67,5 @@ alter table videos add column if not exists assets jsonb;
 alter table videos add column if not exists repairs int not null default 0;
 alter table videos add column if not exists predicted_score numeric;
 alter table videos add column if not exists actual_score numeric;
+alter table videos add column if not exists short_publish_at timestamptz;
+alter table videos add column if not exists short_status text not null default 'none';

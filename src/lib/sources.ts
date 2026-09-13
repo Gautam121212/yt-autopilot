@@ -1,6 +1,6 @@
 /** Free data sources: Wikipedia (research), NASA Image Library (visuals), YouTube search (demand signals). */
 import fs from "node:fs/promises";
-import { fetchOk, withRetry } from "./http";
+import { fetchOk, hfetch, withRetry } from "./http";
 import { isPlayable } from "./media";
 import { yt } from "./youtube";
 
@@ -89,7 +89,7 @@ export async function nasaImage(query: string, used: Set<string>, file: string):
     const hrefs = assets.collection.items.map((a) => a.href);
     const href = ["~large.jpg", "~medium.jpg", "~orig.jpg"].map((suf) => hrefs.find((h) => h.endsWith(suf))).find(Boolean);
     if (!href) { used.delete(d.nasa_id); continue; }
-    const res = await fetch(encodeURI(decodeURI(href)).replace(/^http:/, "https:"), { headers: { "User-Agent": UA } }).catch(() => null);
+    const res = await hfetch(encodeURI(decodeURI(href)).replace(/^http:/, "https:"), { headers: { "User-Agent": UA } }, 60_000).catch(() => null);
     if (!res?.ok) { used.delete(d.nasa_id); continue; }
     await fs.writeFile(file, Buffer.from(await res.arrayBuffer()));
     return { source: "nasa", id: d.nasa_id, title: d.title ?? d.nasa_id, score: +score.toFixed(2) };
@@ -148,7 +148,7 @@ export async function commonsImage(query: string, used: Set<string>, file: strin
     if (used.has(id)) continue;
     used.add(id);
     const url = c.info!.thumburl ?? c.info!.url;
-    const r = await fetch(url, { headers: { "User-Agent": UA } }).catch(() => null);
+    const r = await hfetch(url, { headers: { "User-Agent": UA } }, 60_000).catch(() => null);
     if (!r?.ok) { used.delete(id); continue; }
     await fs.writeFile(file, Buffer.from(await r.arrayBuffer()));
     const needsCredit = /cc[ -]?by/i.test(c.licence);
@@ -177,7 +177,7 @@ const pexelsKey = () => process.env.PEXELS_API_KEY ?? "";
 export async function pexelsImage(query: string, used: Set<string>, file: string): Promise<ImageHit | null> {
   if (!pexelsKey()) return null;
   const terms = words(query);
-  const r = await fetch(`https://api.pexels.com/v1/search?per_page=30&orientation=landscape&size=large&query=${encodeURIComponent(query)}`,
+  const r = await hfetch(`https://api.pexels.com/v1/search?per_page=30&orientation=landscape&size=large&query=${encodeURIComponent(query)}`,
     { headers: { Authorization: pexelsKey() } }).catch(() => null);
   if (!r?.ok) return null;
   const { photos = [] } = (await r.json()) as { photos?: PexelsPhoto[] };
@@ -192,7 +192,7 @@ export async function pexelsImage(query: string, used: Set<string>, file: string
     if (used.has(id)) continue;
     used.add(id);
     const url = p.src.large2x ?? p.src.large ?? p.src.original;
-    const res = url ? await fetch(url).catch(() => null) : null;
+    const res = url ? await hfetch(url, {}, 60_000).catch(() => null) : null;
     if (!res?.ok) { used.delete(id); continue; }
     await fs.writeFile(file, Buffer.from(await res.arrayBuffer()));
     return {
@@ -206,7 +206,7 @@ export async function pexelsImage(query: string, used: Set<string>, file: string
 /** Short landscape clip for scenes that benefit from motion. Returns an .mp4 path in `file`. */
 export async function pexelsVideo(query: string, used: Set<string>, file: string): Promise<ImageHit | null> {
   if (!pexelsKey()) return null;
-  const r = await fetch(`https://api.pexels.com/videos/search?per_page=20&orientation=landscape&size=medium&query=${encodeURIComponent(query)}`,
+  const r = await hfetch(`https://api.pexels.com/videos/search?per_page=20&orientation=landscape&size=medium&query=${encodeURIComponent(query)}`,
     { headers: { Authorization: pexelsKey() } }).catch(() => null);
   if (!r?.ok) return null;
   const { videos = [] } = (await r.json()) as { videos?: PexelsVideo[] };
@@ -216,7 +216,7 @@ export async function pexelsVideo(query: string, used: Set<string>, file: string
     const f = v.video_files
       .filter((x) => x.file_type === "video/mp4" && x.width >= 1280 && x.width <= 2560)
       .sort((a, b) => b.width - a.width)[0];
-    const res = f ? await fetch(f.link).catch(() => null) : null;
+    const res = f ? await hfetch(f.link, {}, 90_000).catch(() => null) : null;
     if (!res?.ok) { used.delete(id); continue; }
     const bytes = Buffer.from(await res.arrayBuffer());
     if (bytes.length < 200_000) { used.delete(id); continue; } // truncated download

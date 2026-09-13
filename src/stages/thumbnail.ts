@@ -98,7 +98,9 @@ export async function makeThumbnail(cfg: ChannelConfig, query: string, text: str
   const out = path.join(dir, "thumbnail.jpg");
   // A single JPEG from a video input needs -update 1; without it ffmpeg wants a %03d pattern and fails.
   const single = isVideoFile(src) ? ["-frames:v", "1", "-update", "1"] : [];
-  const base = "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,eq=contrast=1.15:saturation=1.25";
+  // Fill the frame, lift contrast, darken the edges so the subject and the text both pop.
+  const base = "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720," +
+    "eq=contrast=1.22:saturation=1.35:brightness=0.02,unsharp=5:5:0.8,vignette=PI/4.5";
 
   const font = await firstFont();
   if (await hasDrawtext() && font) {

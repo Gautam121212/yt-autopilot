@@ -35,6 +35,9 @@ try {
 {
   const cfg = loadChannel();
   ok("where work happens", `scheduled runs: GitHub Actions only · this Mac: only \`npm run video:local\` (asks first, low-power)`);
+  ok("publishing model",
+    `${cfg.maxVideosPerWeek} long + ${cfg.shortsPerWeek} shorts per week, drawn from a backlog of ${cfg.backlogTarget} · ` +
+    `shorts always come from different videos than that week's longs`);
   ok("pre-production gate", `scripts predicted below ${cfg.approval.minScore}/10 are repaired, below ${cfg.approval.minScore - 1.5}/10 are abandoned before any CPU is spent`);
 }
 
@@ -70,7 +73,7 @@ if (fs.existsSync(path.join(ROOT, ".env"))) {
 }
 
 // 5. workflows present
-for (const w of ["produce", "approve", "analytics", "learn", "migrate"]) {
+for (const w of ["produce", "approve", "analytics", "learn", "migrate", "queue"]) {
   const p = path.join(ROOT, `.github/workflows/${w}.yml`);
   if (fs.existsSync(p)) ok(`workflow ${w}.yml`); else bad(`workflow ${w}.yml`, "missing", "re-unzip the project");
 }

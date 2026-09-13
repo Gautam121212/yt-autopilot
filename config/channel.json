@@ -9,6 +9,8 @@
   ],
   "wordsPerMinute": 150,
   "maxVideosPerWeek": 2,
+  "shortsPerWeek": 2,
+  "backlogTarget": 4,
   "maxAwaitingApproval": 3,
   "makeShorts": true,
   "categoryId": "27",
@@ -160,7 +162,7 @@
     },
     {
       "id": "countdown_of_extremes",
-      "description": "Escalating sequence of 5-7 examples, each more surprising than the last, biggest saved for the end."
+      "description": "Escalating sequence of 4-5 examples, each more surprising than the last, biggest saved for the end. Each example must advance ONE running idea (state it in the first 20 seconds and pay it off at the end) and get a specific number and a reveal — never a catalogue of similar cases, never more than 5 items."
     },
     {
       "id": "mechanism_first",
@@ -214,7 +216,7 @@
     "minVideosForLearning": 8,
     "maxWeightChangePerCycle": 0.5,
     "cadenceCeiling": 4,
-    "maxLearnedSubNiches": 4,
+    "maxLearnedSubNiches": 8,
     "autoApply": false
   }
 }

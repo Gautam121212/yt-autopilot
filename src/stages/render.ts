@@ -47,7 +47,7 @@ async function sceneClip(img: string, audio: SceneAudio, motion: number, out: st
       "-y", "-stream_loop", String(loops), "-i", img, "-i", audio.file,
       "-filter_complex",
       `[0:v]scale=${Math.round(size.w * 1.15)}:${Math.round(size.h * 1.15)}:force_original_aspect_ratio=increase,` +
-        `crop=${size.w}:${size.h}:'(in_w-out_w)/2+(in_w-out_w)/2*sin(t/6)':'(in_h-out_h)/2',fps=${FPS},` +
+        `crop=${size.w}:${size.h}:'(in_w-out_w)/2+(in_w-out_w)/2*sin(t/6)':'(in_h-out_h)/2',fps=${FPS},vignette=PI/5,` +
         `fade=t=in:st=0:d=${FADE},fade=t=out:st=${(dur - FADE).toFixed(2)}:d=${FADE},format=yuv420p[v];` +
         `[1:a]apad=pad_dur=${PAD},aresample=48000,afade=t=in:st=0:d=0.12,afade=t=out:st=${(dur - 0.2).toFixed(2)}:d=0.2[a]`,
       "-map", "[v]", "-map", "[a]", "-t", dur.toFixed(3),
@@ -61,7 +61,7 @@ async function sceneClip(img: string, audio: SceneAudio, motion: number, out: st
     "-y", "-i", img, "-i", audio.file,
     "-filter_complex",
     `[0:v]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},` +
-      `zoompan=${MOTIONS[motion]!(frames)}:d=${frames}:s=${size.w}x${size.h}:fps=${FPS},` +
+      `zoompan=${MOTIONS[motion]!(frames)}:d=${frames}:s=${size.w}x${size.h}:fps=${FPS},vignette=PI/5,` +
       `fade=t=in:st=0:d=${FADE},fade=t=out:st=${(dur - FADE).toFixed(2)}:d=${FADE},format=yuv420p[v];` +
       `[1:a]apad=pad_dur=${PAD},aresample=48000,afade=t=in:st=0:d=0.12,afade=t=out:st=${(dur - 0.2).toFixed(2)}:d=0.2[a]`,
     "-map", "[v]", "-map", "[a]", "-t", dur.toFixed(3),
@@ -77,15 +77,30 @@ function srtTime(sec: number) {
 }
 
 /** Captions: exact sentence timing when the voice engine reports it, else proportional to word count. */
-function buildSrt(scenes: Narrated[], timings: SceneTiming[], audio: SceneAudio[]): string {
+function buildSrt(scenes: Narrated[], timings: SceneTiming[], audio: SceneAudio[], vertical = false): string {
   const cues: string[] = [];
   let n = 1;
+  // Vertical burns captions on screen, so cues must be short enough to read in two lines.
+  const perCue = vertical ? 5 : 9;
   const emit = (words: string[], start: number, end: number) => {
     const per = (end - start) / Math.max(words.length, 1);
-    for (let j = 0; j < words.length; j += 9) {
-      const chunk = words.slice(j, j + 9);
-      const a = start + j * per;
+    // Prefer breaking after a comma or full stop so a cue never ends mid-phrase.
+    const chunks: string[][] = [];
+    let cur: string[] = [];
+    for (const w of words) {
+      cur.push(w);
+      const breakable = /[,.;:!?]$/.test(w);
+      if (cur.length >= perCue || (breakable && cur.length >= Math.max(3, perCue - 2))) { chunks.push(cur); cur = []; }
+    }
+    if (cur.length) {
+      if (cur.length <= 2 && chunks.length) chunks[chunks.length - 1]!.push(...cur); // no orphan cue
+      else chunks.push(cur);
+    }
+    let idx = 0;
+    for (const chunk of chunks) {
+      const a = start + idx * per;
       cues.push(`${n++}\n${srtTime(a)} --> ${srtTime(a + chunk.length * per)}\n${chunk.join(" ")}\n`);
+      idx += chunk.length;
     }
   };
   scenes.forEach((s, i) => {
@@ -150,11 +165,12 @@ export async function renderVideo(o: { scenes: Narrated[]; images: string[]; aud
     : ["-y", "-i", joined, "-af", loud, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", final]);
 
   const srt = path.join(o.dir, `${name}.srt`);
-  await fs.writeFile(srt, buildSrt(o.scenes, timings, o.audio));
+  await fs.writeFile(srt, buildSrt(o.scenes, timings, o.audio, size.w < size.h));
 
   if (o.burnCaptions) {
     const burned = path.join(o.dir, `${name}-cc.mp4`);
-    const style = "FontName=DejaVu Sans,Fontsize=15,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=3,Shadow=0,Alignment=2,MarginV=90";
+    const style = "FontName=DejaVu Sans,Fontsize=13,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000," +
+      "Outline=4,Shadow=1,Alignment=2,MarginV=240,MarginL=60,MarginR=60";
     const ok = await sh("ffmpeg", ["-y", "-i", final, "-vf", `subtitles=${srt}:force_style='${style}'`,
       "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "copy", "-movflags", "+faststart", burned])
       .then(() => true, (e) => { console.warn(`captions not burned in (${String(e).slice(0, 120)})`); return false; });

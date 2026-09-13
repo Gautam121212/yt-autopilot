@@ -227,3 +227,20 @@ number). Cards are relevant by construction, licence-clean, and skipped by image
 
 The forecast judges the MIX: mostly photographs with a few cards reads as deliberate; more than half cards
 caps the score at 6.
+
+## How publishing works now
+
+`produce` no longer schedules anything. It builds a **backlog** of finished videos (uploaded private,
+status `ready`). The `queue` job runs daily and fills the week's slots:
+
+- up to `maxVideosPerWeek` long videos (default 2)
+- up to `shortsPerWeek` Shorts (default 2), taken from **different videos** than that week's longs,
+  so a long and its own Short never go out in the same week
+- anything left over stays queued for next week — nothing is wasted
+
+`produce` keeps running while the backlog is below `backlogTarget` (default 4), so a quota-limited or
+failed week never leaves the channel empty.
+
+```bash
+npm run queue     # fill this week's slots by hand (normally runs daily on GitHub)
+```

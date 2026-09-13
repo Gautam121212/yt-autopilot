@@ -21,6 +21,10 @@ const Channel = z.object({
   targetMinutes: z.tuple([z.number(), z.number()]),
   wordsPerMinute: z.number(),
   maxVideosPerWeek: z.number().int().positive(),
+  /** Shorts published per week; they come from DIFFERENT videos than that week's long uploads. */
+  shortsPerWeek: z.number().int().min(0).default(2),
+  /** How many finished videos to keep queued so a bad week never means an empty channel. */
+  backlogTarget: z.number().int().min(0).default(4),
   maxAwaitingApproval: z.number().int().positive(),
   approval: z.object({
     mode: z.enum(["claude", "human"]).describe("claude = Claude's final check publishes on your behalf; human = you approve every video"),
@@ -51,7 +55,7 @@ const Channel = z.object({
     /** Ceiling the learning job may never raise cadence past, no matter how well things go. */
     cadenceCeiling: z.number().int().min(1).max(7).default(4),
     /** Sub-niches the learning job may add on its own before it must stop expanding. */
-    maxLearnedSubNiches: z.number().int().min(0).default(4),
+    maxLearnedSubNiches: z.number().int().min(0).default(8),
     /** true = the weekly job commits straight to main; false = it opens a pull request for you. */
     autoApply: z.boolean().default(false),
   }),

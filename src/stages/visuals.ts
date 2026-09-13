@@ -3,12 +3,20 @@ import path from "node:path";
 import type { ChannelConfig } from "../config";
 import { incident } from "../lib/log";
 import { mapLimit } from "../lib/media";
+import { log } from "../lib/log";
 import { commonsImage, HISTORICAL_HINT, nasaImage, pexelsImage, pexelsVideo, type ImageHit } from "../lib/sources";
 import { makeCard } from "./cards";
 
 export type ImageCredit = { source: string; id: string; title: string; attribution?: string };
 
-const MIN_USABLE = 0.35; // below this, a designed card beats whatever the archive returned
+const MIN_USABLE = 0.35;        // below this, a designed card beats whatever the archive returned
+const SCENE_BUDGET_MS = 120_000; // hard ceiling per scene; a card is produced rather than waiting
+
+function withBudget<T>(p: Promise<T>, ms: number, fallback: () => Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const timeout = new Promise<"timeout">((res) => { timer = setTimeout(() => res("timeout"), ms); });
+  return Promise.race([p, timeout]).then((r) => (r === "timeout" ? fallback() : (r as T))).finally(() => clearTimeout(timer));
+}
 
 const FINDERS: Record<string, (q: string, used: Set<string>, file: string) => Promise<ImageHit | null>> = {
   commons: commonsImage,
@@ -60,7 +68,22 @@ export async function sceneImages(
   const clipsWanted = Math.round(scenes.length * cfg.videoClipRatio);
   let clipsUsed = 0;
 
+  let done = 0;
   const results = await mapLimit(scenes, 4, async (s, i) => {
+    const card = async () => {
+      const out = path.join(dir, `${String(i).padStart(3, "0")}-card.jpg`);
+      await makeCard({ headline: s.cardHeadline || s.imageQuery, sub: s.cardSub, index: i, width: size?.w ?? 1920, height: size?.h ?? 1080, out });
+      await incident("visuals.slow", new Error(`scene ${s.id} took over ${SCENE_BUDGET_MS / 1000}s to find a picture — used a card`), videoId);
+      return { file: out, credit: { source: "card", id: `card-${s.id}`, title: s.cardHeadline || s.imageQuery } };
+    };
+    return withBudget(findOne(s, i), SCENE_BUDGET_MS, card).finally(() => {
+      done++;
+      if (done === 1 || done % 5 === 0 || done === scenes.length) log(`  images ${done}/${scenes.length}`);
+    });
+  });
+  return { files: results.map((r) => r.file), credits: results.map((r) => r.credit) };
+
+  async function findOne(s: (typeof scenes)[number], i: number) {
     // The writer marks which lines describe movement; those are the ones worth a real clip.
     if (process.env.PEXELS_API_KEY && s.motion === "clip" && s.era !== "historical" && clipsUsed < clipsWanted) {
       clipsUsed++;
@@ -109,6 +132,5 @@ export async function sceneImages(
       return { file: card, credit: { source: "card", id: `card-${s.id}`, title: s.cardHeadline || s.imageQuery } };
     }
     return { file, credit: { source: best.source, id: best.id, title: best.title, attribution: best.attribution } };
-  });
-  return { files: results.map((r) => r.file), credits: results.map((r) => r.credit) };
+  }
 }

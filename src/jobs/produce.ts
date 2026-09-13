@@ -54,15 +54,8 @@ async function handoff(cfg: ChannelConfig, video: VideoRow) {
   const warmup = released < cfg.approval.humanReviewFirst;
 
   if (claudeApproves && !warmup) {
-    const { slot, publishAt } = await pickSlot(cfg, video.sub_niche);
-    try {
-      await schedulePublic(youtubeId, publishAt);
-      if (video.short_youtube_id) await schedulePublic(video.short_youtube_id, new Date(publishAt.getTime() + 24 * 3600e3));
-    } catch (e) {
-      await incident("publish.schedule", e, video.id); // usually: API audit not passed yet -> publish manually
-    }
-    await updateVideo(video.id, { publish_slot: slot, publish_at: publishAt, status: "scheduled" });
-    return log(`#${video.id} Claude approved (${review!.overall}/10) -> scheduled ${publishAt.toISOString()}`);
+    await updateVideo(video.id, { status: "ready" });
+    return log(`#${video.id} approved (${review!.overall}/10) -> added to the publish queue`);
   }
 
   const repairs = (video.repairs ?? 0);
@@ -106,11 +99,14 @@ async function main() {
     const [{ n: shipped }] = await q<{ n: number }>("select count(*)::int as n from videos where created_at > now() - interval '7 days' and status in ('scheduled','published','uploaded')");
     const [{ n: attempts }] = await q<{ n: number }>("select count(*)::int as n from videos where created_at > now() - interval '7 days' and status not in ('dry_run_complete')");
     const [{ n: waiting }] = await q<{ n: number }>("select count(*)::int as n from videos where status = 'awaiting_approval'");
-    if (shipped >= cfg.maxVideosPerWeek && !isDryRun()) {
-      return log(`weekly cap reached (${shipped}/${cfg.maxVideosPerWeek} shipped); skipping. Raise maxVideosPerWeek in config/channel.json to publish more.`);
+    // The week being full is not a reason to stop: build a backlog so a bad week never empties the channel.
+    const [{ n: backlog }] = await q<{ n: number }>("select count(*)::int as n from videos where status = 'ready'");
+    if (shipped >= cfg.maxVideosPerWeek && backlog >= cfg.backlogTarget && !isDryRun()) {
+      return log(`week is full (${shipped}/${cfg.maxVideosPerWeek}) and backlog is full (${backlog}/${cfg.backlogTarget}); nothing to do.`);
     }
+    if (shipped >= cfg.maxVideosPerWeek) log(`week is full; producing for the backlog (${backlog}/${cfg.backlogTarget})`);
     // Guard against burning quota when every attempt keeps failing quality.
-    if (attempts >= cfg.maxVideosPerWeek + 2 && !isDryRun()) {
+    if (attempts >= cfg.maxVideosPerWeek + cfg.backlogTarget + 2 && !isDryRun()) {
       return log(`${attempts} production attempts this week for ${shipped} shipped; pausing until next week. Check: npm run why`);
     }
     if (waiting >= cfg.maxAwaitingApproval) return log(`${waiting} videos awaiting your review; skipping so nothing is wasted`);
