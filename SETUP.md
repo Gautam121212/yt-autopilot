@@ -244,3 +244,22 @@ failed week never leaves the channel empty.
 ```bash
 npm run queue     # fill this week's slots by hand (normally runs daily on GitHub)
 ```
+
+## Manual publishing (publish.manual = true)
+
+The queue no longer calls YouTube. Every weekday it:
+1. picks slots for anything in the backlog that still needs one,
+2. opens **"Publish today — <title>"** for anything due in the next 24 hours, with the Studio link
+   and the exact IST time.
+
+Videos are uploaded private the moment they finish producing, so Studio always has them waiting well
+before their slot. You open the issue, click the link, set Public. Nothing else.
+
+Default slots (chosen to suit a US audience while staying clickable from India):
+
+| | IST | US Eastern |
+|---|---|---|
+| Long | Tue 6:30 pm | Tue 9:00 am |
+| Short | Wed 8:30 pm | Wed 11:00 am |
+| Long | Sat 7:30 pm | Sat 10:00 am |
+| Short | Sun 9:30 pm | Sun 12:00 pm |

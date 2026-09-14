@@ -8,7 +8,7 @@ import type { ChannelConfig } from "../config";
 import { askJson } from "../lib/llm";
 import { log } from "../lib/log";
 import { mapLimit } from "../lib/media";
-import { probeQuery } from "../lib/sources";
+import { openverseImage, probeQuery } from "../lib/sources";
 import type { Script } from "../types";
 
 type Scene = { id: string; narration: string; imageQuery: string; altQueries: string[]; era: "historical" | "modern" | "any" };
@@ -28,6 +28,8 @@ async function scoreScenes(scenes: Scene[]) {
     const probes = await Promise.all([s.imageQuery, ...(s.altQueries ?? [])].map((q) => probeQuery(q, s.era)));
     const best = probes.reduce((a, b) => (b.score > a.score ? b : a), { score: 0, best: "" });
     return { scene: s, score: best.score, best: best.best };
+    // Note: the probe only checks Commons. Production also searches Openverse, Pexels and NASA,
+    // so real coverage is higher than this number — the forecast is told so below.
   });
 }
 

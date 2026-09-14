@@ -98,7 +98,7 @@ export async function nasaImage(query: string, used: Set<string>, file: string):
 }
 
 // ---------- Wikimedia Commons (any topic, licence-filtered) ----------
-export type ImageHit = { source: "nasa" | "commons" | "pexels"; id: string; title: string; score: number; attribution?: string };
+export type ImageHit = { source: "nasa" | "commons" | "pexels" | "openverse"; id: string; title: string; score: number; attribution?: string };
 
 type CommonsPage = {
   title: string;
@@ -225,6 +225,41 @@ export async function pexelsVideo(query: string, used: Set<string>, file: string
     return {
       source: "pexels", id, title: `Pexels video ${v.id}`, score: 0.6,
       attribution: `Video by ${v.user?.name ?? "Pexels"} on Pexels${v.url ? ` — ${v.url}` : ""}`,
+    };
+  }
+  return null;
+}
+
+// ---------- Openverse (CC-licensed aggregator, no key) ----------
+type OpenverseItem = { id: string; title?: string; url: string; license: string; license_version?: string; creator?: string; foreign_landing_url?: string; width?: number; tags?: { name: string }[] };
+
+const OPENVERSE_OK = /^(cc0|pdm|by|by-sa)$/i; // commercial-use licences only
+
+export async function openverseImage(query: string, used: Set<string>, file: string): Promise<ImageHit | null> {
+  const api = `https://api.openverse.org/v1/images/?q=${encodeURIComponent(query)}&license=cc0,pdm,by,by-sa` +
+    `&size=large&mature=false&page_size=30`;
+  const res = await getJson<{ results?: OpenverseItem[] }>(api).catch(() => null);
+  const scored = (res?.results ?? [])
+    .filter((r) => OPENVERSE_OK.test(r.license) && !used.has(`ov:${r.id}`))
+    .filter((r) => !PEOPLE.test(r.title ?? "") && !MARKS.test(r.title ?? "") && !LIFESTYLE.test(r.title ?? ""))
+    .map((r) => ({ r, score: relevance(query, r.title ?? "", (r.tags ?? []).map((t) => t.name).join(" ")) }))
+    .sort((a, b) => b.score - a.score);
+
+  for (const { r, score } of scored.slice(0, 5)) {
+    const id = `ov:${r.id}`;
+    if (used.has(id)) continue;
+    used.add(id);
+    const dl = await hfetch(r.url, { headers: { "User-Agent": UA } }, 60_000).catch(() => null);
+    if (!dl?.ok) { used.delete(id); continue; }
+    const bytes = Buffer.from(await dl.arrayBuffer());
+    if (bytes.length < 40_000) { used.delete(id); continue; }
+    await fs.writeFile(file, bytes);
+    const needsCredit = /^(by|by-sa)$/i.test(r.license);
+    return {
+      source: "openverse", id, title: r.title ?? id, score: +score.toFixed(2),
+      attribution: needsCredit
+        ? `${r.title ?? "Image"} — ${r.creator ?? "unknown"} — CC ${r.license.toUpperCase()} ${r.license_version ?? ""} — ${r.foreign_landing_url ?? r.url}`.replace(/\s+/g, " ")
+        : undefined,
     };
   }
   return null;

@@ -4,7 +4,7 @@ import type { ChannelConfig } from "../config";
 import { incident } from "../lib/log";
 import { mapLimit } from "../lib/media";
 import { log } from "../lib/log";
-import { commonsImage, HISTORICAL_HINT, nasaImage, pexelsImage, pexelsVideo, type ImageHit } from "../lib/sources";
+import { commonsImage, HISTORICAL_HINT, nasaImage, openverseImage, pexelsImage, pexelsVideo, type ImageHit } from "../lib/sources";
 import { makeCard } from "./cards";
 
 export type ImageCredit = { source: string; id: string; title: string; attribution?: string };
@@ -20,6 +20,7 @@ function withBudget<T>(p: Promise<T>, ms: number, fallback: () => Promise<T>): P
 
 const FINDERS: Record<string, (q: string, used: Set<string>, file: string) => Promise<ImageHit | null>> = {
   commons: commonsImage,
+  openverse: openverseImage,
   nasa: nasaImage,
   pexels: pexelsImage,
 };

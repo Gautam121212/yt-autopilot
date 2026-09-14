@@ -12,7 +12,10 @@ import path from "node:path";
 import type { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { env, ROOT } from "../config";
-import { fetchOk, withRetry } from "./http";  // fetchOk carries a deadline
+import { fetchOk, withRetry } from "./http";
+
+/** Model calls are slow by nature — a script can take minutes. Only image/metadata calls use the short deadline. */
+const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 6 * 60_000);
 
 export type Tier = "heavy" | "light";
 const PROVIDER = process.env.LLM_PROVIDER || "gemini";
@@ -150,7 +153,7 @@ async function openaiCompatible(model: string, system: string, prompt: string, m
       temperature: 0.8,
       response_format: { type: "json_object" },
     }),
-  }), `openai-compat ${model}`, 3).catch((e: Error) => {
+  }, LLM_TIMEOUT_MS), `openai-compat ${model}`, 3).catch((e: Error) => {
     if (/Request too large|enforced limit|tokens per minute|OTPM/i.test(e.message)) {
       throw new QuotaError(`${model} rejected the request: this provider's free tier caps output tokens per minute, ` +
         `which is too small for a full script.\nEither lower OPENAI_COMPAT_MAX_TOKENS for light tasks only, ` +
@@ -190,7 +193,7 @@ async function gemini(model: string, system: string, prompt: string, maxTokens: 
       contents: [{ role: "user", parts: [...imageParts, { text: prompt }] }],
       generationConfig: { responseMimeType: "application/json", maxOutputTokens: maxTokens, temperature: 0.8 },
     }),
-  }), `gemini ${model}`, 3).catch((e: Error) => {
+  }, LLM_TIMEOUT_MS), `gemini ${model}`, 3).catch((e: Error) => {
     // Listing a model does not mean you may call it; Google closes older ones to new keys.
     if (/\b404\b/.test(e.message)) throw new Error(`Gemini model "${model}" is not callable by this key. Run \`npm run models\` to pick one that is.\n${e.message.slice(0, 200)}`);
     throw e;

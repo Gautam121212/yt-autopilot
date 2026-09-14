@@ -48,7 +48,8 @@ claim, a weak or generic first 20 seconds, encyclopedia-flavoured writing, advic
 a title that overpromises, or scenes that cannot be illustrated with a real archive photograph.
 
 Illustratability is MEASURED, not guessed: ${Math.round(o.feasible * 100)}% of this script's scenes returned a
-genuinely matching picture when searched against the real archive. The rest will be rendered as designed
+genuinely matching picture when searched against Wikimedia Commons. Production additionally searches Openverse,
+Pexels and NASA, so true coverage is typically higher than this figure — treat it as a floor, not a ceiling. The rest will be rendered as designed
 typographic cards built from each scene's own cardHeadline/cardSub — relevant by construction, never a wrong
 photograph. So score visualsMatch on the MIX: a video that is mostly real photographs with a few cards reads as
 deliberate; one that is more than half cards reads as a slideshow of text and cannot exceed 6.

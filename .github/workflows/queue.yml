@@ -4,7 +4,7 @@ on:
     - cron: "0 5 * * *"   # daily: fills the week's publish slots from the backlog
   workflow_dispatch:
 concurrency: { group: queue, cancel-in-progress: false }
-permissions: { contents: read }
+permissions: { contents: read, issues: write }
 jobs:
   queue:
     runs-on: ubuntu-latest
@@ -20,3 +20,4 @@ jobs:
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -21,6 +21,7 @@
   },
   "imageSources": [
     "commons",
+    "openverse",
     "pexels",
     "nasa"
   ],
@@ -192,11 +193,11 @@
     "candidateSlots": [
       {
         "dow": 2,
-        "hour": 12
+        "hour": 9
       },
       {
         "dow": 4,
-        "hour": 15
+        "hour": 10
       },
       {
         "dow": 6,
@@ -204,13 +205,14 @@
       },
       {
         "dow": 0,
-        "hour": 14
+        "hour": 11
       }
     ],
     "epsilon": 0.25,
     "minSamplesPerSlot": 3,
     "minHoursAhead": 6,
-    "minGapHours": 48
+    "minGapHours": 20,
+    "manual": true
   },
   "learning": {
     "minVideosForLearning": 8,
