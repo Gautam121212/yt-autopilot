@@ -3,7 +3,7 @@
 set -euo pipefail
 MODE="${1:-dry}"
 DRY=$([ "$MODE" = "live" ] && echo false || echo true)
-gh workflow run produce -f dry_run="$DRY"
+gh workflow run produce -f dry_run="$DRY" -f force="${FORCE:-false}"
 echo "Started. Waiting for GitHub to pick it up..."
 sleep 8
 RUN_ID=$(gh run list -w produce -L 1 --json databaseId -q '.[0].databaseId')

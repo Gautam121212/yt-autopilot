@@ -11,6 +11,10 @@ on:
       sub_niche:
         description: "Force a sub-niche id (optional)"
         required: false
+      force:
+        description: "Ignore the weekly failure cap"
+        type: boolean
+        default: false
 concurrency: { group: produce, cancel-in-progress: false }
 permissions: { contents: read, issues: write }
 jobs:
@@ -37,6 +41,7 @@ jobs:
         env:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
           FORCE_SUB_NICHE: ${{ inputs.sub_niche }}
+          FORCE_PRODUCE: ${{ inputs.force }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CLAUDE_MODEL_HEAVY: ${{ secrets.CLAUDE_MODEL_HEAVY }}
           CLAUDE_MODEL_LIGHT: ${{ secrets.CLAUDE_MODEL_LIGHT }}

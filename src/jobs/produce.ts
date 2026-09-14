@@ -97,7 +97,11 @@ async function main() {
   if (!v) {
     // The cap counts videos that actually shipped — a held video must not cost you the week's slot.
     const [{ n: shipped }] = await q<{ n: number }>("select count(*)::int as n from videos where created_at > now() - interval '7 days' and status in ('scheduled','published','uploaded')");
-    const [{ n: attempts }] = await q<{ n: number }>("select count(*)::int as n from videos where created_at > now() - interval '7 days' and status not in ('dry_run_complete')");
+    // The runaway guard should count things that WASTED effort, not videos that were made and then
+    // judged. A human rejecting a finished video means the pipeline worked; it must not block the week.
+    const [{ n: wasted }] = await q<{ n: number }>(
+      "select count(*)::int as n from videos where created_at > now() - interval '7 days' and status in ('failed','abandoned')",
+    );
     const [{ n: waiting }] = await q<{ n: number }>("select count(*)::int as n from videos where status = 'awaiting_approval'");
     // The week being full is not a reason to stop: build a backlog so a bad week never empties the channel.
     const [{ n: backlog }] = await q<{ n: number }>("select count(*)::int as n from videos where status = 'ready'");
@@ -106,8 +110,10 @@ async function main() {
     }
     if (shipped >= cfg.maxVideosPerWeek) log(`week is full; producing for the backlog (${backlog}/${cfg.backlogTarget})`);
     // Guard against burning quota when every attempt keeps failing quality.
-    if (attempts >= cfg.maxVideosPerWeek + cfg.backlogTarget + 2 && !isDryRun()) {
-      return log(`${attempts} production attempts this week for ${shipped} shipped; pausing until next week. Check: npm run why`);
+    const wasteCap = cfg.maxVideosPerWeek + cfg.backlogTarget + 4;
+    if (wasted >= wasteCap && !isDryRun() && process.env.FORCE_PRODUCE !== "true") {
+      return log(`${wasted} runs failed or were abandoned this week (cap ${wasteCap}); pausing so quota is not burned. ` +
+        `Check \`npm run why\`, then re-run with FORCE_PRODUCE=true to override.`);
     }
     if (waiting >= cfg.maxAwaitingApproval) return log(`${waiting} videos awaiting your review; skipping so nothing is wasted`);
 
