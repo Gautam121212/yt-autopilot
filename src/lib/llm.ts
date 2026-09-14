@@ -193,7 +193,7 @@ async function gemini(model: string, system: string, prompt: string, maxTokens: 
       contents: [{ role: "user", parts: [...imageParts, { text: prompt }] }],
       generationConfig: { responseMimeType: "application/json", maxOutputTokens: maxTokens, temperature: 0.8 },
     }),
-  }, LLM_TIMEOUT_MS), `gemini ${model}`, 3).catch((e: Error) => {
+  }, LLM_TIMEOUT_MS), `gemini ${model}`, 5).catch((e: Error) => {
     // Listing a model does not mean you may call it; Google closes older ones to new keys.
     if (/\b404\b/.test(e.message)) throw new Error(`Gemini model "${model}" is not callable by this key. Run \`npm run models\` to pick one that is.\n${e.message.slice(0, 200)}`);
     throw e;
@@ -262,7 +262,7 @@ export async function askJson<T>(o: {
       const backupReady = !!(process.env.OPENAI_COMPAT_BASE_URL && process.env.OPENAI_COMPAT_API_KEY && process.env.OPENAI_COMPAT_MODEL_HEAVY);
       const text = PROVIDER === "anthropic" ? await anthropic(model, o.system, body, o.maxTokens ?? 32000)
         : PROVIDER === "openai-compatible" ? await openaiCompatible(model, o.system, body, o.maxTokens ?? 16000, o.images)
-        : await geminiWithFallback(model, o.system, body, o.maxTokens ?? 32000, o.images).catch(async (e) => {
+        : await geminiWithFallback(model, o.system, body, o.maxTokens ?? 24000, o.images).catch(async (e) => {
             if (!isQuota(e) || !backupReady) throw e;
             const cap = Number(process.env.OPENAI_COMPAT_MAX_TOKENS ?? 4096);
             if ((o.maxTokens ?? 16000) > cap && cap < 4096) {
