@@ -181,9 +181,37 @@ async function main() {
       log(`#${video.id} forecast: likely ${fc.likely}/10, ceiling ${fc.ceiling}/10 — ${fc.verdict} (weakest: ${fc.weakest.slice(0, 70)})`);
 
       if (fc.verdict === "repair" || fc.likely < cfg.approval.minScore) {
-        script = await repairScript({ cfg, playbook, script, dossier: video.dossier!, issues: fc.fixes });
-        fc = await forecast({ cfg, script, dossier: video.dossier!, history: hist, feasible: feas.feasible });
-        log(`#${video.id} forecast after pre-repair: likely ${fc.likely}/10 — ${fc.verdict}`);
+        // Keep the best of: the original, a targeted repair, and one clean rewrite.
+        // Patching a script can make it worse — measured, so never assume the repair wins.
+        const candidates: { label: string; script: Script; fc: typeof fc }[] = [{ label: "original", script, fc }];
+
+        const repaired = await repairScript({ cfg, playbook, script, dossier: video.dossier!, issues: fc.fixes }).catch(() => null);
+        if (repaired) {
+          const rfc = await forecast({ cfg, script: repaired, dossier: video.dossier!, history: hist, feasible: feas.feasible });
+          log(`#${video.id} after targeted repair: likely ${rfc.likely}/10`);
+          candidates.push({ label: "repair", script: repaired, fc: rfc });
+        }
+
+        // A fresh draft that knows what was wrong often beats patching the flawed one.
+        const best = candidates.reduce((a, b) => (b.fc.likely > a.fc.likely ? b : a));
+        if (best.fc.likely < cfg.approval.minScore && minutesLeft() > 30) {
+          const rewritten = await writeScript({
+            cfg, playbook, structure, topic: video.topic, dossier: video.dossier!,
+            recent: await recentForVariety(),
+            critique: `A reviewer rejected the previous draft of this video. Its weakest point: ${fc.weakest}. ` +
+              `Specific faults: ${fc.fixes.map((f) => f.what).join("; ")}. Write a different draft that does not repeat them.`,
+          }).catch(() => null);
+          if (rewritten) {
+            const wfc = await forecast({ cfg, script: rewritten, dossier: video.dossier!, history: hist, feasible: feas.feasible });
+            log(`#${video.id} after full rewrite: likely ${wfc.likely}/10`);
+            candidates.push({ label: "rewrite", script: rewritten, fc: wfc });
+          }
+        }
+
+        const winner = candidates.reduce((a, b) => (b.fc.likely > a.fc.likely ? b : a));
+        log(`#${video.id} keeping the "${winner.label}" draft (${winner.fc.likely}/10)`);
+        script = winner.script;
+        fc = winner.fc;
         await updateVideo(video.id, { script, title: script.title });
       }
       await updateVideo(video.id, { predicted_score: fc.likely });

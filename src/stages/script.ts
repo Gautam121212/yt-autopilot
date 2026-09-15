@@ -38,6 +38,17 @@ HARD RULES
 5. 5-8 scenes carry a short "chapter" title; the first scene must have one.
 6. Title and thumbnail text are accurate: no exaggeration, no promise the video doesn't keep, no fake urgency.
 7. No "in this video", no greetings, at most one soft subscribe mention at the very end.
+8. VOICE — this is what gets scripts rejected. Write like a person telling someone a story they can't wait to finish,
+   not like a textbook summarising a field.
+   - Open on a specific moment, person, place or number. "In 1972, a technician in a French processing plant noticed
+     something impossible" — never "Normalcy bias is a cognitive phenomenon in which..."
+   - Name the concept only AFTER the viewer has seen it happen. Story first, label second.
+   - Short sentences. Concrete nouns. No "moreover", "furthermore", "it is important to note", "researchers have long
+     studied", "this phenomenon", "plays a crucial role", "delve into".
+   - Every paragraph earns the next one: end scenes on a question, a reversal or a number that demands explanation.
+   - Say "you" to the viewer where it is true. Make the stakes personal at least twice.
+9. Image queries must match the scene's era: a 1900s scene cannot be illustrated by a modern office, a smartphone or
+   a present-day city. Name what a photographer of that time could have pointed a camera at.
 8. Also write a SHORT: a standalone 110-150 word vertical video (4-7 scenes) on the single most surprising fact, ending with a line that makes people want the full video. Same sourcing rules.
 
 PLAYBOOK (from this channel's own data; follow unless it conflicts with the hard rules)
@@ -51,6 +62,8 @@ const SHAPE = `JSON: { "title", "altTitles": [3], "description" (2-3 short parag
 export async function writeScript(o: {
   cfg: ChannelConfig; playbook: string; structure: { id: string; description: string };
   topic: Topic; dossier: Dossier; recent: { title: string; hook: string }[];
+  /** set when an earlier draft was rejected, so the new one avoids the same faults */
+  critique?: string;
 }): Promise<Script> {
   return askJson({
     tier: "heavy",
@@ -66,7 +79,7 @@ ${o.recent.map((r) => `- "${r.title}" | opened with: "${r.hook.slice(0, 160)}"`)
 
 DOSSIER:
 ${JSON.stringify(o.dossier)}
-
+${o.critique ? `\nWHAT WENT WRONG LAST TIME:\n${o.critique}\n` : ""}
 ${SHAPE}`,
   });
 }

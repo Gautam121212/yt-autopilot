@@ -3,6 +3,13 @@
 Rules the script writer follows. The weekly learning job proposes edits via pull request.
 Seed rules are untested hypotheses until this channel's own data confirms or kills them.
 
+## Voice (the reason drafts get rejected)
+- [Fact] Open on a specific moment, person, place or number — never on a definition of the concept.
+- [Fact] Name the concept only after the viewer has watched it happen.
+- [Fact] Banned: "moreover", "furthermore", "it is important to note", "this phenomenon", "plays a crucial role",
+  "researchers have long studied", "delve into". They are what makes a draft read as a lecture.
+- [Hypothesis] Make the stakes personal at least twice ("you would have done the same").
+
 ## Hook (first 30 seconds)
 - [Hypothesis] First sentence is a concrete, surprising fact or question with a number or comparison the viewer can picture.
 - [Hypothesis] Open a loop in the first 20 seconds that is only closed near the end.
