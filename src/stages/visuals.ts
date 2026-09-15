@@ -73,7 +73,7 @@ export async function sceneImages(
   const results = await mapLimit(scenes, 6, async (s, i) => {
     const card = async () => {
       const out = path.join(dir, `${String(i).padStart(3, "0")}-card.jpg`);
-      await makeCard({ headline: s.cardHeadline || s.imageQuery, sub: s.cardSub, index: i, width: size?.w ?? 1920, height: size?.h ?? 1080, out });
+      await makeCard({ headline: s.cardHeadline || s.imageQuery, sub: s.cardSub, index: i, width: size?.w ?? 1920, height: size?.h ?? 1080, out, label: cfg.channelName.toUpperCase() });
       await incident("visuals.slow", new Error(`scene ${s.id} took over ${SCENE_BUDGET_MS / 1000}s to find a picture — used a card`), videoId);
       return { file: out, credit: { source: "card", id: `card-${s.id}`, title: s.cardHeadline || s.imageQuery } };
     };
@@ -128,6 +128,7 @@ export async function sceneImages(
         width: size?.w ?? 1920,
         height: size?.h ?? 1080,
         out: card,
+        label: cfg.channelName.toUpperCase(),
       });
       await incident("visuals.card", new Error(`no archive match for "${s.imageQuery}" — rendered a card instead`), videoId);
       return { file: card, credit: { source: "card", id: `card-${s.id}`, title: s.cardHeadline || s.imageQuery } };

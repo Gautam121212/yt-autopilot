@@ -32,6 +32,8 @@ const isVideo = (f: string) => /\.(mp4|mov|webm)$/i.test(f);
 const isCard = (f: string) => /-card\.jpg$/i.test(f);
 
 const FADE = 0.35; // fade in/out baked into each clip so the join can be a stream copy
+/** Mixed archives look mismatched; one grade pulls Commons, Pexels, NASA and Openverse together. */
+const GRADE = "eq=contrast=1.06:saturation=0.92:gamma=0.98,unsharp=5:5:0.4";
 
 async function sceneClip(img: string, audio: SceneAudio, motion: number, out: string, size: Size) {
   // 1.25x (not 1.5x) is enough headroom for a 1.28 zoom and costs far less to scale.
@@ -65,7 +67,7 @@ async function sceneClip(img: string, audio: SceneAudio, motion: number, out: st
       "-y", "-stream_loop", String(loops), "-i", img, "-i", audio.file,
       "-filter_complex",
       `[0:v]scale=${Math.round(size.w * 1.15)}:${Math.round(size.h * 1.15)}:force_original_aspect_ratio=increase,` +
-        `crop=${size.w}:${size.h}:'(in_w-out_w)/2+(in_w-out_w)/2*sin(t/6)':'(in_h-out_h)/2',fps=${FPS},vignette=PI/5,` +
+        `crop=${size.w}:${size.h}:'(in_w-out_w)/2+(in_w-out_w)/2*sin(t/6)':'(in_h-out_h)/2',fps=${FPS},${GRADE},vignette=PI/5,` +
         `fade=t=in:st=0:d=${FADE},fade=t=out:st=${(dur - FADE).toFixed(2)}:d=${FADE},format=yuv420p[v];` +
         `[1:a]apad=pad_dur=${PAD},aresample=48000,afade=t=in:st=0:d=0.12,afade=t=out:st=${(dur - 0.2).toFixed(2)}:d=0.2[a]`,
       "-map", "[v]", "-map", "[a]", "-t", dur.toFixed(3),
@@ -79,7 +81,7 @@ async function sceneClip(img: string, audio: SceneAudio, motion: number, out: st
     "-y", "-i", img, "-i", audio.file,
     "-filter_complex",
     `[0:v]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},` +
-      `zoompan=${MOTIONS[motion]!(frames)}:d=${frames}:s=${size.w}x${size.h}:fps=${FPS},vignette=PI/5,` +
+      `zoompan=${MOTIONS[motion]!(frames)}:d=${frames}:s=${size.w}x${size.h}:fps=${FPS},${GRADE},vignette=PI/5,` +
       `fade=t=in:st=0:d=${FADE},fade=t=out:st=${(dur - FADE).toFixed(2)}:d=${FADE},format=yuv420p[v];` +
       `[1:a]apad=pad_dur=${PAD},aresample=48000,afade=t=in:st=0:d=0.12,afade=t=out:st=${(dur - 0.2).toFixed(2)}:d=0.2[a]`,
     "-map", "[v]", "-map", "[a]", "-t", dur.toFixed(3),

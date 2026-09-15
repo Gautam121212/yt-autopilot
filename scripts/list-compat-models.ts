@@ -13,9 +13,18 @@ const res = await fetch(`${base}/models`, { headers: { Authorization: `Bearer ${
 if (!res.ok) throw new Error(`${base}/models -> ${res.status}: ${(await res.text()).slice(0, 300)}`);
 const { data = [] } = (await res.json()) as { data?: { id: string }[] };
 
-const ids = data.map((m) => m.id)
+let ids = data.map((m) => m.id)
   .filter((id) => !/whisper|tts|guard|embed|vision-only|distil|moderation/i.test(id))
   .sort();
+
+// OpenRouter mixes free and paid in one list; only the ":free" variants cost nothing.
+const freeOnly = ids.filter((id) => /:free$/i.test(id));
+if (freeOnly.length) {
+  console.log(`(${freeOnly.length} of ${ids.length} models are free — using only those)\n`);
+  ids = freeOnly;
+} else if (/openrouter/i.test(base)) {
+  console.log("⚠️  No \":free\" models found. Everything on this endpoint will bill your account.\n");
+}
 if (!ids.length) throw new Error("provider returned no usable text models");
 console.log(`Models served by ${base}:\n${ids.map((i) => `  ${i}`).join("\n")}\n`);
 

@@ -11,6 +11,7 @@ function getPool() {
     idleTimeoutMillis: 10_000,       // recycle before the server does it for us
     connectionTimeoutMillis: 15_000,
   });
+  pool.setMaxListeners(30); // the pool is shared across many concurrent queries
   pool.on("error", (e) => console.warn(`postgres pool error (will reconnect): ${e.message}`));
   return pool;
 }

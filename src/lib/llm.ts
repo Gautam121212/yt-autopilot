@@ -44,7 +44,8 @@ export type CallOpts = {
 export class QuotaError extends Error {}
 export const isQuota = (e: unknown) =>
   e instanceof QuotaError ||
-  /\b429\b|exceeded your current quota|rate[- ]?limit|out of daily quota|RESOURCE_EXHAUSTED/i.test((e as Error)?.message ?? "");
+  /\b429\b|\b402\b|exceeded your current quota|rate[- ]?limit|out of daily quota|requires more credits|insufficient|RESOURCE_EXHAUSTED/i
+    .test((e as Error)?.message ?? "");
 
 export const providerSupportsWeb = () => PROVIDER === "claude-code";
 /** every supported provider can look at images, by different means. */
@@ -154,6 +155,10 @@ async function openaiCompatible(model: string, system: string, prompt: string, m
       response_format: { type: "json_object" },
     }),
   }, LLM_TIMEOUT_MS), `openai-compat ${model}`, 3).catch((e: Error) => {
+    if (/requires more credits|insufficient credits|\b402\b/i.test(e.message)) {
+      throw new QuotaError(`${model} has no credit left on this account.\n` +
+        `Run \`npm run models:backup\` to switch to a free (":free") model, or top up the provider.\n${e.message.slice(0, 200)}`);
+    }
     if (/Request too large|enforced limit|tokens per minute|OTPM/i.test(e.message)) {
       throw new QuotaError(`${model} rejected the request: this provider's free tier caps output tokens per minute, ` +
         `which is too small for a full script.\nEither lower OPENAI_COMPAT_MAX_TOKENS for light tasks only, ` +
