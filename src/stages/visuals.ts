@@ -10,7 +10,7 @@ import { makeCard } from "./cards";
 export type ImageCredit = { source: string; id: string; title: string; attribution?: string };
 
 const MIN_USABLE = 0.35;        // below this, a designed card beats whatever the archive returned
-const SCENE_BUDGET_MS = 120_000; // hard ceiling per scene; a card is produced rather than waiting
+const SCENE_BUDGET_MS = Number(process.env.SCENE_BUDGET_MS ?? 180_000); // ceiling per scene before a card is used
 
 function withBudget<T>(p: Promise<T>, ms: number, fallback: () => Promise<T>): Promise<T> {
   let timer: NodeJS.Timeout;
@@ -70,7 +70,7 @@ export async function sceneImages(
   let clipsUsed = 0;
 
   let done = 0;
-  const results = await mapLimit(scenes, 4, async (s, i) => {
+  const results = await mapLimit(scenes, 6, async (s, i) => {
     const card = async () => {
       const out = path.join(dir, `${String(i).padStart(3, "0")}-card.jpg`);
       await makeCard({ headline: s.cardHeadline || s.imageQuery, sub: s.cardSub, index: i, width: size?.w ?? 1920, height: size?.h ?? 1080, out });

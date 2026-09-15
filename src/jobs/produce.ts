@@ -14,7 +14,7 @@ import { incident, log } from "../lib/log";
 import { buildDescription, buildShortDescription, schedulePublic, upload } from "../stages/publish";
 import { renderVideo, VERTICAL } from "../stages/render";
 import { research } from "../stages/research";
-import { finalReview, type Review } from "../stages/review";
+import { finalReview, unreviewed, type Review } from "../stages/review";
 import { pickSlot } from "../stages/schedule";
 import { ensureIllustratable } from "../stages/feasibility";
 import { forecast } from "../stages/forecast";
@@ -271,7 +271,12 @@ async function main() {
       let description = buildDescription(script, script.scenes, timings, video.dossier!, allCredits);
 
       log(`#${video.id} final check`);
-      let review = await finalReview({ dir, script, verification: video.verification!, description, videoPath, shortPath: shortOut?.videoPath, credits: long.credits });
+      let review = await finalReview({ dir, script, verification: video.verification!, description, videoPath, shortPath: shortOut?.videoPath, credits: long.credits })
+        .catch(async (e) => {
+          // 35 minutes of rendering must not be lost because the reviewer was unavailable.
+          await incident("final-check.unavailable", e, video.id);
+          return unreviewed((e as Error).message.slice(0, 160));
+        });
 
       // Repair rather than discard: a held video is fixed and re-checked before anyone is asked to look at it.
       let repairs = video.repairs ?? 0;
@@ -327,7 +332,8 @@ async function main() {
           safeThumbnailText(script.thumbnailText, script.title, script.scenes.map((sc) => sc.narration).join(" ")),
           dir, used, stillFallback).catch(() => thumbPath);
         description = buildDescription(script, script.scenes, rendered.timings, video.dossier!, allCredits);
-        review = await finalReview({ dir, script, verification: video.verification!, description, videoPath: rendered.videoPath, shortPath: shortOut?.videoPath, credits: long.credits });
+        review = await finalReview({ dir, script, verification: video.verification!, description, videoPath: rendered.videoPath, shortPath: shortOut?.videoPath, credits: long.credits })
+          .catch(async (e) => { await incident("final-check.unavailable", e, video.id); return unreviewed((e as Error).message.slice(0, 160)); });
         await updateVideo(video.id, { script, title: script.title, repairs, actual_score: review.overall, scene_timings: rendered.timings, assets: { images: allCredits, review, forecast: fc } });
         log(`#${video.id} after repair ${repairs}: ${review.decision} (${review.overall}/10)${audioChanged ? " [re-voiced]" : ""}`);
         thumbPath = newThumb;

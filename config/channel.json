@@ -17,7 +17,7 @@
   "approval": {
     "mode": "claude",
     "humanReviewFirst": 3,
-    "minScore": 7
+    "minScore": 6.5
   },
   "imageSources": [
     "commons",

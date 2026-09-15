@@ -55,7 +55,7 @@ photograph. So score visualsMatch on the MIX: a video that is mostly real photog
 deliberate; one that is more than half cards reads as a slideshow of text and cannot exceed 6.
 Judge the cardHeadline values too: a card carrying a concrete figure works, a card repeating an abstraction does not.
 
-verdict: "proceed" if likely >= 7; "repair" if the listed fixes would plausibly get it there; "abandon" if the
+verdict: "proceed" if likely >= the channel's publish bar; "repair" if the listed fixes would plausibly get it there; "abandon" if the
 topic itself cannot carry a good video (thin sourcing, nothing surprising, nothing to show).${
   bias > 0.4 ? `\n\nCALIBRATION: recent predictions ran about ${bias.toFixed(1)} points generous. Shade down by roughly that much — no more.`
   : bias < -0.4 ? `\n\nCALIBRATION: recent predictions ran about ${Math.abs(bias).toFixed(1)} points harsh. Shade up by roughly that much — no more.` : ""}`,

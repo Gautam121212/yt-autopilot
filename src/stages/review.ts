@@ -34,6 +34,19 @@ async function contactSheet(video: string, out: string, cols: number, rows: numb
   await sh("ffmpeg", ["-y", "-i", video, "-vf", `fps=1/${interval.toFixed(2)},scale=${w}:-2,tile=${cols}x${rows}:padding=6:color=white`, "-frames:v", "1", "-q:v", "4", out]);
 }
 
+/** A review that cannot run is not a pass and not a crash: it is a hold for a human to look at. */
+export function unreviewed(why: string): Review {
+  return {
+    decision: "hold",
+    scores: { hook: 0, clarity: 0, visualsMatch: 0, thumbnail: 0, packaging: 0 },
+    overall: 0,
+    issues: [{ severity: "major", area: "other", sceneId: null, what: `The automatic review could not run: ${why}`, fix: "Watch it yourself and approve or reject." }],
+    improvedTitle: null,
+    improvedDescriptionIntro: null,
+    noteForOwner: "The video is finished and uploaded privately, but the quality check failed to run. Please judge it yourself.",
+  };
+}
+
 export async function finalReview(o: {
   dir: string; script: Script; verification: Verification; description: string;
   videoPath: string; shortPath?: string; credits: ImageCredit[];
@@ -71,7 +84,11 @@ HOLD (blocker) if ANY of these is true:
 - it reads as a reworded encyclopedia article with no original explanation or comparison;
 - it gives medical, psychological, legal or financial advice, or invites the viewer to self-diagnose.
 
-SCORING (be harsh; 7 is the publish bar and should feel earned):
+The publish bar is set by the channel owner and may be below 10. That changes NOTHING about the blockers above:
+a blocker is still a hold no matter how high the other scores are. Score honestly rather than generously —
+a video that scrapes the bar should feel like it scraped it.
+
+SCORING (be harsh; the bar should feel earned):
 - 10 = you would send this to a friend. 8 = you would watch it to the end. 6 = you would click away at the midpoint.
 - 5 or below for anything that is competent but forgettable.
 Score visualsMatch on whether each image earns its place, not on whether it is pretty.

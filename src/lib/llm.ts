@@ -269,8 +269,12 @@ export async function askJson<T>(o: {
               throw new QuotaError(`${(e as Error).message}\n\nThe backup provider's output cap (OPENAI_COMPAT_MAX_TOKENS=${cap}) is too small for this step.`);
             }
             const backup = (o.tier === "heavy" ? process.env.OPENAI_COMPAT_MODEL_HEAVY : process.env.OPENAI_COMPAT_MODEL_LIGHT) || process.env.OPENAI_COMPAT_MODEL_HEAVY!;
-            console.warn(`Gemini is out of quota; falling back to ${backup} via OPENAI_COMPAT_BASE_URL`);
-            return openaiCompatible(backup, o.system, body, o.maxTokens ?? 16000, o.images);
+            // Most backup models are text-only; sending images gets a hard 404 from the router.
+            const backupSeesImages = process.env.OPENAI_COMPAT_VISION === "true";
+            if (o.images?.length && !backupSeesImages) {
+              console.warn(`Gemini is out of quota; ${backup} cannot see images, so judging on text only`);
+            }
+            return openaiCompatible(backup, o.system, body, o.maxTokens ?? 16000, backupSeesImages ? o.images : undefined);
           });
       try { raw = extractJson(text); } catch (e) { raw = undefined; lastErr = (e as Error).message; }
     }
