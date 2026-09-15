@@ -48,7 +48,8 @@ export async function makeCard(o: { headline: string; sub?: string; index: numbe
 
   const isFigure = /^[^a-zA-Z]*[0-9]/.test(o.headline) && o.headline.length <= 18;
   const headLines = wrap(o.headline.toUpperCase(), isFigure ? 18 : 22);
-  const headSize = Math.max(54, Math.min(isFigure ? 190 : 120, Math.floor((o.width * 0.82) / (Math.max(...headLines.map((l) => l.length)) * 0.6))));
+  // 0.72 of the frame, and 0.62 em per bold cap: measured, not guessed.
+  const headSize = Math.max(48, Math.min(isFigure ? 170 : 110, Math.floor((o.width * 0.72) / (Math.max(...headLines.map((l) => l.length)) * 0.62))));
   await fs.writeFile(headFile, headLines.join("\n"));
 
   const filters = [

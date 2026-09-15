@@ -49,6 +49,8 @@ export const SceneSchema = z.object({
 });
 export type Scene = z.infer<typeof SceneSchema>;
 
+const WORDS = (t: string) => t.trim().split(/\s+/).filter(Boolean).length;
+
 export const ScriptSchema = z.object({
   title: z.string().max(100),
   altTitles: z.array(z.string().max(100)).length(3),
@@ -69,7 +71,12 @@ export const ScriptSchema = z.object({
     })).min(3).max(8),
   }),
   claims: z.array(z.object({ id: z.string(), text: z.string(), sourceIds: z.array(z.string()).min(1) })),
-});
+})
+  // A 3-minute video against an 8-10 minute target reads as thin; enforce the length the brief asked for.
+  .refine((s) => s.scenes.reduce((n, sc) => n + WORDS(sc.narration), 0) >= 1000,
+    (s) => ({ message: `Narration totals ${s.scenes.reduce((n, sc) => n + WORDS(sc.narration), 0)} words; the video needs at least 1000 (about 7 minutes). Write longer scenes, not more scenes.` }))
+  .refine((s) => s.scenes.every((sc) => WORDS(sc.narration) >= 45),
+    (s) => ({ message: `Every scene needs at least 45 words; the shortest has ${Math.min(...s.scenes.map((sc) => WORDS(sc.narration)))}.` }));
 export type Script = z.infer<typeof ScriptSchema>;
 
 export const VerifySchema = z.object({

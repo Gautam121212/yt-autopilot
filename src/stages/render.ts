@@ -28,6 +28,8 @@ export const LANDSCAPE: Size = { w: 1920, h: 1080 };
 export const VERTICAL: Size = { w: 1080, h: 1920 };
 
 const isVideo = (f: string) => /\.(mp4|mov|webm)$/i.test(f);
+/** Cards carry text to the edges of the safe area — zooming into them crops the words off. */
+const isCard = (f: string) => /-card\.jpg$/i.test(f);
 
 const FADE = 0.35; // fade in/out baked into each clip so the join can be a stream copy
 
@@ -36,6 +38,22 @@ async function sceneClip(img: string, audio: SceneAudio, motion: number, out: st
   const bw = Math.round(size.w * 1.25), bh = Math.round(size.h * 1.25);
   const dur = audio.duration + PAD;
   const frames = Math.ceil(dur * FPS);
+
+  if (isCard(img)) {
+    // Fit the whole card, never crop it, and drift gently instead of zooming.
+    await sh("ffmpeg", [
+      "-y", "-loop", "1", "-i", img, "-i", audio.file,
+      "-filter_complex",
+      `[0:v]scale=${size.w}:${size.h}:force_original_aspect_ratio=decrease,` +
+        `pad=${size.w}:${size.h}:(ow-iw)/2:(oh-ih)/2:color=black,fps=${FPS},` +
+        `fade=t=in:st=0:d=${FADE},fade=t=out:st=${(dur - FADE).toFixed(2)}:d=${FADE},format=yuv420p[v];` +
+        `[1:a]apad=pad_dur=${PAD},aresample=48000,afade=t=in:st=0:d=0.12,afade=t=out:st=${(dur - 0.2).toFixed(2)}:d=0.2[a]`,
+      "-map", "[v]", "-map", "[a]", "-t", dur.toFixed(3),
+      "-c:v", "libx264", "-preset", "superfast", "-crf", "18", "-r", String(FPS),
+      "-c:a", "aac", "-b:a", "192k", "-ac", "2", out,
+    ]);
+    return;
+  }
 
   if (isVideo(img)) {
     // Stock clip: loop it to the narration length, drop its own audio, keep our voice track.

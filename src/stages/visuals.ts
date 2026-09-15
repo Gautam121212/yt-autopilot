@@ -9,7 +9,7 @@ import { makeCard } from "./cards";
 
 export type ImageCredit = { source: string; id: string; title: string; attribution?: string };
 
-const MIN_USABLE = 0.35;        // below this, a designed card beats whatever the archive returned
+const MIN_USABLE = 0.25;        // below this, a designed card beats whatever the archive returned
 const SCENE_BUDGET_MS = Number(process.env.SCENE_BUDGET_MS ?? 180_000); // ceiling per scene before a card is used
 
 function withBudget<T>(p: Promise<T>, ms: number, fallback: () => Promise<T>): Promise<T> {
