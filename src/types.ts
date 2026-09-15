@@ -56,7 +56,7 @@ export const ScriptSchema = z.object({
   tags: z.array(z.string()).max(15),
   thumbnailText: z.string().max(32),
   thumbnailQuery: z.string(),
-  scenes: z.array(SceneSchema).min(12),
+  scenes: z.array(SceneSchema).min(12).max(18),   // enforced: more scenes means a slower render and weaker pictures
   short: z.object({
     title: z.string().max(90),
     scenes: z.array(z.object({

@@ -7,12 +7,28 @@ function getPool() {
     connectionString: env("DATABASE_URL"),
     ssl: process.env.PGSSL === "disable" ? false : { rejectUnauthorized: true },
     max: 3,
+    keepAlive: true,                 // serverless Postgres drops idle sockets
+    idleTimeoutMillis: 10_000,       // recycle before the server does it for us
+    connectionTimeoutMillis: 15_000,
   });
+  pool.on("error", (e) => console.warn(`postgres pool error (will reconnect): ${e.message}`));
   return pool;
 }
 
+/** Retries the "Connection terminated unexpectedly" class of error, which is routine on serverless Postgres. */
 export async function q<T = any>(sql: string, params: unknown[] = []): Promise<T[]> {
-  return (await getPool().query(sql, params)).rows as T[];
+  let last: unknown;
+  for (let i = 0; i < 3; i++) {
+    try {
+      return (await getPool().query(sql, params)).rows as T[];
+    } catch (e) {
+      last = e;
+      const msg = (e as Error).message ?? "";
+      if (!/terminated unexpectedly|Connection terminated|ECONNRESET|server closed|timeout exceeded/i.test(msg)) throw e;
+      await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+    }
+  }
+  throw last;
 }
 
 export async function updateVideo(id: number, fields: Record<string, unknown>) {

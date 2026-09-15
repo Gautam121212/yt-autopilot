@@ -31,6 +31,14 @@ const MAX_ATTEMPTS = 3;
 const MAX_REVISIONS = 2;
 const MAX_REPAIRS = 2; // rebuild-and-recheck rounds after the final check says hold (cheap now: clips are cached)
 
+/**
+ * Self-imposed deadline. The runner kills the step at 75 minutes; finishing with an uploaded video
+ * and one skipped repair always beats being killed with nothing to show for an hour of work.
+ */
+const DEADLINE_MIN = Number(process.env.PRODUCE_DEADLINE_MIN ?? 50);
+const startedAt = Date.now();
+const minutesLeft = () => DEADLINE_MIN - (Date.now() - startedAt) / 60_000;
+
 type VideoRow = {
   id: number; status: string; attempts: number; sub_niche: string; structure: string;
   topic: Topic; dossier: Dossier | null; script: Script | null; verification: Verification | null; repairs: number;
@@ -241,6 +249,11 @@ async function main() {
       let repairs = video.repairs ?? 0;
       let rendered = { videoPath, srtPath, timings };
       while (review.decision === "hold" && repairs < MAX_REPAIRS) {
+        // A repair round costs roughly 10-15 minutes; never start one we cannot finish.
+        if (minutesLeft() < 15) {
+          log(`#${video.id} skipping repair — only ${minutesLeft().toFixed(0)} min left in the budget; uploading as is`);
+          break;
+        }
         repairs++;
         const serious = review.issues.filter((i) => i.severity !== "minor");
         const imageIssues = serious.filter((i) => i.area === "image" || i.area === "thumbnail");
@@ -261,7 +274,11 @@ async function main() {
         if (scriptIssues.length) {
           const before = new Map(script.scenes.map((sc) => [sc.id, sc.narration]));
           const repaired = await repairScript({ cfg, playbook, script, dossier: video.dossier!, issues: serious });
-          const changed = repaired.scenes.filter((sc) => before.get(sc.id) !== sc.narration);
+          let changed = repaired.scenes.filter((sc) => before.get(sc.id) !== sc.narration);
+          if (changed.length > 8 && minutesLeft() < 30) {
+            log(`#${video.id} script rewrite touched ${changed.length} scenes but time is short — keeping the original narration`);
+            changed = [];
+          }
           if (changed.length && changed.length <= repaired.scenes.length) {
             const fresh = await synthesize(cfg, changed, path.join(dir, `audio-r${repairs}`));
             for (const [i, sc] of repaired.scenes.entries()) {
