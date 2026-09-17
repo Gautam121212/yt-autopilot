@@ -2,43 +2,39 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { ChannelConfig } from "../config";
 import { sh } from "../lib/media";
-import { commonsImage, nasaImage } from "../lib/sources";
+import { commonsImage, nasaImage, openverseImage, pexelsImage } from "../lib/sources";
 
 const FONTS = [
-  "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",   // Linux / GitHub Actions
-  "/System/Library/Fonts/Supplemental/Arial Bold.ttf",       // macOS
+  "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+  "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
   "/System/Library/Fonts/Helvetica.ttc",
   "/Library/Fonts/Arial Bold.ttf",
 ];
+const ACCENT = "0xFFC83D";     // hot yellow — reads at phone size
+const isVideoFile = (f: string) => /\.(mp4|mov|webm)$/i.test(f);
 
 let drawtext: boolean | undefined;
-/** Some ffmpeg builds ship without libfreetype, so drawtext simply does not exist. */
 async function hasDrawtext(): Promise<boolean> {
   if (drawtext === undefined) {
     drawtext = await sh("ffmpeg", ["-hide_banner", "-filters"]).then((o) => /^\s*\S+\s+drawtext\s/m.test(o), () => false);
-    if (!drawtext) {
-      console.warn('⚠️  This ffmpeg build has no "drawtext" filter, so thumbnail text cannot be burned in.');
-      console.warn('   Fix on macOS:  brew uninstall ffmpeg && brew install ffmpeg   (then check: ffmpeg -filters | grep drawtext)');
-      console.warn("   Continuing with a text-free thumbnail.");
-    }
+    if (!drawtext) console.warn('⚠️  This ffmpeg has no "drawtext"; thumbnail will have no text. Fix: brew install ffmpeg-full');
   }
   return drawtext;
 }
-
 async function firstFont(): Promise<string | null> {
   for (const f of FONTS) if (await fs.access(f).then(() => true, () => false)) return f;
   return null;
 }
 
-// Everyday words that may appear in thumbnail text without being in the script.
+// Everyday words allowed in thumbnail text without appearing in the script.
 const COMMON = new Set(["the","a","an","and","or","but","of","in","on","to","for","with","from","by","at","is","was",
   "this","that","how","why","what","when","where","who","not","no","never","always","all","one","two","first","last",
   "new","old","big","huge","tiny","real","true","best","worst","most","more","less","problem","mystery","secret",
   "story","truth","reason","answer","question","inside","behind","before","after","almost","nearly","still","yet",
   "working","broken","missing","hidden","lost","found","built","made","saved","killed","changed","failed","fixed",
-  "impossible","possible","simple","strange","wrong","right","safe","cost","price","years","days","ways"]);
+  "impossible","possible","simple","strange","wrong","right","safe","cost","price","years","days","ways",
+  "he","she","they","it","did","does","drank","ate","wrong","anyway","somehow","apparently","obviously","on","purpose"]);
 
-/** Conservative stemmer: only strips a suffix when at least 4 characters remain. */
 function stem(w: string): string {
   const x = w.toLowerCase();
   for (const suf of ["ies", "ing", "ed", "es", "s"]) {
@@ -47,74 +43,76 @@ function stem(w: string): string {
   return x;
 }
 
-/**
- * Thumbnail text must be words the script actually uses (or everyday words). This catches invented or
- * garbled text — "800 MILES UNBURNT" — before it is burned into an image nobody can edit afterwards.
- */
+/** Thumbnail text must be words the script uses (or everyday words) — catches invented or garbled text. */
 export function safeThumbnailText(proposed: string, title: string, narration: string): string {
   const vocab = new Set((`${title} ${narration}`.toLowerCase().replace(/-/g, " ").match(/[a-z0-9']+/g) ?? []).map(stem));
   const words = proposed.match(/[A-Za-z0-9']+/g) ?? [];
   const known = (w: string) => /^[0-9]/.test(w) || w.length <= 3 || COMMON.has(w.toLowerCase()) || vocab.has(stem(w));
-  if (words.length && words.every(known)) return proposed;
+  if (words.length && words.length <= 5 && words.every(known)) return proposed;
 
-  // Rebuild from the title, keeping word order so it still reads like English.
-  const t = title.match(/[A-Za-z0-9'-]+/g) ?? [];
-  const keep = t.map((w) => w.replace(/-$/, ""))
-    .filter((w) => /^[0-9]/.test(w) || (w.length > 4 && !COMMON.has(w.toLowerCase())));
-  const built = keep.slice(0, 3).join(" ");
-  return built || title.split(/\s+/).slice(0, 3).join(" ");
+  const t = (title.match(/[A-Za-z0-9'-]+/g) ?? []).map((w) => w.replace(/-$/, ""));
+  const keep = t.filter((w) => /^[0-9]/.test(w) || (w.length > 4 && !COMMON.has(w.toLowerCase())));
+  return keep.slice(0, 3).join(" ") || title.split(/\s+/).slice(0, 3).join(" ");
 }
 
-/** Wrap to at most 2 lines and shrink the font until the longest line fits inside the safe area. */
-function fitText(text: string): { lines: string[]; fontsize: number } {
-  const words = text.toUpperCase().split(/\s+/).filter(Boolean);
-  let lines = [words.join(" ")];
-  if (words.length > 2) {
-    // split near the middle, on a word boundary
-    let best = 1;
-    let bestDiff = Infinity;
-    for (let i = 1; i < words.length; i++) {
-      const diff = Math.abs(words.slice(0, i).join(" ").length - words.slice(i).join(" ").length);
-      if (diff < bestDiff) { bestDiff = diff; best = i; }
-    }
-    lines = [words.slice(0, best).join(" "), words.slice(best).join(" ")];
-  }
-  const longest = Math.max(...lines.map((l) => l.length));
-  // DejaVu/Arial Bold caps average ~0.62 em wide; 1160px of usable width inside a 1280px frame.
-  const fontsize = Math.max(44, Math.min(104, Math.floor(1160 / (longest * 0.62))));
-  return { lines, fontsize };
-}
-
-const isVideoFile = (f: string) => /\.(mp4|mov|webm)$/i.test(f);
-
-export async function makeThumbnail(cfg: ChannelConfig, query: string, text: string, dir: string, used: Set<string>, fallbackImage: string): Promise<string> {
+/**
+ * Comedy-thumbnail layout: subject cropped tight and pushed hard, then a bold caption block in the
+ * lower-left — white first line, accent-yellow payoff line, thick black outline so it survives at
+ * phone size. No slide, no centred serif, no subtlety.
+ */
+export async function makeThumbnail(
+  cfg: ChannelConfig, query: string, text: string, dir: string, used: Set<string>, fallbackImage: string,
+): Promise<string> {
   const raw = path.join(dir, "thumb-raw.jpg");
+  const finders = cfg.imageSources.map((n) =>
+    n === "nasa" ? nasaImage : n === "pexels" ? pexelsImage : n === "openverse" ? openverseImage : commonsImage);
   let got = null;
-  for (const find of cfg.imageSources.map((n) => (n === "nasa" ? nasaImage : commonsImage))) {
+  for (const find of finders) {
     got = await find(query, used, raw).catch(() => null);
-    if (got && got.score >= 0.5) break;
+    if (got && got.score >= 0.4) break;
   }
   const src = got ? raw : fallbackImage;
   const out = path.join(dir, "thumbnail.jpg");
-  // A single JPEG from a video input needs -update 1; without it ffmpeg wants a %03d pattern and fails.
   const single = isVideoFile(src) ? ["-frames:v", "1", "-update", "1"] : [];
-  // Fill the frame, lift contrast, darken the edges so the subject and the text both pop.
-  const base = "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720," +
-    "eq=contrast=1.22:saturation=1.35:brightness=0.02,unsharp=5:5:0.8,vignette=PI/4.5";
+
+  // Punchy grade: tight crop, lifted contrast, saturated, darkened corners so text pops.
+  const base = "scale=1600:900:force_original_aspect_ratio=increase,crop=1440:810,scale=1280:720," +
+    "eq=contrast=1.3:saturation=1.45:brightness=0.03,unsharp=5:5:1.0,vignette=PI/4";
 
   const font = await firstFont();
-  if (await hasDrawtext() && font) {
-    const { lines, fontsize } = fitText(text);
-    const textFile = path.join(dir, "thumb-text.txt"); // a file avoids every drawtext escaping trap
-    await fs.writeFile(textFile, lines.join("\n"));
-    // line_spacing + centred x keeps both lines inside the frame at any length
-    await sh("ffmpeg", ["-y", "-i", src, "-vf",
-      `${base},drawtext=fontfile='${font}':textfile='${textFile}':fontsize=${fontsize}:line_spacing=12:` +
-      `fontcolor=white:borderw=${Math.max(5, Math.round(fontsize / 12))}:bordercolor=black:x=(w-text_w)/2:y=h-text_h-64`,
-      ...single, "-q:v", "3", out]);
-  } else {
-    if (!font) console.warn("⚠️  No bold system font found; thumbnail text skipped.");
-    await sh("ffmpeg", ["-y", "-i", src, "-vf", base, ...single, "-q:v", "3", out]);
+  if (!(await hasDrawtext()) || !font) {
+    await sh("ffmpeg", ["-y", "-i", src, "-vf", base, ...single, "-q:v", "2", out]);
+    return out;
   }
+
+  // Split into a setup line and a payoff line; the payoff gets the accent colour.
+  const words = text.toUpperCase().split(/\s+/).filter(Boolean);
+  const split = words.length >= 4 ? Math.ceil(words.length / 2) : words.length > 1 ? words.length - 1 : 1;
+  const line1 = words.slice(0, split).join(" ");
+  const line2 = words.slice(split).join(" ");
+  const f1 = path.join(dir, "t1.txt");
+  const f2 = path.join(dir, "t2.txt");
+  await fs.writeFile(f1, line1);
+  await fs.writeFile(f2, line2);
+
+  const longest = Math.max(line1.length, line2.length || 1);
+  const USABLE = 1280 - 52 - 44;                    // left margin + right safety
+  const EM = 0.72;                                  // measured width of a bold cap in DejaVu/Arial Bold
+  const fs1 = Math.max(52, Math.min(124, Math.floor(USABLE / (longest * EM))));
+  const y1 = line2 ? 720 - Math.round(fs1 * 2.35) : 720 - Math.round(fs1 * 1.5);
+
+  const filters = [
+    base,
+    // a dark wedge behind the text so it reads over any footage
+    `drawbox=x=0:y=${y1 - 26}:w=1280:h=${line2 ? fs1 * 2 + 70 : fs1 + 60}:color=black@0.38:t=fill`,
+    `drawtext=fontfile='${font}':textfile='${f1}':fontsize=${fs1}:fontcolor=white:borderw=7:bordercolor=black:x=52:y=${y1}`,
+  ];
+  if (line2) {
+    filters.push(`drawtext=fontfile='${font}':textfile='${f2}':fontsize=${fs1}:fontcolor=${ACCENT}:borderw=7:bordercolor=black:x=52:y=${y1 + Math.round(fs1 * 1.12)}`);
+  }
+
+  await sh("ffmpeg", ["-y", "-i", src, "-vf", filters.join(","), ...single, "-q:v", "2", out]);
+  await fs.rm(f1, { force: true });
+  await fs.rm(f2, { force: true });
   return out;
 }

@@ -29,6 +29,10 @@ STRUCTURE
 HARD RULES
 6. Every factual statement is backed by a claim whose sourceIds exist in the dossier. Never invent numbers,
    dates, names or quotes. Items in dossier.uncertain are framed as open questions.
+   THIS INCLUDES COLOUR. Vivid specifics are the point of this channel, but every one must come from
+   dossier.details or dossier.keyFacts. Do not add an eyewitness, a time of day, a piece of equipment, a weather
+   condition or a small dramatic beat that is not in the dossier — a script that does this gets thrown away
+   however good it reads. If the dossier lacks colour for a scene, write the scene drier rather than inventing it.
 7. imageQuery: 2-5 words naming a CONCRETE, FILMABLE thing — an object, place, animal, machine, building, document.
    Prefer things stock footage libraries actually hold: hands doing something, liquid pouring, machinery turning,
    weather, crowds of animals, laboratory glassware, city streets, food, tools, water, fire, sky.
@@ -37,9 +41,14 @@ HARD RULES
 8. motion: "clip" whenever the line has movement, process, scale or atmosphere — aim for MOST scenes to be "clip".
    "still" only for a specific historical object or document that must be seen exactly.
 9. era: "historical" only when the subject is pre-1950 AND must look period. Prefer "any" so modern footage is allowed.
-10. cardHeadline / cardSub: a short punchy figure ("2 LITRES A DAY", "411 SHIPS") used as an on-screen caption over
+10. thumbnailText: the punchline of the video in 2-5 words, written as a REACTION, not a description.
+   It is rendered as two lines: a setup then a payoff in yellow. Good: "HE DRANK IT / ON PURPOSE",
+   "NOBODY STOPPED HIM", "411 SHIPS / SANK ON PURPOSE", "IT WORKED". Bad: "The History of Plimsoll Lines",
+   "Understanding Digestion". Use only words that appear in the narration, plus everyday words.
+   thumbnailQuery: the single most absurd CONCRETE object or scene in the story — what a viewer should see.
+11. cardHeadline / cardSub: a short punchy figure ("2 LITRES A DAY", "411 SHIPS") used as an on-screen caption over
    footage — NOT a slide. Keep it under 4 words. Write one for every scene anyway; most will go unused.
-11. No "in this video", no greetings, at most one soft subscribe mention at the very end.
+12. No "in this video", no greetings, at most one soft subscribe mention at the very end.
 
 PLAYBOOK (learned from this channel's own data; follow unless it conflicts with the hard rules)
 ${playbook}`;
@@ -102,6 +111,33 @@ CURRENT SCRIPT:
 ${JSON.stringify(o.script)}
 
 Return the complete repaired script. ${SHAPE}`,
+  });
+}
+
+/**
+ * Last resort before abandoning: delete or soften every claim the reviewer could not trace to the
+ * dossier, changing nothing else. Cheaper and better than throwing away a script that works.
+ */
+export async function stripUnsourced(o: { cfg: ChannelConfig; playbook: string; script: Script; dossier: Dossier; issues: { what: string; fix: string }[] }): Promise<Script> {
+  return askJson({
+    tier: "heavy",
+    schema: ScriptSchema,
+    system: system(o.cfg, o.playbook),
+    prompt: `A fact-checker found details in this script that are not in the dossier. Your ONLY job is to remove or
+rewrite those specific details so every sentence traces to the dossier. Do not restructure, do not re-voice, do not
+change the hook, do not touch anything the checker did not flag. Where a flagged detail carried a joke, keep the
+joke using a detail that IS in the dossier, or cut the sentence entirely. The script must still meet the word count.
+
+FLAGGED:
+${o.issues.map((i) => `- ${i.what} -> ${i.fix}`).join("\n")}
+
+DOSSIER (the only permitted source of facts):
+${JSON.stringify(o.dossier)}
+
+SCRIPT:
+${JSON.stringify(o.script)}
+
+Return the complete corrected script. ${SHAPE}`,
   });
 }
 

@@ -80,6 +80,8 @@ HOLD (blocker) if ANY of these is true:
 - any frame shows a logo, insignia, wordmark or branded livery; an identifiable person; a watermark or embedded caption bar;
 - any image does not depict what its narration says;
 - the thumbnail text is unreadable, cut off, or promises something the video doesn't deliver;
+- the thumbnail text is a DESCRIPTION rather than a reaction or a punchline ("The History of X" is a hold;
+  "HE DRANK IT ON PURPOSE" is right for this channel);
 - the first 20 seconds contain no concrete, specific hook (a number, a name, a strange fact);
 - the script is humourless: this channel is deadpan and funny-because-true, so a solemn lecture is a hold
   even when every fact is correct;

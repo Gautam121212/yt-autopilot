@@ -25,6 +25,9 @@ export const DossierSchema = z
     summary: z.string(),
     sources: z.array(z.object({ id: z.string(), url: z.string().url(), title: z.string() })).min(2),
     keyFacts: z.array(z.object({ fact: z.string(), sourceIds: z.array(z.string()).min(1) })).min(8),
+    /** Sourced narrative colour: named people, times of day, what was seen or heard, exact objects.
+     *  Without this the writer invents it, and the fact-checker then kills a good script. */
+    details: z.array(z.object({ detail: z.string(), sourceIds: z.array(z.string()).min(1) })).min(6),
     figures: z.array(z.object({ claim: z.string(), value: z.string(), sourceIds: z.array(z.string()).min(1) })),
     mentalModel: z.string().describe("the one idea the viewer should walk away understanding"),
     uncertain: z.array(z.string()).default([]).describe("open questions / hypotheses, never to be stated as fact"),

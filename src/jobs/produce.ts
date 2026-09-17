@@ -18,7 +18,7 @@ import { finalReview, unreviewed, type Review } from "../stages/review";
 import { pickSlot } from "../stages/schedule";
 import { ensureIllustratable } from "../stages/feasibility";
 import { forecast } from "../stages/forecast";
-import { repairScript, reviseScript, writeScript } from "../stages/script";
+import { repairScript, reviseScript, stripUnsourced, writeScript } from "../stages/script";
 import { makeThumbnail, safeThumbnailText } from "../stages/thumbnail";
 import { pickTopic } from "../stages/topic";
 import { verify } from "../stages/verify";
@@ -157,6 +157,20 @@ async function main() {
         video.script = await reviseScript({ cfg, playbook, script: video.script!, dossier: video.dossier!, verification });
         verification = await verify(video.script, video.dossier!, recentTitles);
       }
+      // Before giving up: if what remains is unsourced embellishment, delete it rather than the script.
+      if (verification.verdict !== "pass" && verification.issues.some((i) => i.category === "factual")) {
+        log(`#${video.id} stripping unsourced details rather than abandoning a working script`);
+        const stripped = await stripUnsourced({
+          cfg, playbook, script: video.script!, dossier: video.dossier!,
+          issues: verification.issues.filter((i) => i.severity !== "minor").map((i) => ({ what: i.problem, fix: i.fix })),
+        }).catch(() => null);
+        if (stripped) {
+          const after = await verify(stripped, video.dossier!, recentTitles);
+          log(`#${video.id} after strip: ${after.verdict} (${after.issues.length} issues)`);
+          if (after.verdict === "pass") { video.script = stripped; verification = after; }
+        }
+      }
+
       video.verification = verification;
       if (verification.verdict !== "pass") {
         await updateVideo(video.id, { script: video.script, verification, status: "abandoned" });
