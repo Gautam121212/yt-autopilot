@@ -58,10 +58,11 @@ ${outliers.length ? outliers.map((o) => `- "${o.title}" | ${o.views.toLocaleStri
 ALREADY COVERED (do not repeat or closely overlap):
 ${past.map((p) => `- ${p.t}`).join("\n") || "- (nothing yet)"}
 
-${providerSupportsWeb() ? "Use at most 3 web searches to confirm the topic is well documented and to spot angles already overdone.\n" : "You have no web access: choose a topic that will be well covered on Wikipedia, and give wikipediaQueries that will actually match article titles.\n"}SCORE each of your 5 candidates 0-10 on: curiosity (would a stranger stop scrolling), evidence (documented in
-encyclopedic sources), illustratability (how many scenes could be REAL archive photographs of concrete objects —
-this is the single biggest cause of bad videos on this channel), freshness (unlike our past videos and unlike the
-outlier list). Then pick the best.
+${providerSupportsWeb() ? "Use at most 3 web searches to confirm the topic is well documented and to spot angles already overdone.\n" : "You have no web access: choose a topic that will be well covered on Wikipedia, and give wikipediaQueries that will actually match article titles.\n"}SCORE each of your 5 candidates 0-10 on: curiosity (would a stranger stop scrolling AND want to retell it),
+evidence (documented in encyclopedic sources), illustratability (how many scenes could be real photos or stock
+FOOTAGE of concrete things), freshness (unlike our past videos and unlike the outlier list).
+Also state, for the chosen topic, the single funniest TRUE detail in it — if you cannot name one, pick a different
+topic, because this channel cannot carry a topic that is only worthy.
 
 MINIMUM BARS — a topic that fails any of these must be rejected, even if it is the best of the five:
 curiosity >= 7, evidence >= 7, illustratability >= 7, freshness >= 6.

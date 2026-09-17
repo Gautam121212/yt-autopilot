@@ -68,6 +68,9 @@ export async function sceneImages(
 
   const clipsWanted = Math.round(scenes.length * cfg.videoClipRatio);
   let clipsUsed = 0;
+  // Cards are the slide-deck look. Hard ceiling: at most 1 in 6 scenes, and only as a last resort.
+  const cardBudget = Math.max(1, Math.floor(scenes.length / 6));
+  let cardsUsed = 0;
 
   let done = 0;
   const results = await mapLimit(scenes, 6, async (s, i) => {
@@ -118,8 +121,19 @@ export async function sceneImages(
         if (alt && alt.score >= MIN_USABLE) { best = alt; break; }
       }
     }
+    // Out of card budget? Take the best real image we saw, however weak — footage beats a slide.
+    if ((!best || best.score < MIN_USABLE) && cardsUsed >= cardBudget) {
+      for (const q of [s.imageQuery, ...(s.altQueries ?? []), ...fallbackList]) {
+        for (const find of sources) {
+          const any = await find(q, used, file).catch(() => null);
+          if (any) { best = any; break; }
+        }
+        if (best) break;
+      }
+    }
     // Still nothing honest? Render a card from the scene's own words — always relevant, always licence-clean.
     if (!best || best.score < MIN_USABLE) {
+      cardsUsed++;
       const card = path.join(dir, `${String(i).padStart(3, "0")}-card.jpg`);
       await makeCard({
         headline: s.cardHeadline || s.imageQuery,

@@ -254,7 +254,12 @@ async function main() {
       log(`#${video.id} image QA replaced ${qa.rejected} image(s)`);
 
       log(`#${video.id} rendering`);
-      const { videoPath, srtPath, timings } = await renderVideo({ scenes: script.scenes, images: long.files, audio, dir, seed: video.id });
+      const captionsFor = (scs: { cardHeadline?: string }[], files: string[]) =>
+        scs.map((sc, i) => (/-card\.jpg$/.test(files[i] ?? "") ? undefined : sc.cardHeadline?.trim() || undefined));
+      const { videoPath, srtPath, timings } = await renderVideo({
+        scenes: script.scenes, images: long.files, audio, dir, seed: video.id,
+        captions: captionsFor(script.scenes, long.files),
+      });
       const shortOut = shortAssets
         ? await renderVideo({ scenes: script.short.scenes, images: shortAssets[0].files, audio: shortAssets[1], dir, seed: video.id + 1, size: VERTICAL, name: "short", burnCaptions: true })
         : undefined;
@@ -327,7 +332,7 @@ async function main() {
         }
 
         // 3. re-render, re-thumbnail, re-check
-        rendered = await renderVideo({ scenes: script.scenes, images: long.files, audio, dir, seed: video.id + repairs, name: `final-r${repairs}` });
+        rendered = await renderVideo({ scenes: script.scenes, images: long.files, audio, dir, seed: video.id + repairs, name: `final-r${repairs}`, captions: captionsFor(script.scenes, long.files) });
         const newThumb = await makeThumbnail(cfg, script.thumbnailQuery,
           safeThumbnailText(script.thumbnailText, script.title, script.scenes.map((sc) => sc.narration).join(" ")),
           dir, used, stillFallback).catch(() => thumbPath);

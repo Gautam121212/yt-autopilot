@@ -1,6 +1,6 @@
 {
   "channelName": "Brainy Broadcast",
-  "niche": "educational explainers: one surprising, well-documented idea per video, told as a story",
+  "niche": "science and history told with a straight face and a dry sense of humour — funny because it is true",
   "language": "en",
   "audienceTimezone": "America/New_York",
   "targetMinutes": [
@@ -20,12 +20,12 @@
     "minScore": 6.5
   },
   "imageSources": [
+    "pexels",
     "commons",
     "openverse",
-    "pexels",
     "nasa"
   ],
-  "videoClipRatio": 0.25,
+  "videoClipRatio": 0.6,
   "subNiches": [
     {
       "id": "science",
@@ -177,12 +177,12 @@
     "speed": 0.95
   },
   "fallbackImageQueries": [
-    "laboratory",
-    "archive photograph",
-    "landscape",
-    "machinery",
-    "library manuscript",
-    "microscope"
+    "laboratory glassware",
+    "pouring liquid",
+    "machinery turning",
+    "old documents",
+    "city street",
+    "hands working"
   ],
   "discovery": {
     "lookbackDays": 180,

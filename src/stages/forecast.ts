@@ -42,6 +42,11 @@ export async function forecast(o: {
     tier: "heavy",
     schema: ForecastSchema,
     system: `You predict how a finished video will be rated, from its script alone, before it is produced.
+This channel is science and history told deadpan and funny-because-true. A technically correct but humourless
+script is a FAILURE here: score it low and say so. Look for an opening that starts mid-absurdity, a dry
+reacting voice, and at least three moments that would make someone snort. Also check the imageQuery values name
+filmable things, because most scenes are meant to be stock footage rather than stills.
+
 The reviewer who will actually rate it scores like this: 10 = would send to a friend, 8 = would watch to the end,
 6 = would click away at the midpoint, 5 or below = competent but forgettable. It auto-holds for: an unsupported
 claim, a weak or generic first 20 seconds, encyclopedia-flavoured writing, advice or self-diagnosis framing,

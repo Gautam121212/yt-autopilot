@@ -3,37 +3,29 @@
 Rules the script writer follows. The weekly learning job proposes edits via pull request.
 Seed rules are untested hypotheses until this channel's own data confirms or kills them.
 
-## Voice (the reason drafts get rejected)
-- [Fact] Open on a specific moment, person, place or number — never on a definition of the concept.
-- [Fact] Name the concept only after the viewer has watched it happen.
-- [Fact] Banned: "moreover", "furthermore", "it is important to note", "this phenomenon", "plays a crucial role",
-  "researchers have long studied", "delve into". They are what makes a draft read as a lecture.
-- [Hypothesis] Make the stakes personal at least twice ("you would have done the same").
+## Voice — this is the channel
+- [Fact] Deadpan. State the absurd thing plainly and let it land; never explain the joke.
+- [Fact] The humour comes from the facts being ridiculous, never from jokes bolted on to a dry script.
+- [Fact] React like a person: "which went about as well as you'd expect", "nobody stopped him".
+- [Fact] Banned: moreover, furthermore, it is important to note, this phenomenon, plays a crucial role,
+  delve into, fascinating, mind-blowing, let that sink in, buckle up. No puns. No exclamation marks.
+- [Hypothesis] Mix short punchy sentences with one long winding one — rhythm carries the delivery.
 
-## Hook (first 30 seconds)
-- [Hypothesis] First sentence is a concrete, surprising fact or question with a number or comparison the viewer can picture.
-- [Hypothesis] Open a loop in the first 20 seconds that is only closed near the end.
-- [Hypothesis] Never open with "In this video", a greeting, or a channel intro.
+## Hook (first 20 seconds)
+- [Fact] Open mid-absurdity: a person doing something indefensible, or a number that cannot be right.
+- [Fact] One line of deadpan reaction, then start explaining. Never open with a definition.
+- [Hypothesis] Name the concept only after the viewer has watched it happen.
 
-## Explanation quality (the channel's reason to exist)
-- [Hypothesis] Every big number gets a human-scale comparison (e.g. "if the Sun were a basketball...").
-- [Hypothesis] Explain WHY, not just WHAT: each video leaves the viewer with one mental model they didn't have before.
-- [Fact] Separate established science from hypotheses explicitly ("scientists think", "one idea is").
+## Visuals
+- [Fact] Footage first. Most scenes should be real stock video, not stills, and never a text slide.
+- [Fact] Figures appear as short captions burned over the footage, max 4 words.
+- [Fact] Cards (full-screen text) are capped at one scene in six and are a last resort.
+- [Fact] imageQuery names a concrete filmable thing stock libraries actually hold.
 
-## Pacing
-- [Hypothesis] A new reveal or escalation every 45-75 seconds.
-- [Hypothesis] Scenes of 12-25 seconds; one image idea per scene.
-
-## Packaging
-- [Hypothesis] Titles under 60 characters, curiosity + specificity, promise exactly what the video delivers.
-- [Hypothesis] Thumbnail text 2-4 words that add to the title rather than repeat it.
+## Substance
+- [Fact] The real mechanism gets explained properly. Funny is the delivery, not the substitute.
+- [Fact] Separate established science from hypotheses explicitly.
+- [Fact] Never build a video on someone's suffering, and never trade accuracy for a better joke.
 
 ## Ending
-- [Hypothesis] End on the most mind-bending implication, then a one-line tease of a related topic.
-
-## Visuals (added after the first runs)
-- [Fact] Never request an image that would contain a logo, insignia, uniform, badge or branded vehicle; images are checked and replaced before render.
-- [Hypothesis] Each imageQuery names a single concrete object or place, not a concept — concrete queries score far higher on relevance.
-
-## Topic safety
-- [Fact] Psychology topics cover documented research and experiments, never "signs you have X" or anything a viewer could read as a diagnosis.
+- [Hypothesis] End on the best absurd detail held back for the purpose, not a summary.

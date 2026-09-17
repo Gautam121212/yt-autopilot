@@ -6,6 +6,7 @@ import { durationSec, mapLimit, sh } from "../lib/media";
 import type { SceneTiming } from "../types";
 
 type Narrated = { id: string; narration: string };
+
 import type { SceneAudio } from "./voice";
 
 const FPS = 30;
@@ -13,14 +14,25 @@ const PAD = 0.4; // breath between scenes
 
 // Motion variety per scene; upscaled input keeps zoompan from jittering.
 // Wider zoom range and diagonal drifts read as real camera movement rather than a slideshow.
-const MOTIONS = [
-  (d: number) => `z='min(1+0.28*on/${d},1.28)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'`,          // push in
-  (d: number) => `z='1.28-0.28*on/${d}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'`,                  // pull out
-  (d: number) => `z='1.22':x='(iw-iw/zoom)*on/${d}':y='ih/2-(ih/zoom/2)'`,                           // pan right
-  (d: number) => `z='1.22':x='(iw-iw/zoom)*(1-on/${d})':y='ih/2-(ih/zoom/2)'`,                       // pan left
-  (d: number) => `z='min(1.05+0.2*on/${d},1.25)':x='(iw-iw/zoom)*on/${d}':y='(ih-ih/zoom)*on/${d}'`, // drift down-right while pushing in
-  (d: number) => `z='min(1.05+0.2*on/${d},1.25)':x='(iw-iw/zoom)*(1-on/${d})':y='(ih-ih/zoom)*on/${d}'`, // drift down-left
-  (d: number) => `z='1.25':x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*(1-on/${d})'`,                       // tilt up
+/**
+ * Motion is driven by time through `crop`, not by zoompan.
+ *
+ * Measured: with a slow pan, ffmpeg's whole-pixel positioning repeats every second frame
+ * (150 of 240 frames unique) and the result reads as a shake. At ~2.9px of travel per frame
+ * every frame is distinct (240/240). These moves are tuned to sit in that range, and the
+ * zoom-only move is deliberately a straight push so there is no sub-pixel drift to stutter.
+ */
+const MOVES: ((w: number, h: number, dur: number) => string)[] = [
+  // pan right across a 1.33x window
+  (w, h, d) => `crop=${Math.round(w * 0.75 / 2) * 2}:${Math.round(h * 0.75 / 2) * 2}:x='(in_w-out_w)*(0.02+0.96*t/${d})':y='(in_h-out_h)/2'`,
+  // pan left
+  (w, h, d) => `crop=${Math.round(w * 0.75 / 2) * 2}:${Math.round(h * 0.75 / 2) * 2}:x='(in_w-out_w)*(0.98-0.96*t/${d})':y='(in_h-out_h)/2'`,
+  // tilt down
+  (w, h, d) => `crop=${Math.round(w * 0.78 / 2) * 2}:${Math.round(h * 0.78 / 2) * 2}:x='(in_w-out_w)/2':y='(in_h-out_h)*(0.02+0.96*t/${d})'`,
+  // tilt up
+  (w, h, d) => `crop=${Math.round(w * 0.78 / 2) * 2}:${Math.round(h * 0.78 / 2) * 2}:x='(in_w-out_w)/2':y='(in_h-out_h)*(0.98-0.96*t/${d})'`,
+  // diagonal drift
+  (w, h, d) => `crop=${Math.round(w * 0.76 / 2) * 2}:${Math.round(h * 0.76 / 2) * 2}:x='(in_w-out_w)*(0.03+0.94*t/${d})':y='(in_h-out_h)*(0.03+0.94*t/${d})'`,
 ];
 
 type Size = { w: number; h: number };
@@ -35,9 +47,33 @@ const FADE = 0.35; // fade in/out baked into each clip so the join can be a stre
 /** Mixed archives look mismatched; one grade pulls Commons, Pexels, NASA and Openverse together. */
 const GRADE = "eq=contrast=1.06:saturation=0.92:gamma=0.98,unsharp=5:5:0.4";
 
-async function sceneClip(img: string, audio: SceneAudio, motion: number, out: string, size: Size) {
-  // 1.25x (not 1.5x) is enough headroom for a 1.28 zoom and costs far less to scale.
-  const bw = Math.round(size.w * 1.25), bh = Math.round(size.h * 1.25);
+const FONTS = [
+  "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+  "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+  "/System/Library/Fonts/Helvetica.ttc",
+];
+async function firstFont(): Promise<string | null> {
+  for (const f of FONTS) if (await fs.access(f).then(() => true, () => false)) return f;
+  return null;
+}
+
+/** A short caption burned into the corner of a shot — the alternative to a full-screen text slide. */
+function captionFilter(text: string, size: Size, font: string, dur: number): string {
+  const safe = text.toUpperCase().replace(/[':\\%]/g, "");
+  const fs = Math.round(size.w / (safe.length > 14 ? 17 : 12));
+  const x = Math.round(size.w * 0.055);
+  const y = Math.round(size.h * 0.74);
+  // appears a beat after the cut, leaves before the scene ends
+  const on = `between(t,0.6,${Math.max(1.2, dur - 1.2).toFixed(2)})`;
+  return `drawbox=x=${x - 18}:y=${y - 14}:w=${Math.round(safe.length * fs * 0.62) + 36}:h=${fs + 28}:color=black@0.42:t=fill:enable='${on}',` +
+    `drawtext=fontfile='${font}':text='${safe}':fontsize=${fs}:fontcolor=white:` +
+    `borderw=2:bordercolor=black@0.7:x=${x}:y=${y}:enable='${on}'`;
+}
+
+async function sceneClip(img: string, audio: SceneAudio, motion: number, out: string, size: Size, caption?: string) {
+  // Source is scaled well above the output so zoompan's whole-pixel steps fall below one output
+  // pixel — this is what removes the shake. Affordable now that scripts are 14-18 scenes, not 28.
+  const bw = Math.round(size.w * 1.8), bh = Math.round(size.h * 1.8);
   const dur = audio.duration + PAD;
   const frames = Math.ceil(dur * FPS);
 
@@ -57,6 +93,9 @@ async function sceneClip(img: string, audio: SceneAudio, motion: number, out: st
     return;
   }
 
+  const font = await firstFont();
+  const cap = caption && font ? `,${captionFilter(caption, size, font, dur)}` : "";
+
   if (isVideo(img)) {
     // Stock clip: loop it to the narration length, drop its own audio, keep our voice track.
     // -stream_loop on an unreadable file spins forever, so bound the loop count explicitly.
@@ -67,7 +106,7 @@ async function sceneClip(img: string, audio: SceneAudio, motion: number, out: st
       "-y", "-stream_loop", String(loops), "-i", img, "-i", audio.file,
       "-filter_complex",
       `[0:v]scale=${Math.round(size.w * 1.15)}:${Math.round(size.h * 1.15)}:force_original_aspect_ratio=increase,` +
-        `crop=${size.w}:${size.h}:'(in_w-out_w)/2+(in_w-out_w)/2*sin(t/6)':'(in_h-out_h)/2',fps=${FPS},${GRADE},vignette=PI/5,` +
+        `crop=${size.w}:${size.h}:'(in_w-out_w)/2+(in_w-out_w)/2*sin(t/6)':'(in_h-out_h)/2',fps=${FPS},${GRADE},vignette=PI/5${cap},` +
         `fade=t=in:st=0:d=${FADE},fade=t=out:st=${(dur - FADE).toFixed(2)}:d=${FADE},format=yuv420p[v];` +
         `[1:a]apad=pad_dur=${PAD},aresample=48000,afade=t=in:st=0:d=0.12,afade=t=out:st=${(dur - 0.2).toFixed(2)}:d=0.2[a]`,
       "-map", "[v]", "-map", "[a]", "-t", dur.toFixed(3),
@@ -77,11 +116,12 @@ async function sceneClip(img: string, audio: SceneAudio, motion: number, out: st
     return;
   }
 
+  const move = MOVES[motion % MOVES.length]!(bw, bh, Number(dur.toFixed(3)));
   await sh("ffmpeg", [
-    "-y", "-i", img, "-i", audio.file,
+    "-y", "-loop", "1", "-framerate", String(FPS), "-i", img, "-i", audio.file,
     "-filter_complex",
-    `[0:v]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},` +
-      `zoompan=${MOTIONS[motion]!(frames)}:d=${frames}:s=${size.w}x${size.h}:fps=${FPS},${GRADE},vignette=PI/5,` +
+    `[0:v]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},${move},` +
+      `scale=${size.w}:${size.h}:flags=bicubic,${GRADE},vignette=PI/5${cap},` +
       `fade=t=in:st=0:d=${FADE},fade=t=out:st=${(dur - FADE).toFixed(2)}:d=${FADE},format=yuv420p[v];` +
       `[1:a]apad=pad_dur=${PAD},aresample=48000,afade=t=in:st=0:d=0.12,afade=t=out:st=${(dur - 0.2).toFixed(2)}:d=0.2[a]`,
     "-map", "[v]", "-map", "[a]", "-t", dur.toFixed(3),
@@ -138,7 +178,12 @@ async function pickMusic(): Promise<string | undefined> {
   return files.length ? path.join(dir, files[Math.floor(Math.random() * files.length)]!) : undefined;
 }
 
-export async function renderVideo(o: { scenes: Narrated[]; images: string[]; audio: SceneAudio[]; dir: string; seed: number; size?: Size; name?: string; burnCaptions?: boolean }) {
+export async function renderVideo(o: {
+  scenes: Narrated[]; images: string[]; audio: SceneAudio[]; dir: string; seed: number;
+  size?: Size; name?: string; burnCaptions?: boolean;
+  /** short figure captions, one per scene, burned over the footage instead of shown as a slide */
+  captions?: (string | undefined)[];
+}) {
   const size = o.size ?? LANDSCAPE;
   const name = o.name ?? "final";
   // One shared clip cache per video: a repair round only re-encodes the scenes whose
@@ -155,7 +200,7 @@ export async function renderVideo(o: { scenes: Narrated[]; images: string[]; aud
     const out = path.join(clipsDir, `${String(i).padStart(3, "0")}.mp4`);
     const [clipT, imgT, audT] = await Promise.all([mtime(out), mtime(o.images[i]!), mtime(o.audio[i]!.file)]);
     if (clipT !== Infinity && clipT > imgT && clipT > audT) { reused++; return out; }
-    await sceneClip(o.images[i]!, o.audio[i]!, (i + o.seed) % MOTIONS.length, out, size);
+    await sceneClip(o.images[i]!, o.audio[i]!, (i + o.seed) % MOVES.length, out, size, o.captions?.[i]);
     return out;
   });
   if (reused) console.log(`  reused ${reused}/${o.scenes.length} unchanged scene clips`);

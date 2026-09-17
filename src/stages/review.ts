@@ -81,6 +81,9 @@ HOLD (blocker) if ANY of these is true:
 - any image does not depict what its narration says;
 - the thumbnail text is unreadable, cut off, or promises something the video doesn't deliver;
 - the first 20 seconds contain no concrete, specific hook (a number, a name, a strange fact);
+- the script is humourless: this channel is deadpan and funny-because-true, so a solemn lecture is a hold
+  even when every fact is correct;
+- more than a sixth of the scenes are full-screen text slides, which makes it look like a presentation;
 - it reads as a reworded encyclopedia article with no original explanation or comparison;
 - it gives medical, psychological, legal or financial advice, or invites the viewer to self-diagnose.
 
