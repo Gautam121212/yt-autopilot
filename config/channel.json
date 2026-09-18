@@ -224,5 +224,6 @@
     "cadenceCeiling": 4,
     "maxLearnedSubNiches": 8,
     "autoApply": false
-  }
+  },
+  "videosPerDay": 1
 }

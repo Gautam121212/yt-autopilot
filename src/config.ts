@@ -25,6 +25,8 @@ const Channel = z.object({
   shortsPerWeek: z.number().int().min(0).default(2),
   /** How many finished videos to keep queued so a bad week never means an empty channel. */
   backlogTarget: z.number().int().min(0).default(4),
+  /** Successes wanted per day. The cron runs every few hours and stops once this is met. */
+  videosPerDay: z.number().int().min(1).default(1),
   maxAwaitingApproval: z.number().int().positive(),
   approval: z.object({
     mode: z.enum(["claude", "human"]).describe("claude = Claude's final check publishes on your behalf; human = you approve every video"),

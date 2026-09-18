@@ -14,8 +14,14 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import { env, ROOT } from "../config";
 import { fetchOk, withRetry } from "./http";
 
-/** Model calls are slow by nature — a script can take minutes. Only image/metadata calls use the short deadline. */
-const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 6 * 60_000);
+/**
+ * Per-tier deadlines. A single global value killed the research call at 120s — it reads tens of
+ * thousands of characters and writes a full dossier, so it needs minutes, while a scene-relevance
+ * check should fail fast.
+ */
+const LLM_TIMEOUT_LIGHT = Number(process.env.LLM_TIMEOUT_LIGHT_MS ?? 150_000);
+const LLM_TIMEOUT_HEAVY = Number(process.env.LLM_TIMEOUT_HEAVY_MS ?? 7 * 60_000);
+const timeoutFor = (tier: "light" | "heavy") => (tier === "heavy" ? LLM_TIMEOUT_HEAVY : LLM_TIMEOUT_LIGHT);
 
 export type Tier = "heavy" | "light";
 const PROVIDER = process.env.LLM_PROVIDER || "gemini";
@@ -132,7 +138,7 @@ async function anthropic(model: string, system: string, prompt: string, maxToken
 }
 
 // ---------------- openai-compatible (Groq, OpenRouter, Cerebras, Mistral, DeepSeek, ...) ----------------
-async function openaiCompatible(model: string, system: string, prompt: string, maxTokens: number, images?: string[]): Promise<string> {
+async function openaiCompatible(model: string, system: string, prompt: string, maxTokens: number, images?: string[], timeoutMs = LLM_TIMEOUT_HEAVY): Promise<string> {
   const base = (process.env.OPENAI_COMPAT_BASE_URL || "").replace(/\/$/, "");
   // Some free tiers cap output tokens per minute (Groq's is 1000), and reject the request outright
   // if max_tokens is larger than that — so keep the ask small and configurable.
@@ -154,7 +160,7 @@ async function openaiCompatible(model: string, system: string, prompt: string, m
       temperature: 0.8,
       response_format: { type: "json_object" },
     }),
-  }, LLM_TIMEOUT_MS), `openai-compat ${model}`, 3).catch((e: Error) => {
+  }, timeoutMs), `openai-compat ${model}`, 3).catch((e: Error) => {
     if (/requires more credits|insufficient credits|\b402\b/i.test(e.message)) {
       throw new QuotaError(`${model} has no credit left on this account.\n` +
         `Run \`npm run models:backup\` to switch to a free (":free") model, or top up the provider.\n${e.message.slice(0, 200)}`);
@@ -185,7 +191,7 @@ async function geminiParts(images: string[] = []) {
   return parts;
 }
 
-async function gemini(model: string, system: string, prompt: string, maxTokens: number, images?: string[]): Promise<string> {
+async function gemini(model: string, system: string, prompt: string, maxTokens: number, images?: string[], timeoutMs = LLM_TIMEOUT_HEAVY): Promise<string> {
   const wait = lastGemini + 7000 - Date.now();
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
   lastGemini = Date.now();
@@ -198,7 +204,7 @@ async function gemini(model: string, system: string, prompt: string, maxTokens: 
       contents: [{ role: "user", parts: [...imageParts, { text: prompt }] }],
       generationConfig: { responseMimeType: "application/json", maxOutputTokens: maxTokens, temperature: 0.8 },
     }),
-  }, LLM_TIMEOUT_MS), `gemini ${model}`, 5).catch((e: Error) => {
+  }, timeoutMs), `gemini ${model}`, 5).catch((e: Error) => {
     // Listing a model does not mean you may call it; Google closes older ones to new keys.
     if (/\b404\b/.test(e.message)) throw new Error(`Gemini model "${model}" is not callable by this key. Run \`npm run models\` to pick one that is.\n${e.message.slice(0, 200)}`);
     throw e;
@@ -216,7 +222,7 @@ async function gemini(model: string, system: string, prompt: string, maxTokens: 
 const geminiDown = new Set<string>(); // models that returned 503/429 during this run
 
 /** GEMINI_MODEL_* may list several models, newest first: "gemini-3.8-flash,gemini-3.6-flash". */
-async function geminiWithFallback(spec: string, system: string, prompt: string, maxTokens: number, images?: string[]): Promise<string> {
+async function geminiWithFallback(spec: string, system: string, prompt: string, maxTokens: number, images?: string[], timeoutMs = LLM_TIMEOUT_HEAVY): Promise<string> {
   const chain = spec.split(",").map((m) => m.trim()).filter(Boolean);
   const order = [...chain.filter((m) => !geminiDown.has(m)), ...chain.filter((m) => geminiDown.has(m))];
   let last: Error | undefined;
@@ -267,8 +273,8 @@ export async function askJson<T>(o: {
       const body = `${o.prompt}\n\nReturn ONE JSON object only matching this JSON Schema:\n${JSON.stringify(jsonSchema)}${feedback}`;
       const backupReady = !!(process.env.OPENAI_COMPAT_BASE_URL && process.env.OPENAI_COMPAT_API_KEY && process.env.OPENAI_COMPAT_MODEL_HEAVY);
       const text = PROVIDER === "anthropic" ? await anthropic(model, o.system, body, o.maxTokens ?? 32000)
-        : PROVIDER === "openai-compatible" ? await openaiCompatible(model, o.system, body, o.maxTokens ?? 16000, o.images)
-        : await geminiWithFallback(model, o.system, body, o.maxTokens ?? 24000, o.images).catch(async (e) => {
+        : PROVIDER === "openai-compatible" ? await openaiCompatible(model, o.system, body, o.maxTokens ?? 16000, o.images, timeoutFor(o.tier))
+        : await geminiWithFallback(model, o.system, body, o.maxTokens ?? 24000, o.images, timeoutFor(o.tier)).catch(async (e) => {
             if (!isQuota(e) || !backupReady) throw e;
             const cap = Number(process.env.OPENAI_COMPAT_MAX_TOKENS ?? 4096);
             if ((o.maxTokens ?? 16000) > cap && cap < 4096) {
@@ -280,7 +286,7 @@ export async function askJson<T>(o: {
             if (o.images?.length && !backupSeesImages) {
               console.warn(`Gemini is out of quota; ${backup} cannot see images, so judging on text only`);
             }
-            return openaiCompatible(backup, o.system, body, o.maxTokens ?? 16000, backupSeesImages ? o.images : undefined);
+            return openaiCompatible(backup, o.system, body, o.maxTokens ?? 16000, backupSeesImages ? o.images : undefined, timeoutFor(o.tier));
           });
       try { raw = extractJson(text); } catch (e) { raw = undefined; lastErr = (e as Error).message; }
     }

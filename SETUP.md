@@ -368,3 +368,23 @@ a broken edit just makes runs longer.
 
 Nothing reaches the renderer until 1-8 have passed, so a bad idea costs a couple of small calls
 rather than an hour of compute.
+
+## One video a day, retried until it lands
+
+Topic and script gates fail often — deliberately, and on light calls. So `produce` now runs **every 3
+hours** and keeps trying until the day's video exists:
+
+```
+00:00 nothing yet          -> produces
+03:00 topic dropped (7.1)  -> produces again
+06:00 script too short     -> produces again
+09:00 scenes below 7.5     -> produces again
+12:00 one made it          -> stops
+15:00 already won          -> exits in seconds
+```
+
+`videosPerDay` in `config/channel.json` sets the target (default 1). Publishing is separate and still
+capped at `maxVideosPerWeek` long videos + `shortsPerWeek` Shorts — extra successes go to the backlog.
+
+A run that finds the day already won costs one database query and exits, so eight crons a day is
+cheap. The expensive calls only happen when there is actually work to do.

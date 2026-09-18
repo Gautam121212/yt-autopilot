@@ -8,7 +8,7 @@ export async function research(topic: Topic): Promise<Dossier> {
   if (pages.length < 2) throw new Error(`only ${pages.length} Wikipedia pages found for ${topic.chosen.wikipediaQueries.join(", ")}`);
   const web = providerSupportsWeb();
   return askJson({
-    tier: "light",
+    tier: "heavy", // reads tens of thousands of characters and writes the whole dossier
     web,
     schema: DossierSchema,
     system: `You are a meticulous research producer for an educational channel.

@@ -122,6 +122,18 @@ async function main() {
       "select count(*)::int as n from videos where created_at > now() - interval '7 days' and status in ('failed','abandoned')",
     );
     const [{ n: waiting }] = await q<{ n: number }>("select count(*)::int as n from videos where status = 'awaiting_approval'");
+    // Today's quota: the cron fires every few hours precisely because topic and script gates fail
+    // often and cheaply. Once the day's video exists, stop — no point burning quota for nothing.
+    const [{ n: todaysWins }] = await q<{ n: number }>(
+      `select count(*)::int as n from videos
+       where created_at >= date_trunc('day', now())
+         and status in ('ready','awaiting_publish','awaiting_approval','scheduled','published','dry_run_complete')`,
+    );
+    if (todaysWins >= cfg.videosPerDay && !isDryRun()) {
+      return log(`today's video is already done (${todaysWins}/${cfg.videosPerDay}); nothing to do until tomorrow.`);
+    }
+    if (todaysWins) log(`${todaysWins}/${cfg.videosPerDay} done today — going again`);
+
     // The week being full is not a reason to stop: build a backlog so a bad week never empties the channel.
     const [{ n: backlog }] = await q<{ n: number }>("select count(*)::int as n from videos where status = 'ready'");
     if (shipped >= cfg.maxVideosPerWeek && backlog >= cfg.backlogTarget && !isDryRun()) {

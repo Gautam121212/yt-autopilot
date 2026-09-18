@@ -1,7 +1,7 @@
 name: produce
 on:
   schedule:
-    - cron: "30 3 * * *"   # daily 09:00 IST; config maxVideosPerWeek decides how many actually get made
+    - cron: "0 */3 * * *"   # every 3 hours; exits in seconds once the day's video exists
   workflow_dispatch:
     inputs:
       dry_run:
@@ -50,7 +50,8 @@ jobs:
           MIN_FEASIBLE: "0.6"            # share of scenes with a findable picture
           SHOT_SECS_H: "7"               # target shot length, long video
           SHOT_SECS_V: "3.5"             # target shot length, Short
-          LLM_TIMEOUT_MS: "120000"
+          LLM_TIMEOUT_LIGHT_MS: "150000"   # classification-sized calls fail fast
+          LLM_TIMEOUT_HEAVY_MS: "420000"   # research and script writing need minutes
           SCENE_BAR: "7.5"               # every scene must clear this before the next is judged
           MIN_IMG_W: "1600"              # no stretched small photos
           MIN_VID_W: "1280"              # no soft low-res clips
