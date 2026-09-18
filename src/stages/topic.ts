@@ -80,6 +80,19 @@ You must also supply, for the chosen topic:
   A topic whose story cannot be shown with generic footage is the wrong topic, however funny it is.
 If all five candidates fail, search again with different queries and score a fresh set.
 
+A passing "chosen" looks like this (shape, not content):
+{
+  "workingTitle": "The Man Who Ate a Plane to Prove a Point",
+  "subject": "...", "angle": "...", "hook": "...", "mentalModel": "...", "demandEvidence": "...",
+  "funniestDetail": "He filed the receipts as a business expense.",
+  "premise": "A French entertainer ate an entire aircraft over two years, and doctors could not explain why he survived.",
+  "visualSubjects": ["scrap metal pile", "hospital x-ray", "small aeroplane", "workshop grinder",
+                     "metal filings", "old newspaper page", "stomach diagram", "hangar interior"],
+  "scores": { "absurdity": 9, "retellability": 9, "curiosity": 8, "evidence": 8, "illustratability": 8, "freshness": 8 },
+  "wikipediaQueries": ["..."]
+}
+Every field is REQUIRED. Return all of them for the chosen topic.
+
 MINIMUM BARS — a topic that fails any of these must be rejected, even if it is the best of the five:
 curiosity >= 7, evidence >= 7, illustratability >= 7, freshness >= 6.
 If all five candidates fail, search again with different queries and pick from a new set.

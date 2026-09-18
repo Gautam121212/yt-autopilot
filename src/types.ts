@@ -9,12 +9,13 @@ export const TopicSchema = z.object({
     mentalModel: z.string().describe("the idea the viewer will understand afterwards"),
     demandEvidence: z.string().describe("which outlier videos show audience demand for this, and how our angle differs"),
     /** The single funniest TRUE detail. A topic without one cannot carry this channel. */
-    funniestDetail: z.string().min(20),
+    funniestDetail: z.string().min(10),
     /** The whole video in one sentence a stranger would repeat at a dinner table. */
-    premise: z.string().min(20).max(200),
-    /** 8-12 CONCRETE, FILMABLE things this story can be shown with. Checked against the stock
-     *  libraries before a single script credit is spent: no footage, no video. */
-    visualSubjects: z.array(z.string()).min(8).max(12),
+    premise: z.string().min(15).max(300),
+    /** CONCRETE, FILMABLE things this story can be shown with. Checked against the stock libraries
+     *  before a single script credit is spent: no footage, no video. Floor kept low so one missing
+     *  item never bins an otherwise good topic — the filmability gate is what actually enforces it. */
+    visualSubjects: z.array(z.string()).min(5).max(14),
     scores: z.object({
       absurdity: z.number().min(0).max(10).describe("how indefensible/ridiculous the true events are"),
       retellability: z.number().min(0).max(10).describe("would a viewer retell this to someone else today"),

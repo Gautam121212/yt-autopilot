@@ -289,5 +289,13 @@ export async function askJson<T>(o: {
     lastErr = parsed.error.message.slice(0, 1500);
     feedback = `\n\nYour previous answer was rejected by the validator:\n${lastErr}\nFix every listed problem.`;
   }
-  throw new Error(`LLM output failed validation 3 times: ${lastErr}`);
+  // Summarise rather than dumping raw zod output: the point is to see WHICH field failed.
+  const fields = [...new Set([...lastErr.matchAll(/"path":\s*\[([^\]]*)\]/g)]
+    .map((m) => m[1]!.replace(/["',]/g, " ").replace(/\s+/g, " ").trim())
+    .filter(Boolean))].slice(0, 8);
+  throw new Error(
+    `the model's answer did not match the required shape after 3 attempts.` +
+    (fields.length ? `\nfields at fault: ${fields.join(" · ")}` : "") +
+    `\n${lastErr.slice(0, 600)}`,
+  );
 }
