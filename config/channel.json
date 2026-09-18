@@ -225,5 +225,6 @@
     "maxLearnedSubNiches": 8,
     "autoApply": false
   },
-  "videosPerDay": 1
+  "videosPerDay": 1,
+  "productionTimezone": "Asia/Kolkata"
 }

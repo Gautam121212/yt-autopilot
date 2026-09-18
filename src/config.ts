@@ -27,6 +27,8 @@ const Channel = z.object({
   backlogTarget: z.number().int().min(0).default(4),
   /** Successes wanted per day. The cron runs every few hours and stops once this is met. */
   videosPerDay: z.number().int().min(1).default(1),
+  /** Whose day. UTC boundaries made "today" roll over at 05:30 IST; this fixes it. */
+  productionTimezone: z.string().default("Asia/Kolkata"),
   maxAwaitingApproval: z.number().int().positive(),
   approval: z.object({
     mode: z.enum(["claude", "human"]).describe("claude = Claude's final check publishes on your behalf; human = you approve every video"),

@@ -127,10 +127,10 @@ async function main() {
     const [{ n: todaysWins }] = await q<{ n: number }>(
       `select count(*)::int as n from videos
        where created_at >= date_trunc('day', now())
-         and status in ('ready','awaiting_publish','awaiting_approval','scheduled','published','dry_run_complete')`,
+         and status in ('ready','awaiting_publish','awaiting_approval','scheduled','published')`,
     );
-    if (todaysWins >= cfg.videosPerDay && !isDryRun()) {
-      return log(`today's video is already done (${todaysWins}/${cfg.videosPerDay}); nothing to do until tomorrow.`);
+    if (todaysWins >= cfg.videosPerDay && !isDryRun() && process.env.FORCE_PRODUCE !== "true") {
+      return log(`today's video is already done (${todaysWins}/${cfg.videosPerDay}); nothing to do until tomorrow. Override with FORCE=true npm run video:live`);
     }
     if (todaysWins) log(`${todaysWins}/${cfg.videosPerDay} done today — going again`);
 
