@@ -326,8 +326,33 @@ export async function pixabayVideo(query: string, used: Set<string>, file: strin
  * How well a query would match, WITHOUT downloading anything. Used before production to catch
  * queries no archive can satisfy, which is the main cause of mismatched pictures.
  */
+/** Probes the sources we actually use for footage first, then the archives. Metadata only. */
 export async function probeQuery(query: string, era: "historical" | "modern" | "any" = "any"): Promise<{ score: number; best: string }> {
   if (!words(query).length) return { score: 0, best: "" };
+
+  // Stock libraries carry the bulk of usable footage, so ask them first.
+  if (era !== "historical") {
+    if (pexelsKey()) {
+      const r = await hfetch(`https://api.pexels.com/v1/search?per_page=10&query=${encodeURIComponent(query)}`,
+        { headers: { Authorization: pexelsKey() } }).then((x) => x.json() as Promise<{ photos?: { alt?: string }[] }>).catch(() => null);
+      let best = { score: 0, best: "" };
+      for (const p of r?.photos ?? []) {
+        const sc = relevance(query, p.alt ?? "");
+        if (sc > best.score) best = { score: +sc.toFixed(2), best: p.alt ?? "" };
+      }
+      if (best.score >= 0.5) return best;
+    }
+    if (pixKey()) {
+      const r = await hfetch(`https://pixabay.com/api/?key=${pixKey()}&q=${encodeURIComponent(query)}&per_page=10&safesearch=true`)
+        .then((x) => x.json() as Promise<{ hits?: { tags?: string }[] }>).catch(() => null);
+      let best = { score: 0, best: "" };
+      for (const h of r?.hits ?? []) {
+        const sc = relevance(query, h.tags ?? "");
+        if (sc > best.score) best = { score: +sc.toFixed(2), best: h.tags ?? "" };
+      }
+      if (best.score >= 0.5) return best;
+    }
+  }
   const q = era === "historical" ? `${query} ${HISTORICAL_HINT}` : query;
   const api = `https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=search` +
     `&gsrsearch=${encodeURIComponent(`filetype:bitmap ${q}`)}&gsrnamespace=6&gsrlimit=12&prop=imageinfo&iiprop=size|mime|extmetadata`;

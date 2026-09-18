@@ -278,3 +278,25 @@ Get the Pixabay key at pixabay.com/api/docs (shown inline once signed in), then 
 
 **There are no text cards.** If a scene's own searches miss, the pipeline tries every source with every
 query variant, then falls back to a prefetched pool of on-topic real footage. A scene never becomes a slide.
+
+## Choosing the voice
+
+I cannot hear audio, so the voice is the one thing I can't judge for you. Render the same line in
+every option and pick with your own ears:
+
+```bash
+npm run voice:sample
+```
+
+It writes ~7 wav files to `work/voice-samples/` (American and British, male and female, two speeds) and
+opens the folder. Put your choice in `config/channel.json`:
+
+```json
+"voice": { "provider": "kokoro", "voiceId": "bm_george", "speed": 1.0, "model": "onnx-community/Kokoro-82M-v1.0-ONNX" }
+```
+
+Available: af_alloy af_aoede af_bella af_heart af_jessica af_kore af_nicole af_nova af_river af_sarah af_sky
+am_adam am_echo am_eric am_fenrir am_liam am_michael am_onyx am_puck am_santa
+bf_alice bf_emma bf_isabella bf_lily bm_daniel bm_fable bm_george bm_lewis
+
+A faster speed (1.05) and a drier voice both read as less "narrator".

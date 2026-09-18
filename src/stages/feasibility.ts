@@ -22,6 +22,8 @@ const RewriteSchema = z.object({
 });
 
 const GOOD = 0.5;
+/** Below this, production would be a slideshow of wrong pictures. Rewrite or drop the topic. */
+export const MIN_FEASIBLE = Number(process.env.MIN_FEASIBLE ?? 0.6);
 
 async function scoreScenes(scenes: Scene[]) {
   return mapLimit(scenes, 4, async (s) => {
@@ -44,19 +46,25 @@ export async function ensureIllustratable(o: { cfg: ChannelConfig; script: Scrip
     const weak = scored.filter((r) => r.score < GOOD);
     feasible = +(1 - weak.length / scored.length).toFixed(2);
     log(`  image feasibility: ${Math.round(feasible * 100)}% of scenes have a findable picture${weak.length ? ` (${weak.length} weak)` : ""}`);
-    if (!weak.length || round === (o.rounds ?? 1)) break;
+    if (!weak.length || round === (o.rounds ?? 3)) break;
 
     const fixed = await askJson({
       tier: "light",
       schema: RewriteSchema,
-      system: `You rewrite image searches for a documentary channel. A search has come back with nothing relevant,
-which means the picture would end up unrelated to the narration — the single worst failure this channel has.
+      system: `You rewrite image searches for a video whose footage comes from STOCK LIBRARIES (Pexels, Pixabay)
+first and photo archives second. A search that returns nothing means the scene gets an unrelated picture, which is
+the worst failure this channel has.
 
-Rewrite each listed scene's imageQuery and altQueries so they name things a public photo archive genuinely holds:
-a named place, a named object type, a building, a vehicle, a tool, a document, a map, a painting of the subject.
-Avoid: magnified textures, people or crowds, brand-name products, abstractions, and invented compound nouns.
-For historical scenes prefer what archives actually file: engravings, lithographs, period photographs, museum objects.
-Keep the narration's meaning; only the searches change.`,
+THE RULE: search for the GENERIC, FILMABLE thing, not the specific historical object.
+Stock libraries hold: hands working, tools, machinery turning, welding sparks, steam, rust, water pouring, fire,
+storm clouds, city streets, cranes, factory interiors, laboratory glassware, old paper and ledgers, coins, gears,
+bricks, cables, train tracks, ships, harbours, mines, tunnels, scaffolding, blueprints, dust, ice, mud.
+They do NOT hold: "1888 US Steamboat Inspection Service plaque", "Plimsoll line on SS Great Eastern",
+"fusible plug patent drawing". Those return nothing.
+
+So rewrite "1888 steamboat inspection mandate" as "old ledger stamp" or "steam boiler gauge"; rewrite
+"Beaumont's gastric experiment jar" as "glass jar laboratory". Keep the narration's meaning; only the searches
+change. Two or three DIFFERENT generic options per scene.`,
       prompt: `Scenes whose searches failed (with the best — and wrong — thing the archive returned):
 ${weak.map((w) => `- ${w.scene.id} (${w.scene.era}) query "${w.scene.imageQuery}" -> best match "${w.best || "nothing"}" (score ${w.score})\n  narration: ${w.scene.narration.slice(0, 200)}`).join("\n")}
 

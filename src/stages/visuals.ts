@@ -12,8 +12,10 @@ import {
 export type ImageCredit = { source: string; id: string; title: string; attribution?: string };
 
 const MIN_USABLE = 0.25;
-// Deliberately generous: a thorough search that takes minutes is better than a text slide.
-const SCENE_BUDGET_MS = Number(process.env.SCENE_BUDGET_MS ?? 8 * 60_000);
+// Per scene: enough for several sources, not enough to stall a run. The pool covers the misses.
+const SCENE_BUDGET_MS = Number(process.env.SCENE_BUDGET_MS ?? 90_000);
+/** Whole-phase ceiling. Past this, remaining scenes take pooled footage immediately. */
+const PHASE_BUDGET_MS = Number(process.env.PHASE_BUDGET_MS ?? 20 * 60_000);
 
 function withBudget<T>(p: Promise<T>, ms: number, fallback: () => Promise<T>): Promise<T> {
   let timer: NodeJS.Timeout;
@@ -78,8 +80,8 @@ export async function sceneImages(
   const poolDir = path.join(dir, "pool");
   await fs.mkdir(poolDir, { recursive: true });
   const pool: { file: string; credit: ImageCredit }[] = [];
-  const poolQueries = (fallbacks?.length ? fallbacks : cfg.fallbackImageQueries).slice(0, 6);
-  await mapLimit(poolQueries, 3, async (q, i) => {
+  const poolQueries = [...(fallbacks ?? []), ...cfg.fallbackImageQueries].filter((q, i, a) => a.indexOf(q) === i).slice(0, 10);
+  await mapLimit(poolQueries, 4, async (q, i) => {
     const f = path.join(poolDir, `p${i}.jpg`);
     for (const find of cfg.imageSources.map((n) => FINDERS[n]!).filter(Boolean)) {
       const hit = await find(q, used, f).catch(() => null);
@@ -94,7 +96,17 @@ export async function sceneImages(
   let clipsUsed = 0;
 
   let done = 0;
+  const phaseStart = Date.now();
   const results = await mapLimit(scenes, 6, async (s, i) => {
+    // Phase budget spent: stop searching and dress the rest from the pool.
+    if (Date.now() - phaseStart > PHASE_BUDGET_MS) {
+      const spare = fromPool();
+      if (spare) {
+        const out = path.join(dir, `${String(i).padStart(3, "0")}.jpg`);
+        await fs.copyFile(spare.file, out).catch(() => {});
+        return { file: out, credit: spare.credit };
+      }
+    }
     // Timed out: use real footage from the pool. A card only if the pool is somehow empty.
     const onTimeout = async () => {
       const spare = fromPool();

@@ -23,8 +23,7 @@
     "pexels",
     "pixabay",
     "commons",
-    "openverse",
-    "nasa"
+    "openverse"
   ],
   "videoClipRatio": 0.65,
   "subNiches": [
@@ -178,12 +177,16 @@
     "speed": 0.95
   },
   "fallbackImageQueries": [
-    "laboratory glassware",
-    "pouring liquid",
+    "welding sparks",
     "machinery turning",
-    "old documents",
-    "city street",
-    "hands working"
+    "steam rising",
+    "hands working tools",
+    "rust metal texture",
+    "factory interior",
+    "water pouring",
+    "old ledger paper",
+    "storm clouds timelapse",
+    "city street night"
   ],
   "discovery": {
     "lookbackDays": 180,

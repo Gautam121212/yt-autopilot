@@ -17,7 +17,7 @@ import { renderVideo, VERTICAL } from "../stages/render";
 import { research } from "../stages/research";
 import { finalReview, unreviewed, type Review } from "../stages/review";
 import { pickSlot } from "../stages/schedule";
-import { ensureIllustratable } from "../stages/feasibility";
+import { ensureIllustratable, MIN_FEASIBLE } from "../stages/feasibility";
 import { forecast } from "../stages/forecast";
 import { punchUp, repairScript, reviseScript, stripUnsourced, writeScript } from "../stages/script";
 import { makeThumbnail, safeThumbnailText } from "../stages/thumbnail";
@@ -213,8 +213,15 @@ async function main() {
       );
       const hist = history.map((h) => ({ predicted: Number(h.predicted), actual: Number(h.actual) }));
       // Check the archive before predicting: image availability dominates the final score.
-      const feas = await ensureIllustratable({ cfg, script });
+      const feas = await ensureIllustratable({ cfg, script, rounds: 3 });
       script = feas.script;
+      await updateVideo(video.id, { script });
+      if (feas.feasible < MIN_FEASIBLE) {
+        // Producing this would mean a slideshow of wrong pictures and hours of futile searching.
+        await updateVideo(video.id, { status: "abandoned" });
+        await incident("feasibility.abandoned", new Error(`only ${Math.round(feas.feasible * 100)}% of scenes have a findable picture (need ${Math.round(MIN_FEASIBLE * 100)}%)`), video.id);
+        return log(`#${video.id} abandoned: ${Math.round(feas.feasible * 100)}% image feasibility after 3 rewrite rounds. Next run starts a new topic.`);
+      }
       let fc = await forecast({ cfg, script, dossier: video.dossier!, history: hist, feasible: feas.feasible });
       log(`#${video.id} forecast: likely ${fc.likely}/10, ceiling ${fc.ceiling}/10 — ${fc.verdict} (weakest: ${fc.weakest.slice(0, 70)})`);
 

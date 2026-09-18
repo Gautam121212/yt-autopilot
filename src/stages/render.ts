@@ -65,7 +65,8 @@ function captionFilter(text: string, size: Size, font: string, dur: number): str
   const y = Math.round(size.h * 0.74);
   // appears a beat after the cut, leaves before the scene ends
   const on = `between(t,0.6,${Math.max(1.2, dur - 1.2).toFixed(2)})`;
-  return `drawbox=x=${x - 18}:y=${y - 14}:w=${Math.round(safe.length * fs * 0.62) + 36}:h=${fs + 28}:color=black@0.42:t=fill:enable='${on}',` +
+  const boxW = Math.round(safe.length * fs * 0.66) + 34;
+  return `drawbox=x=${x - 16}:y=${y - 12}:w=${boxW}:h=${fs + 24}:color=black@0.55:t=fill:enable='${on}',` +
     `drawtext=fontfile='${font}':text='${safe}':fontsize=${fs}:fontcolor=white:` +
     `borderw=2:bordercolor=black@0.7:x=${x}:y=${y}:enable='${on}'`;
 }

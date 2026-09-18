@@ -28,7 +28,8 @@
     "preflight": "tsx --env-file-if-exists=.env scripts/preflight.ts",
     "logs": "gh run watch $(gh run list -w produce -L 1 --json databaseId -q '.[0].databaseId')",
     "models:backup": "tsx --env-file-if-exists=.env scripts/list-compat-models.ts",
-    "queue": "tsx --env-file-if-exists=.env src/jobs/queue.ts"
+    "queue": "tsx --env-file-if-exists=.env src/jobs/queue.ts",
+    "voice:sample": "tsx --env-file-if-exists=.env scripts/voice-sample.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
