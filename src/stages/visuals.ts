@@ -67,7 +67,7 @@ export async function sceneImages(
   cfg: ChannelConfig,
   scenes: { id: string; imageQuery: string; altQueries?: string[]; motion?: string; era?: string; cardHeadline?: string; cardSub?: string }[],
   dir: string, videoId: number, used: Set<string>, fallbacks?: string[], size?: { w: number; h: number },
-): Promise<{ files: string[]; credits: ImageCredit[] }> {
+): Promise<{ files: string[][]; credits: ImageCredit[] }> {
   const fallbackList = fallbacks?.length ? fallbacks : cfg.fallbackImageQueries;
   await fs.mkdir(dir, { recursive: true });
   if (!cfg.imageSources.length) throw new Error(`imageSources must name known sources: ${Object.keys(FINDERS).join(", ")}`);
@@ -104,7 +104,7 @@ export async function sceneImages(
       if (spare) {
         const out = path.join(dir, `${String(i).padStart(3, "0")}.jpg`);
         await fs.copyFile(spare.file, out).catch(() => {});
-        return { file: out, credit: spare.credit };
+        return { files: [out], credit: spare.credit };
       }
     }
     // Timed out: use real footage from the pool. A card only if the pool is somehow empty.
@@ -114,7 +114,7 @@ export async function sceneImages(
         const out = path.join(dir, `${String(i).padStart(3, "0")}.jpg`);
         await fs.copyFile(spare.file, out).catch(() => {});
         log(`  scene ${s.id}: search too slow — used pooled footage`);
-        return { file: out, credit: spare.credit };
+        return { files: [out], credit: spare.credit };
       }
       throw new Error(`scene ${s.id} found no picture within ${SCENE_BUDGET_MS / 60000} minutes and the pool is empty`);
     };
@@ -123,20 +123,23 @@ export async function sceneImages(
       if (done === 1 || done % 5 === 0 || done === scenes.length) log(`  images ${done}/${scenes.length}`);
     });
   });
-  return { files: results.map((r) => r.file), credits: results.map((r) => r.credit) };
+  return { files: results.map((r) => r.files), credits: results.map((r) => r.credit) };
 
-  async function findOne(s: (typeof scenes)[number], i: number) {
+  /** A scene needs 2-3 visuals so the render can cut on sentence boundaries. */
+  async function findOne(s: (typeof scenes)[number], i: number): Promise<{ files: string[]; credit: ImageCredit }> {
     // The writer marks which lines describe movement; those are the ones worth a real clip.
+    const extra: { file: string; credit: ImageCredit }[] = [];
     if (s.motion === "clip" && s.era !== "historical" && clipsUsed < clipsWanted) {
       clipsUsed++;
       const mp4 = path.join(dir, `${String(i).padStart(3, "0")}.mp4`);
       for (const q of [s.imageQuery, ...(s.altQueries ?? [])]) {
         for (const findClip of CLIP_FINDERS) {
           const clip = await findClip(q, used, mp4).catch(() => null);
-          if (clip) return { file: mp4, credit: { source: clip.source, id: clip.id, title: clip.title, attribution: clip.attribution } };
+          if (clip) extra.push({ file: mp4, credit: { source: clip.source, id: clip.id, title: clip.title, attribution: clip.attribution } });
+          if (extra.length) break;
         }
       }
-      clipsUsed--; // no clip found anywhere; fall through to a still
+      if (!extra.length) clipsUsed--; // no clip found anywhere; fall through to stills
     }
     const file = path.join(dir, `${String(i).padStart(3, "0")}.jpg`);
     const parts = s.imageQuery.split(/\s+/).filter(Boolean);
@@ -178,10 +181,28 @@ export async function sceneImages(
       if (spare) {
         await fs.copyFile(spare.file, file).catch(() => {});
         log(`  scene ${s.id}: no match found — used pooled footage`);
-        return { file, credit: spare.credit };
+        return { files: [file], credit: spare.credit };
       }
       throw new Error(`no image found for scene ${s.id} ("${s.imageQuery}") from any source`);
     }
-    return { file, credit: { source: best.source, id: best.id, title: best.title, attribution: best.attribution } };
+    // Collect 1-2 more visuals for this scene from its alternative queries, so the render can cut.
+    const files = [file];
+    for (const q of (s.altQueries ?? []).slice(0, 2)) {
+      const more = path.join(dir, `${String(i).padStart(3, "0")}b${files.length}.jpg`);
+      for (const find of sources) {
+        const hit = await find(q + (s.era === "historical" ? ` ${HISTORICAL_HINT}` : ""), used, more).catch(() => null);
+        if (hit && hit.score >= MIN_USABLE) { files.push(more); break; }
+      }
+      if (files.length >= 3) break;
+    }
+    if (files.length === 1) {
+      const spare = fromPool();
+      if (spare) {
+        const more = path.join(dir, `${String(i).padStart(3, "0")}b1.jpg`);
+        await fs.copyFile(spare.file, more).catch(() => {});
+        files.push(more);
+      }
+    }
+    return { files: [...extra.map((e) => e.file), ...files], credit: { source: best.source, id: best.id, title: best.title, attribution: best.attribution } };
   }
 }

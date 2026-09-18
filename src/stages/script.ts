@@ -18,13 +18,18 @@ THE VOICE — this is the whole channel
 - No puns, no "buckle up", no forced enthusiasm, no exclamation marks. Dry beats loud.
 - Accuracy is non-negotiable: the funniest version of a true fact, never a funnier untrue one.
 
-STRUCTURE
-1. Open mid-absurdity, first sentence. A person doing something indefensible, or a number that cannot be right.
-   Then one line of deadpan reaction. Only then explain.
-2. Total ${minM * cfg.wordsPerMinute}-${maxM * cfg.wordsPerMinute} words. HARD LIMIT 14-18 scenes, 70-95 words each.
-3. Every 60-90 seconds: a reversal, an escalation, or a small joke at reality's expense.
-4. Land the real science properly. The viewer should leave having genuinely learned the mechanism.
-5. End on the best absurd detail you held back, not on a summary.
+THE BEAT SHEET — every video uses exactly this shape. Each scene declares its "role":
+1. cold_open — a person doing something indefensible, or a number that cannot be right. No context yet.
+2. reaction — one deadpan beat acknowledging what just happened. Short.
+3. premise — what this video is actually about, in the viewer's language. The promise.
+4-8. escalation (at least 3) — each one raises the stakes or the absurdity, each ending on something unresolved.
+9. turn — the moment it goes wrong, or stops being funny and becomes interesting.
+10. mechanism — the real science or engineering, explained properly. This is why the video exists.
+11. payoff — the promise from the premise, delivered.
+12. kicker (last scene) — the best absurd detail, deliberately held back until now.
+You may repeat escalation and mechanism as needed to fill 14-18 scenes.
+
+LENGTH: total ${minM * cfg.wordsPerMinute}-${maxM * cfg.wordsPerMinute} words. HARD LIMIT 14-18 scenes, 70-95 words each.
 
 HARD RULES
 6. Every factual statement is backed by a claim whose sourceIds exist in the dossier. Never invent numbers,
@@ -55,8 +60,8 @@ ${playbook}`;
 }
 
 const SHAPE = `JSON: { "title", "altTitles": [3], "description" (2-3 short paragraphs, no links), "tags": [<=15], "thumbnailText" (2-4 words),
-"thumbnailQuery" (a concrete photo search for the thumbnail), "scenes": [{ "id": "sc01", "chapter"?, "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "era": "historical"|"modern"|"any", "cardHeadline", "cardSub", "claimIds" }],
-"claims": [{ "id": "C1", "text", "sourceIds" }], "short": { "title", "scenes": [{ "id": "sh01", "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "era": "historical"|"modern"|"any", "cardHeadline", "cardSub" }] } }`;
+"thumbnailQuery" (a concrete photo search for the thumbnail), "scenes": [{ "id": "sc01", "role": "cold_open"|"reaction"|"premise"|"escalation"|"turn"|"mechanism"|"payoff"|"kicker", "chapter"?, "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "era": "historical"|"modern"|"any", "cardHeadline", "cardSub", "claimIds" }],
+"claims": [{ "id": "C1", "text", "sourceIds" }], "short": { "title", "scenes": [{ "id": "sh01", "role": "cold_open"|"escalation"|"payoff"|"kicker", "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "era": "historical"|"modern"|"any", "cardHeadline", "cardSub" }] } }`;
 
 export async function writeScript(o: {
   cfg: ChannelConfig; playbook: string; structure: { id: string; description: string };
@@ -165,6 +170,8 @@ WHAT TO DO, scene by scene
 - Deadpan understatement over enthusiasm. Never exclamation marks, never puns, never "buckle up", never
   "mind-blowing". The facts are doing the work; you are just not getting in their way.
 - Talk to the viewer where it is true: "you would have signed it too."
+- ONE IDEA PER SENTENCE. The edit cuts to a new picture at every full stop, so a sentence carrying two
+  subjects breaks the sync between what is heard and what is seen.
 - Keep the explanation intact. This is funny science, not comedy instead of science.
 
 HARD LIMITS

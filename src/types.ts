@@ -8,10 +8,16 @@ export const TopicSchema = z.object({
     hook: z.string(),
     mentalModel: z.string().describe("the idea the viewer will understand afterwards"),
     demandEvidence: z.string().describe("which outlier videos show audience demand for this, and how our angle differs"),
+    /** The single funniest TRUE detail. A topic without one cannot carry this channel. */
+    funniestDetail: z.string().min(20),
+    /** The whole video in one sentence a stranger would repeat at a dinner table. */
+    premise: z.string().min(20).max(200),
     scores: z.object({
+      absurdity: z.number().min(0).max(10).describe("how indefensible/ridiculous the true events are"),
+      retellability: z.number().min(0).max(10).describe("would a viewer retell this to someone else today"),
       curiosity: z.number().min(0).max(10).describe("would a stranger stop scrolling for this"),
       evidence: z.number().min(0).max(10).describe("how well documented in encyclopedic sources"),
-      illustratability: z.number().min(0).max(10).describe("how many scenes can be real archive photographs"),
+      illustratability: z.number().min(0).max(10).describe("how many scenes can be real stock footage or archive photos"),
       freshness: z.number().min(0).max(10).describe("how unlike the channel's existing videos and the outlier list"),
     }),
     wikipediaQueries: z.array(z.string()).min(2).max(4),
@@ -38,8 +44,12 @@ export const DossierSchema = z
   }, "Every sourceId must reference an entry in sources");
 export type Dossier = z.infer<typeof DossierSchema>;
 
+/** The fixed beat sheet every video follows. Content changes; the structure never does. */
+export const SCENE_ROLES = ["cold_open", "reaction", "premise", "escalation", "turn", "mechanism", "payoff", "kicker"] as const;
+
 export const SceneSchema = z.object({
   id: z.string(),
+  role: z.enum(SCENE_ROLES).describe("its job in the beat sheet"),
   chapter: z.string().optional().describe("set only on scenes that start a new chapter"),
   narration: z.string(),
   imageQuery: z.string().describe("2-5 word photo-archive search naming ONE concrete object"),
@@ -65,7 +75,9 @@ export const ScriptSchema = z.object({
   short: z.object({
     title: z.string().max(90),
     scenes: z.array(z.object({
-      id: z.string(), narration: z.string(), imageQuery: z.string(),
+      id: z.string(),
+      role: z.enum(["cold_open", "escalation", "payoff", "kicker"]),
+      narration: z.string(), imageQuery: z.string(),
       altQueries: z.array(z.string()).min(2).max(3),
       motion: z.enum(["still", "clip"]),
       era: z.enum(["historical", "modern", "any"]),
@@ -75,6 +87,14 @@ export const ScriptSchema = z.object({
   }),
   claims: z.array(z.object({ id: z.string(), text: z.string(), sourceIds: z.array(z.string()).min(1) })),
 })
+  // The beat sheet is mandatory: this is what stops every video being a shapeless list of facts.
+  .refine((s) => s.scenes[0]?.role === "cold_open", "Scene 1 must be the cold_open")
+  .refine((s) => s.scenes[1]?.role === "reaction", "Scene 2 must be the deadpan reaction to the cold open")
+  .refine((s) => s.scenes.some((sc) => sc.role === "premise"), "There must be a premise scene")
+  .refine((s) => s.scenes.filter((sc) => sc.role === "escalation").length >= 3, "There must be at least 3 escalation scenes")
+  .refine((s) => s.scenes.some((sc) => sc.role === "turn"), "There must be a turn — the moment it goes wrong or gets strange")
+  .refine((s) => s.scenes.some((sc) => sc.role === "mechanism"), "There must be a mechanism scene that explains the real science")
+  .refine((s) => s.scenes.at(-1)?.role === "kicker", "The last scene must be the kicker — the best absurd detail, held back")
   // A 3-minute video against an 8-10 minute target reads as thin; enforce the length the brief asked for.
   .refine((s) => s.scenes.reduce((n, sc) => n + WORDS(sc.narration), 0) >= 1000,
     (s) => ({ message: `Narration totals ${s.scenes.reduce((n, sc) => n + WORDS(sc.narration), 0)} words; the video needs at least 1000 (about 7 minutes). Write longer scenes, not more scenes.` }))

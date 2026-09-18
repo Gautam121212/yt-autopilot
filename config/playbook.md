@@ -11,6 +11,11 @@ Seed rules are untested hypotheses until this channel's own data confirms or kil
   delve into, fascinating, mind-blowing, let that sink in, buckle up. No puns. No exclamation marks.
 - [Hypothesis] Mix short punchy sentences with one long winding one — rhythm carries the delivery.
 
+## Structure (fixed; content changes, shape does not)
+- [Fact] Beat sheet: cold_open -> reaction -> premise -> escalation x3+ -> turn -> mechanism -> payoff -> kicker.
+- [Fact] The last scene is the kicker: the best absurd detail, deliberately held back.
+- [Fact] One idea per sentence — the edit cuts to a new picture at every full stop (~7s long, ~3.5s vertical).
+
 ## Hook (first 20 seconds)
 - [Fact] Open mid-absurdity: a person doing something indefensible, or a number that cannot be right.
 - [Fact] One line of deadpan reaction, then start explaining. Never open with a definition.

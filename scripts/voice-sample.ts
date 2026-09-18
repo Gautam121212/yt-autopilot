@@ -1,25 +1,21 @@
 /**
- * `npm run voice:sample` — renders the SAME funny line in several Kokoro voices and speeds,
- * then opens them. You pick what sounds like a person telling a story, not a narrator.
- * Whatever you choose goes in config/channel.json -> voice.voiceId / voice.speed.
+ * `npm run voice:sample` — renders the SAME line in four voices so you can pick with your ears.
+ * Loads the model once, one short line per voice, with a per-voice timeout so it cannot hang.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { KokoroTTS } from "kokoro-js";
 import { loadChannel, ROOT } from "../src/config";
 import { sh } from "../src/lib/media";
-import { synthesize } from "../src/stages/voice";
+import { withTimeout } from "../src/lib/time";
 
 const LINE = "So he drank it. On purpose. Nobody stopped him, which tells you most of what you need to know about 1822.";
 
-// Kokoro's American and British voices, graded best-first by the model's own voice list.
 const OPTIONS: { voice: string; speed: number; note: string }[] = [
-  { voice: "af_heart", speed: 0.95, note: "current — warm, measured" },
-  { voice: "af_heart", speed: 1.05, note: "current, quicker — less narrator-ish" },
-  { voice: "af_bella", speed: 1.0, note: "brighter, more conversational" },
+  { voice: "af_heart", speed: 1.05, note: "current voice, quicker — less narrator" },
   { voice: "am_michael", speed: 1.0, note: "male, dry" },
-  { voice: "am_fenrir", speed: 1.05, note: "male, livelier" },
   { voice: "bm_george", speed: 1.0, note: "British male, deadpan" },
-  { voice: "bf_emma", speed: 1.0, note: "British female, wry" },
+  { voice: "af_bella", speed: 1.05, note: "female, conversational" },
 ];
 
 const cfg = loadChannel();
@@ -27,24 +23,37 @@ const dir = path.join(ROOT, "work", "voice-samples");
 await fs.rm(dir, { recursive: true, force: true });
 await fs.mkdir(dir, { recursive: true });
 
+console.log("loading Kokoro (first run downloads ~90 MB) ...");
+const tts = await withTimeout(
+  KokoroTTS.from_pretrained(cfg.voice.model, { dtype: "q8", device: "cpu", progress_callback: undefined as never }),
+  10 * 60_000, "Kokoro model load",
+);
+console.log("loaded.\n");
+
 const made: string[] = [];
 for (const [i, o] of OPTIONS.entries()) {
   process.stdout.write(`${i + 1}/${OPTIONS.length}  ${o.voice} @ ${o.speed}  (${o.note}) ... `);
   try {
-    const out = await synthesize({ ...cfg, voice: { ...cfg.voice, provider: "kokoro", voiceId: o.voice, speed: o.speed } },
-      [{ id: `v${i}`, narration: LINE }], path.join(dir, o.voice + "-" + o.speed));
-    const named = path.join(dir, `${String(i + 1).padStart(2, "0")}-${o.voice}-${o.speed}.wav`);
-    await fs.copyFile(out[0]!.file, named);
-    made.push(named);
+    const audio = await withTimeout(
+      tts.generate(LINE, { voice: o.voice as "af_heart", speed: o.speed }),
+      3 * 60_000, `${o.voice}`,
+    );
+    const out = path.join(dir, `${i + 1}-${o.voice}-${o.speed}.wav`);
+    await audio.save(out);
+    made.push(out);
     console.log("ok");
   } catch (e) {
-    console.log(`failed: ${(e as Error).message.slice(0, 60)}`);
+    console.log(`failed: ${(e as Error).message.slice(0, 70)}`);
   }
 }
 
-if (made.length) {
+if (!made.length) {
+  console.log("\nNo samples were produced. Run `npm run voice` first to check Kokoro works at all.");
+} else {
   console.log(`\n${made.length} samples in ${dir}`);
-  console.log("Listen, then set your pick in config/channel.json:\n  \"voice\": { \"provider\": \"kokoro\", \"voiceId\": \"<pick>\", \"speed\": <pick>, \"model\": \"onnx-community/Kokoro-82M-v1.0-ONNX\" }");
+  for (const f of made) console.log(`  ${path.basename(f)}`);
+  console.log(`\nListen, then put your pick in config/channel.json:`);
+  console.log(`  "voice": { "provider": "kokoro", "voiceId": "<id>", "speed": <speed>, "model": "${cfg.voice.model}" }`);
   await sh("open", [dir]).catch(() => {});
 }
 export {};

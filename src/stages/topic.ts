@@ -59,11 +59,20 @@ ${outliers.length ? outliers.map((o) => `- "${o.title}" | ${o.views.toLocaleStri
 ALREADY COVERED (do not repeat or closely overlap):
 ${past.map((p) => `- ${p.t}`).join("\n") || "- (nothing yet)"}
 
-${providerSupportsWeb() ? "Use at most 3 web searches to confirm the topic is well documented and to spot angles already overdone.\n" : "You have no web access: choose a topic that will be well covered on Wikipedia, and give wikipediaQueries that will actually match article titles.\n"}SCORE each of your 5 candidates 0-10 on: curiosity (would a stranger stop scrolling AND want to retell it),
-evidence (documented in encyclopedic sources), illustratability (how many scenes could be real photos or stock
-FOOTAGE of concrete things), freshness (unlike our past videos and unlike the outlier list).
-Also state, for the chosen topic, the single funniest TRUE detail in it — if you cannot name one, pick a different
-topic, because this channel cannot carry a topic that is only worthy.
+${providerSupportsWeb() ? "Use at most 3 web searches to confirm the topic is well documented and to spot angles already overdone.\n" : "You have no web access: choose a topic that will be well covered on Wikipedia, and give wikipediaQueries that will actually match article titles.\n"}SCORE each of your 5 candidates 0-10 on SIX axes:
+- absurdity: how indefensible, reckless or ridiculous the true events are
+- retellability: would a viewer repeat this to someone within a day
+- curiosity: would a stranger stop scrolling
+- evidence: how well documented in encyclopedic sources
+- illustratability: could STOCK FOOTAGE and archive photos of generic concrete things cover it
+- freshness: unlike our past videos and unlike the outlier list
+
+PASS GATE — a candidate that fails ANY of these is rejected outright, even if it is the best of the five:
+absurdity >= 7, retellability >= 7, curiosity >= 7, evidence >= 7, illustratability >= 7, freshness >= 6.
+You must also supply, for the chosen topic:
+- funniestDetail: the single funniest TRUE thing in it, in one sentence. No funny detail, no topic.
+- premise: the whole video in one sentence a stranger would repeat at a dinner table.
+If all five candidates fail, search again with different queries and score a fresh set.
 
 MINIMUM BARS — a topic that fails any of these must be rejected, even if it is the best of the five:
 curiosity >= 7, evidence >= 7, illustratability >= 7, freshness >= 6.
@@ -71,10 +80,16 @@ If all five candidates fail, search again with different queries and pick from a
 List every rejected candidate with which bar it failed.
 JSON: { "chosen": { "workingTitle", "subject", "angle", "hook", "mentalModel", "demandEvidence", "scores": { "curiosity", "evidence", "illustratability", "freshness" }, "wikipediaQueries": [2-4 search terms for Wikipedia] }, "rejected": [{ "workingTitle", "reason" }] }`,
   });
+  // Hard pass gate. A topic that fails any bar is not this channel's topic, however good it looks.
   const sc = topic.chosen.scores;
   const failed = [
-    sc.curiosity < 7 && "curiosity", sc.evidence < 7 && "evidence",
-    sc.illustratability < 7 && "illustratability", sc.freshness < 6 && "freshness",
+    sc.absurdity < 7 && "absurdity (nothing indefensible happens)",
+    sc.retellability < 7 && "retellability (nobody would repeat this)",
+    sc.curiosity < 7 && "curiosity",
+    sc.evidence < 7 && "evidence",
+    sc.illustratability < 7 && "illustratability (stock footage cannot cover it)",
+    sc.freshness < 6 && "freshness",
+    topic.chosen.funniestDetail.length < 20 && "no funniest true detail named",
   ].filter(Boolean);
   if (failed.length) throw new Error(`topic "${topic.chosen.workingTitle}" failed its own bars: ${failed.join(", ")} (${JSON.stringify(sc)})`);
   return { sub, structure, topic, outliers };

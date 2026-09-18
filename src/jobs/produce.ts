@@ -299,11 +299,13 @@ async function main() {
       log(`#${video.id} image QA replaced ${qa.rejected} image(s)`);
 
       log(`#${video.id} rendering`);
-      const captionsFor = (scs: { cardHeadline?: string }[], files: string[]) =>
-        scs.map((sc, i) => (/-card\.jpg$/.test(files[i] ?? "") ? undefined : sc.cardHeadline?.trim() || undefined));
+      const captionsFor = (scs: { cardHeadline?: string }[]) =>
+        scs.map((sc) => sc.cardHeadline?.trim() || undefined);
+      const firstStill = (files: string[][]) =>
+        files.flat().find((f) => !/\.(mp4|mov|webm)$/i.test(f)) ?? files.flat()[0]!;
       const { videoPath, srtPath, timings } = await renderVideo({
         scenes: script.scenes, images: long.files, audio, dir, seed: video.id,
-        captions: captionsFor(script.scenes, long.files),
+        captions: captionsFor(script.scenes),
       });
       const shortOut = shortAssets
         ? await renderVideo({ scenes: script.short.scenes, images: shortAssets[0].files, audio: shortAssets[1], dir, seed: video.id + 1, size: VERTICAL, name: "short", burnCaptions: true })
@@ -314,9 +316,9 @@ async function main() {
         await incident("thumbnail.text-rejected", new Error(`"${script.thumbnailText}" -> "${thumbText}" (word not in title or narration)`), video.id);
         script.thumbnailText = thumbText;
       }
-      const stillFallback = long.files.find((f) => !/\.(mp4|mov|webm)$/i.test(f)) ?? long.files[0]!;
+      const stillFallback = firstStill(long.files);
       let thumbPath = await makeThumbnail(cfg, script.thumbnailQuery, thumbText, dir, used, stillFallback)
-        .catch(async (e) => { await incident("thumbnail", e, video.id); return long.files[0]!; });
+        .catch(async (e) => { await incident("thumbnail", e, video.id); return stillFallback; });
       const allCredits = [...long.credits];
       let description = buildDescription(script, script.scenes, timings, video.dossier!, allCredits);
 
@@ -347,7 +349,7 @@ async function main() {
         for (const issue of imageIssues) {
           const idx = script.scenes.findIndex((sc) => sc.id === issue.sceneId);
           if (idx >= 0) {
-            const got = await replaceSceneImage(cfg, script.scenes[idx]!, long.files[idx]!, used, video.id, fallbacks).catch(() => null);
+            const got = await replaceSceneImage(cfg, script.scenes[idx]!, long.files[idx]![0]!, used, video.id, fallbacks).catch(() => null);
             if (got) long.credits[idx] = got;
           }
         }
@@ -368,7 +370,7 @@ async function main() {
               const f = fresh.find((x) => x.sceneId === sc.id);
               if (f) { audio[i] = f; audioChanged = true; }
               if (before.get(sc.id) !== sc.narration || script.scenes[i]?.imageQuery !== sc.imageQuery) {
-                const got = await replaceSceneImage(cfg, sc, long.files[i]!, used, video.id, fallbacks).catch(() => null);
+                const got = await replaceSceneImage(cfg, sc, long.files[i]![0]!, used, video.id, fallbacks).catch(() => null);
                 if (got) long.credits[i] = got;
               }
             }
@@ -377,7 +379,7 @@ async function main() {
         }
 
         // 3. re-render, re-thumbnail, re-check
-        rendered = await renderVideo({ scenes: script.scenes, images: long.files, audio, dir, seed: video.id + repairs, name: `final-r${repairs}`, captions: captionsFor(script.scenes, long.files) });
+        rendered = await renderVideo({ scenes: script.scenes, images: long.files, audio, dir, seed: video.id + repairs, name: `final-r${repairs}`, captions: captionsFor(script.scenes) });
         const newThumb = await makeThumbnail(cfg, script.thumbnailQuery,
           safeThumbnailText(script.thumbnailText, script.title, script.scenes.map((sc) => sc.narration).join(" ")),
           dir, used, stillFallback).catch(() => thumbPath);
@@ -409,7 +411,7 @@ async function main() {
       await updateVideo(video.id, { youtube_id: youtubeId });
       video.youtube_id = youtubeId;
       if (shortOut && !video.short_youtube_id) {
-        video.short_youtube_id = await upload(cfg, { ...shortOut, title: script.short.title, description: buildShortDescription(youtubeId, video.dossier!), tags: script.tags.slice(0, 5) });
+        video.short_youtube_id = await upload(cfg, { videoPath: shortOut.videoPath, srtPath: shortOut.srtPath, title: script.short.title, description: buildShortDescription(youtubeId, video.dossier!), tags: script.tags.slice(0, 5) });
         await updateVideo(video.id, { short_youtube_id: video.short_youtube_id });
       }
       await updateVideo(video.id, { status: (stage = "uploaded") });

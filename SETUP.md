@@ -300,3 +300,26 @@ am_adam am_echo am_eric am_fenrir am_liam am_michael am_onyx am_puck am_santa
 bf_alice bf_emma bf_isabella bf_lily bm_daniel bm_fable bm_george bm_lewis
 
 A faster speed (1.05) and a drier voice both read as less "narrator".
+
+## The framework (fixed structure, variable content)
+
+**Beat sheet** — enforced by the schema, so a script that ignores it is rejected:
+`cold_open → reaction → premise → escalation ×3+ → turn → mechanism → payoff → kicker`
+
+**Shot rhythm** — research on faceless retention says a visual reset every 3–5s (vertical) and 6–9s
+(horizontal documentary). The render cuts on sentence boundaries using Kokoro's own per-sentence
+timings, so the picture changes exactly when the narration moves on:
+
+| | target shot | source |
+|---|---|---|
+| Long video | ~7s | `SHOT_SECS_H` |
+| Short | ~3.5s | `SHOT_SECS_V` |
+
+Each scene gets 2–3 visuals from its `imageQuery` plus `altQueries`, and the writer is told to keep
+**one idea per sentence** so audio and picture stay in sync.
+
+**Topic pass gate** — a candidate is rejected outright unless: absurdity ≥ 7, retellability ≥ 7,
+curiosity ≥ 7, evidence ≥ 7, illustratability ≥ 7, freshness ≥ 6, plus a named funniest true detail
+and a one-sentence premise.
+
+**14 sub-niches, 5 story shapes** — see `config/channel.json`.

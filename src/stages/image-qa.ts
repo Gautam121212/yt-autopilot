@@ -66,21 +66,21 @@ async function sheet(files: string[], out: string, labels = true) {
 export async function imageQa(o: {
   cfg: ChannelConfig; dir: string; videoId: number; used: Set<string>;
   scenes: { id: string; imageQuery: string; narration: string; era?: string; altQueries?: string[] }[];
-  files: string[]; credits: ImageCredit[]; rounds?: number; fallbacks?: string[];
-}): Promise<{ files: string[]; credits: ImageCredit[]; rejected: number }> {
+  /** one list of visuals per scene; QA judges the first still in each */
+  files: string[][]; credits: ImageCredit[]; rounds?: number; fallbacks?: string[];
+}): Promise<{ files: string[][]; credits: ImageCredit[]; rejected: number }> {
   if (!providerSupportsVision()) return { files: o.files, credits: o.credits, rejected: 0 };
   let rejected = 0;
 
   const attempts = new Map<number, number>();
   // Skip video clips (no contact sheet) and generated cards (relevant by construction).
-  const stillIdx = o.files
-    .map((f, i) => (/\.(mp4|mov|webm)$/i.test(f) || /-card\.jpg$/.test(f) ? -1 : i))
-    .filter((i) => i >= 0);
+  const repFile = (i: number) => o.files[i]?.find((f) => !/\.(mp4|mov|webm)$/i.test(f));
+  const stillIdx = o.files.map((_, i) => (repFile(i) ? i : -1)).filter((i) => i >= 0);
   for (let round = 0; round < (o.rounds ?? 2); round++) {
     const bad = new Set<number>();
     for (let start = 0; start < stillIdx.length; start += SHEET) {
       const idxBatch = stillIdx.slice(start, start + SHEET);
-      const batch = idxBatch.map((i) => o.files[i]!);
+      const batch = idxBatch.map((i) => repFile(i)!);
       const img = path.join(o.dir, `qa-${round}-${start}.jpg`);
       await sheet(batch, img);
       const qa = await askJson({
@@ -129,7 +129,8 @@ List ONLY the images to reject.`,
     for (const idx of bad) {
       const scene = o.scenes[idx]!;
       if (++done % 3 === 0) log(`  replacing image ${done}/${bad.size}`);
-      const got = await replaceSceneImage(o.cfg, scene, o.files[idx]!, o.used, o.videoId, o.fallbacks).catch(() => null);
+      const target = repFile(idx)!;
+      const got = await replaceSceneImage(o.cfg, scene, target, o.used, o.videoId, o.fallbacks).catch(() => null);
       if (got) o.credits[idx] = got;
     }
   }

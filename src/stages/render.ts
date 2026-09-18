@@ -44,6 +44,29 @@ const isVideo = (f: string) => /\.(mp4|mov|webm)$/i.test(f);
 const isCard = (f: string) => /-card\.jpg$/i.test(f);
 
 const FADE = 0.35; // fade in/out baked into each clip so the join can be a stream copy
+/** Target seconds per shot. Research on faceless retention: a visual reset every 3-5s (vertical),
+ *  6-9s for documentary-style horizontal. Below this and it reads as chaos; above it, as a slideshow. */
+const SHOT_SECS_H = Number(process.env.SHOT_SECS_H ?? 7);
+const SHOT_SECS_V = Number(process.env.SHOT_SECS_V ?? 3.5);
+
+/** Group a scene's sentences into shots of roughly `target` seconds each. */
+function planShots(audio: SceneAudio, target: number): { start: number; dur: number }[] {
+  const segs = audio.segments?.length ? audio.segments : [{ text: "", start: 0, end: audio.duration }];
+  const shots: { start: number; dur: number }[] = [];
+  let start = 0;
+  for (const [i, sg] of segs.entries()) {
+    const last = i === segs.length - 1;
+    const here = sg.end - start;                       // length if we cut at the end of this sentence
+    const next = segs[i + 1] ? segs[i + 1]!.end - start : Infinity; // ... or at the end of the next one
+    // Cut at whichever boundary lands closest to the target, so shots cluster around it
+    // instead of always overshooting.
+    if (last || Math.abs(here - target) <= Math.abs(next - target)) {
+      shots.push({ start, dur: (last ? audio.duration : sg.end) - start });
+      start = sg.end;
+    }
+  }
+  return shots.filter((sh) => sh.dur > 0.4);
+}
 /** Mixed archives look mismatched; one grade pulls Commons, Pexels, NASA and Openverse together. */
 const GRADE = "eq=contrast=1.06:saturation=0.92:gamma=0.98,unsharp=5:5:0.4";
 
@@ -71,63 +94,51 @@ function captionFilter(text: string, size: Size, font: string, dur: number): str
     `borderw=2:bordercolor=black@0.7:x=${x}:y=${y}:enable='${on}'`;
 }
 
-async function sceneClip(img: string, audio: SceneAudio, motion: number, out: string, size: Size, caption?: string) {
-  // Source is scaled well above the output so zoompan's whole-pixel steps fall below one output
-  // pixel — this is what removes the shake. Affordable now that scripts are 14-18 scenes, not 28.
-  const bw = Math.round(size.w * 1.8), bh = Math.round(size.h * 1.8);
-  const dur = audio.duration + PAD;
+async function shotClip(
+  img: string, audioFile: string, audioStart: number, dur: number,
+  motion: number, out: string, size: Size, caption: string | undefined,
+  fadeIn: boolean, fadeOut: boolean,
+) {
   const frames = Math.ceil(dur * FPS);
-
-  if (isCard(img)) {
-    // Fit the whole card, never crop it, and drift gently instead of zooming.
-    await sh("ffmpeg", [
-      "-y", "-loop", "1", "-i", img, "-i", audio.file,
-      "-filter_complex",
-      `[0:v]scale=${size.w}:${size.h}:force_original_aspect_ratio=decrease,` +
-        `pad=${size.w}:${size.h}:(ow-iw)/2:(oh-ih)/2:color=black,fps=${FPS},` +
-        `fade=t=in:st=0:d=${FADE},fade=t=out:st=${(dur - FADE).toFixed(2)}:d=${FADE},format=yuv420p[v];` +
-        `[1:a]apad=pad_dur=${PAD},aresample=48000,afade=t=in:st=0:d=0.12,afade=t=out:st=${(dur - 0.2).toFixed(2)}:d=0.2[a]`,
-      "-map", "[v]", "-map", "[a]", "-t", dur.toFixed(3),
-      "-c:v", "libx264", "-preset", "superfast", "-crf", "18", "-r", String(FPS),
-      "-c:a", "aac", "-b:a", "192k", "-ac", "2", out,
-    ]);
-    return;
-  }
-
+  const fIn = fadeIn ? `fade=t=in:st=0:d=${FADE},` : "";
+  const fOut = fadeOut ? `fade=t=out:st=${Math.max(0.1, dur - FADE).toFixed(2)}:d=${FADE},` : "";
+  const aIn = fadeIn ? "afade=t=in:st=0:d=0.10," : "";
+  const aOut = fadeOut ? `afade=t=out:st=${Math.max(0.1, dur - 0.2).toFixed(2)}:d=0.2,` : "";
   const font = await firstFont();
-  const cap = caption && font ? `,${captionFilter(caption, size, font, dur)}` : "";
+  const cap = caption && font ? `${captionFilter(caption, size, font, dur)},` : "";
+  const bw = Math.round(size.w * 1.8), bh = Math.round(size.h * 1.8);
+
+  // audio: the slice of this scene's narration that belongs to this shot
+  const audioIn = ["-ss", audioStart.toFixed(3), "-t", dur.toFixed(3), "-i", audioFile];
+  const aChain = `[1:a]aresample=48000,apad,atrim=0:${dur.toFixed(3)},${aIn}${aOut}asetpts=N/SR/TB[a]`;
+  const encode = [
+    "-map", "[v]", "-map", "[a]", "-t", dur.toFixed(3),
+    "-c:v", "libx264", "-preset", "superfast", "-crf", "18", "-r", String(FPS),
+    "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", out,
+  ];
 
   if (isVideo(img)) {
-    // Stock clip: loop it to the narration length, drop its own audio, keep our voice track.
-    // -stream_loop on an unreadable file spins forever, so bound the loop count explicitly.
     const clipLen = await durationSec(img).catch(() => 0);
     if (clipLen < 1) throw new Error(`stock clip ${img} is unreadable (${clipLen}s)`);
     const loops = Math.max(0, Math.ceil(dur / clipLen));
     await sh("ffmpeg", [
-      "-y", "-stream_loop", String(loops), "-i", img, "-i", audio.file,
+      "-y", "-stream_loop", String(loops), "-i", img, ...audioIn,
       "-filter_complex",
       `[0:v]scale=${Math.round(size.w * 1.15)}:${Math.round(size.h * 1.15)}:force_original_aspect_ratio=increase,` +
-        `crop=${size.w}:${size.h}:'(in_w-out_w)/2+(in_w-out_w)/2*sin(t/6)':'(in_h-out_h)/2',fps=${FPS},${GRADE},vignette=PI/5${cap},` +
-        `fade=t=in:st=0:d=${FADE},fade=t=out:st=${(dur - FADE).toFixed(2)}:d=${FADE},format=yuv420p[v];` +
-        `[1:a]apad=pad_dur=${PAD},aresample=48000,afade=t=in:st=0:d=0.12,afade=t=out:st=${(dur - 0.2).toFixed(2)}:d=0.2[a]`,
-      "-map", "[v]", "-map", "[a]", "-t", dur.toFixed(3),
-      "-c:v", "libx264", "-preset", "superfast", "-crf", "18", "-r", String(FPS),
-      "-c:a", "aac", "-b:a", "192k", "-ac", "2", out,
+        `crop=${size.w}:${size.h}:'(in_w-out_w)/2+(in_w-out_w)/2*sin(t/6)':'(in_h-out_h)/2',fps=${FPS},${GRADE},vignette=PI/5,` +
+        `${cap}${fIn}${fOut}format=yuv420p[v];${aChain}`,
+      ...encode,
     ]);
     return;
   }
 
   const move = MOVES[motion % MOVES.length]!(bw, bh, Number(dur.toFixed(3)));
   await sh("ffmpeg", [
-    "-y", "-loop", "1", "-framerate", String(FPS), "-i", img, "-i", audio.file,
+    "-y", "-loop", "1", "-framerate", String(FPS), "-i", img, ...audioIn,
     "-filter_complex",
     `[0:v]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},${move},` +
-      `scale=${size.w}:${size.h}:flags=bicubic,${GRADE},vignette=PI/5${cap},` +
-      `fade=t=in:st=0:d=${FADE},fade=t=out:st=${(dur - FADE).toFixed(2)}:d=${FADE},format=yuv420p[v];` +
-      `[1:a]apad=pad_dur=${PAD},aresample=48000,afade=t=in:st=0:d=0.12,afade=t=out:st=${(dur - 0.2).toFixed(2)}:d=0.2[a]`,
-    "-map", "[v]", "-map", "[a]", "-t", dur.toFixed(3),
-    "-c:v", "libx264", "-preset", "superfast", "-crf", "18", "-r", String(FPS),
-    "-c:a", "aac", "-b:a", "192k", "-ac", "2", out,
+      `scale=${size.w}:${size.h}:flags=bicubic,${GRADE},vignette=PI/5,${cap}${fIn}${fOut}format=yuv420p[v];${aChain}`,
+    ...encode,
   ]);
 }
 
@@ -180,7 +191,10 @@ async function pickMusic(): Promise<string | undefined> {
 }
 
 export async function renderVideo(o: {
-  scenes: Narrated[]; images: string[]; audio: SceneAudio[]; dir: string; seed: number;
+  scenes: Narrated[];
+  /** one or more images/clips per scene — the render cuts between them on sentence boundaries */
+  images: (string | string[])[];
+  audio: SceneAudio[]; dir: string; seed: number;
   size?: Size; name?: string; burnCaptions?: boolean;
   /** short figure captions, one per scene, burned over the footage instead of shown as a slide */
   captions?: (string | undefined)[];
@@ -193,25 +207,49 @@ export async function renderVideo(o: {
   await fs.mkdir(clipsDir, { recursive: true });
   const mtime = async (f: string) => (await fs.stat(f).then((x) => x.mtimeMs, () => Infinity));
 
-  // Encode scene clips in parallel (zoompan is single-threaded per clip).
-  // Encoding is not perfectly parallel inside one ffmpeg, so run one job per core (min 2).
   const parallel = process.env.LOW_POWER === "true" ? 1 : Math.max(2, Math.min(4, os.cpus().length));
+  const shotTarget = size.w < size.h ? SHOT_SECS_V : SHOT_SECS_H;
+
+  // Plan every shot first: each scene becomes N shots, cutting where a sentence ends, so the
+  // picture changes exactly when the narration moves on.
+  type Shot = { sceneIdx: number; img: string; audioFile: string; start: number; dur: number; first: boolean; last: boolean; caption?: string };
+  const plan: Shot[] = [];
+  for (const [i, a] of o.audio.entries()) {
+    const imgs = (Array.isArray(o.images[i]) ? (o.images[i] as string[]) : [o.images[i] as string]).filter(Boolean);
+    const shots = planShots(a, shotTarget);
+    for (const [j, sh_] of shots.entries()) {
+      plan.push({
+        sceneIdx: i,
+        img: imgs[j % imgs.length]!,
+        audioFile: a.file,
+        start: sh_.start,
+        dur: sh_.dur + (j === shots.length - 1 ? PAD : 0),
+        first: j === 0,
+        last: j === shots.length - 1,
+        // the figure caption belongs on the scene's opening shot only
+        caption: j === 0 ? o.captions?.[i] : undefined,
+      });
+    }
+  }
+  console.log(`  ${plan.length} shots across ${o.scenes.length} scenes (~${(plan.reduce((n, p) => n + p.dur, 0) / plan.length).toFixed(1)}s each)`);
+
   let reused = 0;
-  const clips = await mapLimit(o.scenes, parallel, async (_s, i) => {
-    const out = path.join(clipsDir, `${String(i).padStart(3, "0")}.mp4`);
-    const [clipT, imgT, audT] = await Promise.all([mtime(out), mtime(o.images[i]!), mtime(o.audio[i]!.file)]);
+  const clips = await mapLimit(plan, parallel, async (shot, k) => {
+    const out = path.join(clipsDir, `${String(k).padStart(3, "0")}.mp4`);
+    const [clipT, imgT, audT] = await Promise.all([mtime(out), mtime(shot.img), mtime(shot.audioFile)]);
     if (clipT !== Infinity && clipT > imgT && clipT > audT) { reused++; return out; }
-    await sceneClip(o.images[i]!, o.audio[i]!, (i + o.seed) % MOVES.length, out, size, o.captions?.[i]);
+    await shotClip(shot.img, shot.audioFile, shot.start, shot.dur, k + o.seed, out, size, shot.caption, shot.first, shot.last);
     return out;
   });
-  if (reused) console.log(`  reused ${reused}/${o.scenes.length} unchanged scene clips`);
+  if (reused) console.log(`  reused ${reused}/${plan.length} unchanged shots`);
 
+  const lengths = await Promise.all(clips.map((c) => durationSec(c)));
   const timings: SceneTiming[] = [];
   let t = 0;
-  for (let i = 0; i < clips.length; i++) {
-    const d = await durationSec(clips[i]!);
-    timings.push({ sceneId: o.scenes[i]!.id, start: t, end: t + d, speechSec: o.audio[i]!.duration });
-    t += d;
+  for (let i = 0; i < o.scenes.length; i++) {
+    const mine = plan.map((p, k) => (p.sceneIdx === i ? lengths[k]! : 0)).reduce((a, b) => a + b, 0);
+    timings.push({ sceneId: o.scenes[i]!.id, start: t, end: t + mine, speechSec: o.audio[i]!.duration });
+    t += mine;
   }
 
   const joined = path.join(o.dir, `joined-${name}.mp4`);
