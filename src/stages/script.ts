@@ -29,7 +29,10 @@ THE BEAT SHEET — every video uses exactly this shape. Each scene declares its 
 12. kicker (last scene) — the best absurd detail, deliberately held back until now.
 You may repeat escalation and mechanism as needed to fill 14-18 scenes.
 
-LENGTH: total ${minM * cfg.wordsPerMinute}-${maxM * cfg.wordsPerMinute} words. HARD LIMIT 14-18 scenes, 70-95 words each.
+LENGTH — this is the constraint writers miss most, so count as you go:
+15 scenes x 80 words = 1,200 words = about 8 minutes. That is the target.
+HARD FLOOR: ${minM * cfg.wordsPerMinute} words total and 75 words in EVERY scene. A 500-word script is a failure
+even if every other rule is followed. Write full paragraphs, not bullet points in prose form.
 
 HARD RULES
 6. Every factual statement is backed by a claim whose sourceIds exist in the dossier. Never invent numbers,
@@ -151,6 +154,38 @@ Return the complete corrected script. ${SHAPE}`,
  * joke bolted on. This pass does ONE job: rewrite the narration so it sounds like a person being
  * dry, changing no facts and no structure. Run after the script, before the fact check.
  */
+/**
+ * Expand pass. The writer reliably under-writes when it is also juggling the beat sheet, sources and
+ * image queries. Rejecting the script for that wastes the most expensive call in the pipeline, so
+ * instead we hand it back and ask only for length — same scenes, same facts, more detail.
+ */
+export async function expandScript(o: { cfg: ChannelConfig; playbook: string; script: Script; dossier: Dossier; words: number }): Promise<Script> {
+  const [minM, maxM] = o.cfg.targetMinutes;
+  const targetWords = Math.round(((minM + maxM) / 2) * o.cfg.wordsPerMinute);
+  return askJson({
+    tier: "heavy",
+    schema: ScriptSchema,
+    system: system(o.cfg, o.playbook),
+    prompt: `This script is too short: ${o.words} words, and it needs about ${targetWords} (${minM}-${maxM} minutes).
+
+Your ONLY job is to lengthen it. Keep every scene, its id, its role, its order, its imageQuery, altQueries,
+motion, era, cardHeadline and cardSub exactly as they are. Keep the title and thumbnailText.
+
+Bring EVERY scene to 75-95 words by adding material that is already in the dossier: the specific numbers, the
+named people, the times of day, what people saw, what the equipment did, the bureaucratic aftermath. Where the
+dossier has a detail you skipped, use it. Add a deadpan beat where one fits. Do NOT invent facts, do NOT add
+scenes, do NOT restate the same point twice to pad.
+
+DOSSIER (the only permitted source of facts):
+${JSON.stringify(o.dossier)}
+
+SCRIPT:
+${JSON.stringify(o.script)}
+
+Return the complete lengthened script. ${SHAPE}`,
+  });
+}
+
 export async function punchUp(o: { cfg: ChannelConfig; script: Script; dossier: Dossier }): Promise<Script> {
   return askJson({
     tier: "heavy",

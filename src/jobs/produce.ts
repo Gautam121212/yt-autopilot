@@ -19,14 +19,14 @@ import { finalReview, unreviewed, type Review } from "../stages/review";
 import { pickSlot } from "../stages/schedule";
 import { ensureIllustratable, MIN_FEASIBLE } from "../stages/feasibility";
 import { forecast } from "../stages/forecast";
-import { punchUp, repairScript, reviseScript, stripUnsourced, writeScript } from "../stages/script";
+import { expandScript, punchUp, repairScript, reviseScript, stripUnsourced, writeScript } from "../stages/script";
 import { makeThumbnail, safeThumbnailText } from "../stages/thumbnail";
 import { pickTopic } from "../stages/topic";
 import { verify } from "../stages/verify";
 import { imageQa } from "../stages/image-qa";
 import { replaceSceneImage, sceneImages, topicFallbacks } from "../stages/visuals";
 import { synthesize } from "../stages/voice";
-import type { Dossier, Script, Topic, Verification } from "../types";
+import { MIN_WORDS, scriptWords, type Dossier, type Script, type Topic, type Verification } from "../types";
 
 const MAX_ATTEMPTS = 3;
 const MAX_REVISIONS = 2;
@@ -159,6 +159,20 @@ async function main() {
     if (stage === "researched") {
       log(`#${video.id} writing the script`);
       video.script = await writeScript({ cfg, playbook, structure, topic: video.topic, dossier: video.dossier!, recent: await recentForVariety() });
+      // Length first: cheaper to lengthen a good script than to reject and rewrite it.
+      let draft: Script = video.script;
+      for (let round = 1; round <= 2; round++) {
+        const words = scriptWords(draft);
+        if (words >= MIN_WORDS) break;
+        log(`#${video.id} script is ${words} words — expanding (round ${round})`);
+        const longer = await expandScript({ cfg, playbook, script: draft, dossier: video.dossier!, words })
+          .catch(async (e): Promise<Script | null> => { await incident("expand", e, video.id); return null; });
+        if (!longer) break;
+        draft = longer;
+      }
+      video.script = draft;
+      log(`#${video.id} narration: ${scriptWords(draft)} words`);
+
       // A dedicated comedy pass: the single prompt that writes the facts cannot also find the voice.
       const punched = await punchUp({ cfg, script: video.script, dossier: video.dossier! }).catch(async (e) => {
         await incident("punch-up", e, video.id);

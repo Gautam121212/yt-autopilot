@@ -95,11 +95,12 @@ export const ScriptSchema = z.object({
   .refine((s) => s.scenes.some((sc) => sc.role === "turn"), "There must be a turn — the moment it goes wrong or gets strange")
   .refine((s) => s.scenes.some((sc) => sc.role === "mechanism"), "There must be a mechanism scene that explains the real science")
   .refine((s) => s.scenes.at(-1)?.role === "kicker", "The last scene must be the kicker — the best absurd detail, held back")
-  // A 3-minute video against an 8-10 minute target reads as thin; enforce the length the brief asked for.
-  .refine((s) => s.scenes.reduce((n, sc) => n + WORDS(sc.narration), 0) >= 1000,
-    (s) => ({ message: `Narration totals ${s.scenes.reduce((n, sc) => n + WORDS(sc.narration), 0)} words; the video needs at least 1000 (about 7 minutes). Write longer scenes, not more scenes.` }))
-  .refine((s) => s.scenes.every((sc) => WORDS(sc.narration) >= 45),
-    (s) => ({ message: `Every scene needs at least 45 words; the shortest has ${Math.min(...s.scenes.map((sc) => WORDS(sc.narration)))}.` }));
+  ;
+
+/** Total narration words. Length is fixed by an expand pass, not by rejecting the script. */
+export const scriptWords = (s: { scenes: { narration: string }[] }) =>
+  s.scenes.reduce((n, sc) => n + WORDS(sc.narration), 0);
+export const MIN_WORDS = 1000;
 export type Script = z.infer<typeof ScriptSchema>;
 
 export const VerifySchema = z.object({
