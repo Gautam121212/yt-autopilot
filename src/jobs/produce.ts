@@ -23,7 +23,7 @@ import { expandScript, punchUp, repairScript, reviseScript, stripUnsourced, writ
 import { makeThumbnail, safeThumbnailText } from "../stages/thumbnail";
 import { pickTopic } from "../stages/topic";
 import { verify } from "../stages/verify";
-import { imageQa } from "../stages/image-qa";
+import { sceneQa, SCENE_BAR } from "../stages/scene-qa";
 import { replaceSceneImage, sceneImages, topicFallbacks } from "../stages/visuals";
 import { synthesize } from "../stages/voice";
 import { MIN_WORDS, scriptWords, type Dossier, type Script, type Topic, type Verification } from "../types";
@@ -211,7 +211,7 @@ async function main() {
       // One safety net only. The topic already cleared the score and filmability gates, so a short
       // script means the writer under-wrote, not that the topic is wrong.
       let draft: Script = video.script;
-      for (let round = 1; round <= 1; round++) {
+      for (let round = 1; round <= 2; round++) {
         const words = scriptWords(draft);
         if (words >= MIN_WORDS) break;
         log(`#${video.id} script is ${words} words — expanding (round ${round})`);
@@ -221,7 +221,15 @@ async function main() {
         draft = longer;
       }
       video.script = draft;
-      log(`#${video.id} narration: ${scriptWords(draft)} words`);
+      const finalWords = scriptWords(draft);
+      log(`#${video.id} narration: ${finalWords} words (~${Math.round(finalWords / cfg.wordsPerMinute)} min)`);
+      if (finalWords < MIN_WORDS) {
+        // Producing a 3-minute video against an 8-10 minute target wastes the render, the upload
+        // and your attention. Drop it here and start a new topic next run.
+        await updateVideo(video.id, { status: "abandoned" });
+        await incident("script.too-short", new Error(`${finalWords} words after 2 expand rounds (need ${MIN_WORDS})`), video.id);
+        return log(`#${video.id} abandoned: only ${finalWords} words after expanding twice. Next run starts a new topic.`);
+      }
 
       // A dedicated comedy pass: the single prompt that writes the facts cannot also find the voice.
       const punched = await punchUp({ cfg, script: video.script, dossier: video.dossier! }).catch(async (e) => {
@@ -356,12 +364,20 @@ async function main() {
         ])
         : undefined;
 
-      log(`#${video.id} image QA`);
-      const qa = await imageQa({ cfg, dir, videoId: video.id, used, scenes: script.scenes, files: long.files, credits: long.credits, fallbacks, rounds: 1 });
-      if (shortAssets) {
-        await imageQa({ cfg, dir, videoId: video.id, used, scenes: script.short.scenes, files: shortAssets[0].files, credits: shortAssets[0].credits, rounds: 2, fallbacks });
+      // Per-scene gate: every scene must clear SCENE_BAR before the next one is judged.
+      log(`#${video.id} scene-by-scene visual check (bar ${SCENE_BAR}/10)`);
+      const qa = await sceneQa({ cfg, dir, videoId: video.id, used, scenes: script.scenes, files: long.files, credits: long.credits, fallbacks });
+      log(`#${video.id} scenes passed: ${qa.passed}/${script.scenes.length} · replaced ${qa.replaced} image(s)${qa.failed.length ? ` · still weak: ${qa.failed.join(", ")}` : ""}`);
+      if (qa.failed.length > Math.ceil(script.scenes.length * 0.25)) {
+        // A quarter of the video looking wrong is not worth rendering, voicing or uploading.
+        await updateVideo(video.id, { status: "abandoned" });
+        await incident("scene-qa.abandoned", new Error(`${qa.failed.length}/${script.scenes.length} scenes below ${SCENE_BAR}: ${qa.failed.join(", ")}`), video.id);
+        return log(`#${video.id} abandoned: ${qa.failed.length} scenes could not reach ${SCENE_BAR}/10. Next run starts a new topic.`);
       }
-      log(`#${video.id} image QA replaced ${qa.rejected} image(s)`);
+      if (shortAssets) {
+        const sq = await sceneQa({ cfg, dir, videoId: video.id, used, scenes: script.short.scenes, files: shortAssets[0].files, credits: shortAssets[0].credits, fallbacks });
+        log(`#${video.id} short scenes passed: ${sq.passed}/${script.short.scenes.length}`);
+      }
 
       log(`#${video.id} rendering`);
       const captionsFor = (scs: { cardHeadline?: string }[]) =>

@@ -323,3 +323,48 @@ curiosity ≥ 7, evidence ≥ 7, illustratability ≥ 7, freshness ≥ 6, plus a
 and a one-sentence premise.
 
 **14 sub-niches, 5 story shapes** — see `config/channel.json`.
+
+## Generated clips (optional filler)
+
+What the research actually found about free AI video in 2026:
+
+| Option | Reality |
+|---|---|
+| Kling 3.0 | ~66 free credits/day ≈ **6 clips of 5s**. No public API. |
+| Google Veo | ~100 credits/**month**. Not an API. |
+| Runway / Luma / Pika | trial credits that expire; card required past that |
+| Self-hosted Wan / LTX / Mochi | genuinely free and unlimited, but **needs an NVIDIA GPU**. GitHub Actions runners have none. |
+| Pollinations `wan-fast` | free, no key, per-IP hourly limit — the only usable hosted option |
+
+A 15-scene video needs 15 clips a day. No free tier supports that, so generated clips are wired in as a
+**capped filler** for scenes stock cannot cover, not as a replacement:
+
+```bash
+# GitHub → Settings → Variables → Actions
+AI_CLIPS=true
+```
+
+Max 4 generated clips per run (`AI_CLIPS_MAX`), tried only after Pexels and Pixabay both fail. Set
+`POLLINATIONS_TOKEN` for higher rate limits if you register one.
+
+Keep it off until the stock path is producing videos you like — a slow, rate-limited generator on top of
+a broken edit just makes runs longer.
+
+## The gates, end to end
+
+`npm run audit` checks every one of these exists and is wired. Run it after any change.
+
+| # | Gate | Bar | Cost if it fails |
+|---|---|---|---|
+| 1 | Topic: six axes (absurdity, retellability, curiosity, evidence, illustratability, freshness) | all bars + average ≥ 7.5 | 1 light call |
+| 2 | Topic: can the story be filmed? | ≥70% of its 8-12 visual subjects exist in stock | 1 light call |
+| 3 | Script: beat sheet | cold_open → reaction → premise → escalation ×3 → turn → mechanism → payoff → kicker | rejected by schema |
+| 4 | Script: length | ≥1000 words after 2 expand rounds, else abandoned | 2-3 heavy calls |
+| 5 | Script: facts | every claim traceable to the dossier | 1 heavy call |
+| 6 | Scenes: image feasibility | ≥60% findable | 1 light call |
+| 7 | **Every scene, one at a time** | **≥7.5/10, retried up to 3× with new queries; abandons if >25% fail** | 1 light call per scene |
+| 8 | Forecast | ≥6.5 predicted | 1 heavy call |
+| 9 | Final check | ≥6.5 and zero blockers | 1 vision call |
+
+Nothing reaches the renderer until 1-8 have passed, so a bad idea costs a couple of small calls
+rather than an hour of compute.

@@ -51,6 +51,11 @@ jobs:
           SHOT_SECS_H: "7"               # target shot length, long video
           SHOT_SECS_V: "3.5"             # target shot length, Short
           LLM_TIMEOUT_MS: "120000"
+          SCENE_BAR: "7.5"               # every scene must clear this before the next is judged
+          MIN_IMG_W: "1600"              # no stretched small photos
+          MIN_VID_W: "1280"              # no soft low-res clips
+          AI_CLIPS: ${{ vars.AI_CLIPS || 'false' }}   # free generated clips as filler; see SETUP.md
+          AI_CLIPS_MAX: "4"                            # per run, because generation is slow and capped
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CLAUDE_MODEL_HEAVY: ${{ secrets.CLAUDE_MODEL_HEAVY }}

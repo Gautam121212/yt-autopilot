@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { ChannelConfig } from "../config";
 import { durationSec, sh } from "../lib/media";
-import { commonsImage, nasaImage, openverseImage, pexelsImage } from "../lib/sources";
+import { commonsImage, openverseImage, pexelsImage, pixabayImage } from "../lib/sources";
 
 const FONTS = [
   "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -112,7 +112,7 @@ export async function makeThumbnail(
   if (!src) {
     const raw = path.join(dir, "thumb-raw.jpg");
     const finders = cfg.imageSources.map((n) =>
-      n === "nasa" ? nasaImage : n === "pexels" ? pexelsImage : n === "openverse" ? openverseImage : commonsImage);
+      n === "pexels" ? pexelsImage : n === "pixabay" ? pixabayImage : n === "openverse" ? openverseImage : commonsImage);
     let got = null;
     for (const find of finders) {
       got = await find(query, used, raw).catch(() => null);

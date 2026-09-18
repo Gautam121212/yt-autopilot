@@ -2,16 +2,22 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { ChannelConfig } from "../config";
 import { incident } from "../lib/log";
-import { mapLimit } from "../lib/media";
+import { mapLimit, sh } from "../lib/media";
 import { log } from "../lib/log";
 import {
-  commonsImage, HISTORICAL_HINT, nasaImage, openverseImage, pexelsImage, pexelsVideo,
-  pixabayImage, pixabayVideo, type ImageHit,
+  commonsImage, HISTORICAL_HINT, openverseImage, pexelsImage, pexelsVideo,
+  pixabayImage, pixabayVideo, generatedClip, type ImageHit,
 } from "../lib/sources";
 
 export type ImageCredit = { source: string; id: string; title: string; attribution?: string };
 
 const MIN_USABLE = 0.25;
+/** Verified on disk, not trusted from the API: a stretched 900px jpg is what "looks cheap" means. */
+async function bigEnough(file: string, minW: number): Promise<boolean> {
+  const out = await sh("ffprobe", ["-v", "error", "-select_streams", "v", "-show_entries", "stream=width,height", "-of", "csv=p=0", file]).catch(() => "");
+  const [w, h] = out.trim().split(",").map(Number);
+  return (w ?? 0) >= minW && (h ?? 0) >= Math.round(minW * 0.5);
+}
 // Per scene: enough for several sources, not enough to stall a run. The pool covers the misses.
 const SCENE_BUDGET_MS = Number(process.env.SCENE_BUDGET_MS ?? 90_000);
 /** Whole-phase ceiling. Past this, remaining scenes take pooled footage immediately. */
@@ -28,10 +34,11 @@ const FINDERS: Record<string, (q: string, used: Set<string>, file: string) => Pr
   pixabay: pixabayImage,
   commons: commonsImage,
   openverse: openverseImage,
-  nasa: nasaImage,
 };
 
-/** Every video source, tried in order, for scenes the writer marked as motion. */
+/** Every video source, tried in order, for scenes the writer marked as motion.
+ *  Generated clips come LAST and only when AI_CLIPS=true: they are slow and rate-limited, so they
+ *  fill what stock cannot rather than carrying the video. */
 const CLIP_FINDERS = [pexelsVideo, pixabayVideo];
 
 /** Fetch a different image for one scene, avoiding everything already used in this video. */
@@ -96,6 +103,7 @@ export async function sceneImages(
   let clipsUsed = 0;
 
   let done = 0;
+  let generated = 0;
   const phaseStart = Date.now();
   const results = await mapLimit(scenes, 6, async (s, i) => {
     // Phase budget spent: stop searching and dress the rest from the pool.
@@ -175,6 +183,16 @@ export async function sceneImages(
         if (best && best.score >= MIN_USABLE) break;
       }
     }
+    // Last resort before the pool: generate a clip, if enabled and under the per-run cap.
+    if (!best && process.env.AI_CLIPS === "true" && generated < Number(process.env.AI_CLIPS_MAX ?? 4)) {
+      const mp4 = path.join(dir, `${String(i).padStart(3, "0")}gen.mp4`);
+      const gen = await generatedClip(s.imageQuery, used, mp4).catch(() => null);
+      if (gen) {
+        generated++;
+        log(`  scene ${s.id}: no footage existed — generated a clip (${generated}/${process.env.AI_CLIPS_MAX ?? 4})`);
+        return { files: [mp4], credit: { source: gen.source, id: gen.id, title: gen.title } };
+      }
+    }
     // Still nothing of our own: take from the prefetched pool of real footage.
     if (!best) {
       const spare = fromPool();
@@ -186,22 +204,24 @@ export async function sceneImages(
       throw new Error(`no image found for scene ${s.id} ("${s.imageQuery}") from any source`);
     }
     // Collect 1-2 more visuals for this scene from its alternative queries, so the render can cut.
+    // Each scene needs 3 distinct visuals so the shot cuts land on something new. Any real hit
+    // beats repeating the same frame, so the bar here is lower than for the scene's lead image.
     const files = [file];
-    for (const q of (s.altQueries ?? []).slice(0, 2)) {
+    const WANT = 3;
+    for (const q of (s.altQueries ?? []).slice(0, 3)) {
+      if (files.length >= WANT) break;
       const more = path.join(dir, `${String(i).padStart(3, "0")}b${files.length}.jpg`);
       for (const find of sources) {
         const hit = await find(q + (s.era === "historical" ? ` ${HISTORICAL_HINT}` : ""), used, more).catch(() => null);
-        if (hit && hit.score >= MIN_USABLE) { files.push(more); break; }
+        if (hit) { files.push(more); break; }
       }
-      if (files.length >= 3) break;
     }
-    if (files.length === 1) {
+    while (files.length < WANT) {
       const spare = fromPool();
-      if (spare) {
-        const more = path.join(dir, `${String(i).padStart(3, "0")}b1.jpg`);
-        await fs.copyFile(spare.file, more).catch(() => {});
-        files.push(more);
-      }
+      if (!spare) break;
+      const more = path.join(dir, `${String(i).padStart(3, "0")}b${files.length}.jpg`);
+      await fs.copyFile(spare.file, more).catch(() => {});
+      files.push(more);
     }
     return { files: [...extra.map((e) => e.file), ...files], credit: { source: best.source, id: best.id, title: best.title, attribution: best.attribution } };
   }

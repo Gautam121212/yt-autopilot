@@ -51,6 +51,10 @@ const words = (q: string) => q.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w
 /** Appended to historical queries so archives return period material, not modern photos. */
 export const HISTORICAL_HINT = "engraving lithograph archive photograph";
 
+/** Quality floors. A 900px photo stretched to 1080p is the main source of "looks cheap". */
+export const MIN_IMG_W = Number(process.env.MIN_IMG_W ?? 1600);
+export const MIN_VID_W = Number(process.env.MIN_VID_W ?? 1280);
+
 const GENERIC_CAPS = new Set(["Port", "River", "Lake", "Mount", "Bay", "North", "South", "East", "West", "New", "Great", "Old", "The"]);
 /** Capitalised words that are not generic geography words: a place or proper name that MUST be present. */
 const mustHave = (q: string) =>
@@ -102,7 +106,7 @@ export async function nasaImage(query: string, used: Set<string>, file: string):
 }
 
 // ---------- Wikimedia Commons (any topic, licence-filtered) ----------
-export type ImageHit = { source: "nasa" | "commons" | "pexels" | "openverse" | "pixabay"; id: string; title: string; score: number; attribution?: string };
+export type ImageHit = { source: "nasa" | "commons" | "pexels" | "openverse" | "pixabay" | "generated"; id: string; title: string; score: number; attribution?: string };
 
 type CommonsPage = {
   title: string;
@@ -139,7 +143,8 @@ export async function commonsImage(query: string, used: Set<string>, file: strin
       const restrictions = stripHtml(meta.Restrictions?.value ?? "");
       const title = p.title.replace(/^File:/, "").replace(/\.[a-z0-9]+$/i, "").replace(/[_-]+/g, " ");
       const hay = `${title} ${stripHtml(meta.ImageDescription?.value ?? "")} ${stripHtml(meta.Categories?.value ?? "")}`.toLowerCase();
-      return { p, info, title, licence, usage, artist, restrictions, score: relevance(query, title, hay) };
+      const wide = (info?.width ?? 0) >= MIN_IMG_W;
+      return { p, info, title, licence, usage, artist, restrictions, wide, score: wide ? relevance(query, title, hay) : 0 };
     })
     .filter((c) =>
       c.info && /^image\/(jpeg|png|webp)$/.test(c.info.mime) && (c.info.width ?? 0) >= 1000 &&
@@ -186,7 +191,7 @@ export async function pexelsImage(query: string, used: Set<string>, file: string
   if (!r?.ok) return null;
   const { photos = [] } = (await r.json()) as { photos?: PexelsPhoto[] };
   const scored = photos
-    .filter((p) => p.width >= 1600 && !used.has(`pexels:${p.id}`))
+    .filter((p) => p.width >= MIN_IMG_W && !used.has(`pexels:${p.id}`))
     .filter((p) => !LIFESTYLE.test(p.alt ?? ""))   // stock libraries are full of people; we never want them
     .map((p) => ({ p, score: relevance(query, p.alt ?? "") }))
     .sort((a, b) => b.score - a.score);
@@ -218,7 +223,7 @@ export async function pexelsVideo(query: string, used: Set<string>, file: string
     const id = `pexelsv:${v.id}`;
     used.add(id);
     const f = v.video_files
-      .filter((x) => x.file_type === "video/mp4" && x.width >= 1280 && x.width <= 2560)
+      .filter((x) => x.file_type === "video/mp4" && x.width >= MIN_VID_W && x.width <= 2560)
       .sort((a, b) => b.width - a.width)[0];
     const res = f ? await hfetch(f.link, {}, 90_000).catch(() => null) : null;
     if (!res?.ok) { used.delete(id); continue; }
@@ -281,7 +286,7 @@ export async function pixabayImage(query: string, used: Set<string>, file: strin
     `https://pixabay.com/api/?key=${pixKey()}&q=${encodeURIComponent(query)}&image_type=photo&orientation=horizontal&per_page=40&safesearch=true`,
   ).catch(() => null);
   const scored = (r?.hits ?? [])
-    .filter((h) => h.imageWidth >= 1600 && !used.has(`px:${h.id}`) && !LIFESTYLE.test(h.tags ?? ""))
+    .filter((h) => h.imageWidth >= MIN_IMG_W && !used.has(`px:${h.id}`) && !LIFESTYLE.test(h.tags ?? ""))
     .map((h) => ({ h, score: relevance(query, h.tags ?? "") }))
     .sort((a, b) => b.score - a.score);
   for (const { h, score } of scored.slice(0, 4)) {
@@ -312,7 +317,7 @@ export async function pixabayVideo(query: string, used: Set<string>, file: strin
     if (used.has(id)) continue;
     used.add(id);
     const v = h.videos ?? {};
-    const pick = [v.large, v.medium, v.small].find((x) => x && x.width >= 1280 && x.width <= 2560) ?? v.medium ?? v.small;
+    const pick = [v.large, v.medium, v.small].find((x) => x && x.width >= MIN_VID_W && x.width <= 2560) ?? v.medium;
     const res = pick?.url ? await hfetch(pick.url, {}, 90_000).catch(() => null) : null;
     if (!res?.ok) { used.delete(id); continue; }
     const bytes = Buffer.from(await res.arrayBuffer());
@@ -342,7 +347,7 @@ export async function probeQuery(query: string, era: "historical" | "modern" | "
       const r = await hfetch(`https://api.pexels.com/v1/search?per_page=15&orientation=landscape&query=${encodeURIComponent(query)}`,
         { headers: { Authorization: pexelsKey() } })
         .then((x) => x.json() as Promise<{ photos?: { width: number; alt?: string }[] }>).catch(() => null);
-      const usable = (r?.photos ?? []).filter((p) => p.width >= 1600);
+      const usable = (r?.photos ?? []).filter((p) => p.width >= MIN_IMG_W);
       if (usable.length) {
         return { score: Math.min(1, usable.length / 5), best: `pexels: ${usable.length} results (${usable[0]!.alt?.slice(0, 40) ?? "no caption"})` };
       }
@@ -350,7 +355,7 @@ export async function probeQuery(query: string, era: "historical" | "modern" | "
     if (pixKey()) {
       const r = await hfetch(`https://pixabay.com/api/?key=${pixKey()}&q=${encodeURIComponent(query)}&per_page=15&image_type=photo&safesearch=true`)
         .then((x) => x.json() as Promise<{ hits?: { imageWidth: number; tags?: string }[] }>).catch(() => null);
-      const usable = (r?.hits ?? []).filter((h) => h.imageWidth >= 1600);
+      const usable = (r?.hits ?? []).filter((h) => h.imageWidth >= MIN_IMG_W);
       if (usable.length) {
         return { score: Math.min(1, usable.length / 5), best: `pixabay: ${usable.length} results (${usable[0]!.tags?.slice(0, 40) ?? ""})` };
       }
@@ -415,4 +420,47 @@ export async function findOutliers(queries: string[], lookbackDays: number, minV
     .filter((o) => o.views >= minViews)
     .sort((a, b) => b.ratio - a.ratio)
     .slice(0, 25);
+}
+
+// ---------- Generated clips (optional, free, rate-limited) ----------
+/**
+ * Pollinations serves a free text-to-video model (`wan-fast`) with no key and per-IP hourly limits.
+ * It is the only genuinely free video generation the research turned up that needs no card and no GPU.
+ *
+ * Deliberately positioned as a FILLER, not a replacement: generation is slow and capped, so it covers
+ * the few scenes stock libraries cannot ("the committee voted", "the signal travelled") while real
+ * footage carries the rest. Enable with AI_CLIPS=true and cap with AI_CLIPS_MAX.
+ */
+export async function generatedClip(prompt: string, used: Set<string>, file: string): Promise<ImageHit | null> {
+  if (process.env.AI_CLIPS !== "true") return null;
+  const id = `gen:${prompt.slice(0, 40)}`;
+  if (used.has(id)) return null;
+  used.add(id);
+
+  const url = `https://gen.pollinations.ai/v1/videos/generations`;
+  const res = await hfetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(process.env.POLLINATIONS_TOKEN ? { Authorization: `Bearer ${process.env.POLLINATIONS_TOKEN}` } : {}) },
+    body: JSON.stringify({ model: "wan-fast", prompt: `${prompt}, documentary footage, realistic, no text, no captions`, seconds: 5 }),
+  }, 4 * 60_000).catch(() => null);
+  if (!res?.ok) { used.delete(id); return null; }
+
+  // Either a direct video body or a JSON envelope with a url — handle both.
+  const type = res.headers.get("content-type") ?? "";
+  let bytes: Buffer | null = null;
+  if (type.startsWith("video/")) {
+    bytes = Buffer.from(await res.arrayBuffer());
+  } else {
+    const j = (await res.json().catch(() => null)) as { data?: { url?: string }[]; url?: string } | null;
+    const link = j?.data?.[0]?.url ?? j?.url;
+    if (link) {
+      const dl = await hfetch(link, {}, 3 * 60_000).catch(() => null);
+      if (dl?.ok) bytes = Buffer.from(await dl.arrayBuffer());
+    }
+  }
+  if (!bytes || bytes.length < 100_000) { used.delete(id); return null; }
+
+  await fs.writeFile(file, bytes);
+  if (!(await isPlayable(file, 2))) { used.delete(id); return null; }
+  return { source: "generated", id, title: `generated: ${prompt}`, score: 0.75 };
 }

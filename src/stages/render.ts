@@ -51,7 +51,13 @@ const SHOT_SECS_V = Number(process.env.SHOT_SECS_V ?? 3.5);
 
 /** Group a scene's sentences into shots of roughly `target` seconds each. */
 function planShots(audio: SceneAudio, target: number): { start: number; dur: number }[] {
-  const segs = audio.segments?.length ? audio.segments : [{ text: "", start: 0, end: audio.duration }];
+  // No sentence timings? Cut on the clock instead. A scene must NEVER become one long held shot.
+  if (!audio.segments?.length) {
+    const n = Math.max(1, Math.round(audio.duration / target));
+    const each = audio.duration / n;
+    return Array.from({ length: n }, (_, i) => ({ start: i * each, dur: each }));
+  }
+  const segs = audio.segments;
   const shots: { start: number; dur: number }[] = [];
   let start = 0;
   for (const [i, sg] of segs.entries()) {
@@ -86,8 +92,11 @@ function captionFilter(text: string, size: Size, font: string, dur: number): str
   const fs = Math.max(34, Math.min(Math.round(size.w / 18), Math.round((size.w * 0.8) / (safe.length * 0.62))));
   const x = Math.round(size.w * 0.055);
   const y = Math.round(size.h * 0.74);
-  // appears a beat after the cut, leaves before the scene ends
-  const on = `between(t,0.6,${Math.max(1.2, dur - 1.2).toFixed(2)})`;
+  // Starts after the fade-in has finished, so the words never appear over black, and leaves
+  // before the shot ends so it cannot bleed into the next cut.
+  const appear = Math.max(FADE + 0.25, 0.6);
+  const leave = Math.max(appear + 0.6, dur - 0.8);
+  const on = `between(t,${appear.toFixed(2)},${leave.toFixed(2)})`;
   const boxW = Math.round(safe.length * fs * 0.66) + 34;
   return `drawbox=x=${x - 16}:y=${y - 12}:w=${boxW}:h=${fs + 24}:color=black@0.55:t=fill:enable='${on}',` +
     `drawtext=fontfile='${font}':text='${safe}':fontsize=${fs}:fontcolor=white:` +
@@ -149,6 +158,9 @@ function srtTime(sec: number) {
 }
 
 /** Captions: exact sentence timing when the voice engine reports it, else proportional to word count. */
+/** Never let a caption sit on the opening fade — it reads as text arriving before the video. */
+const CAPTION_LEAD_IN = FADE + 0.15;
+
 function buildSrt(scenes: Narrated[], timings: SceneTiming[], audio: SceneAudio[], vertical = false): string {
   const cues: string[] = [];
   let n = 1;
@@ -171,7 +183,9 @@ function buildSrt(scenes: Narrated[], timings: SceneTiming[], audio: SceneAudio[
     let idx = 0;
     for (const chunk of chunks) {
       const a = start + idx * per;
-      cues.push(`${n++}\n${srtTime(a)} --> ${srtTime(a + chunk.length * per)}\n${chunk.join(" ")}\n`);
+      const from = Math.max(a, CAPTION_LEAD_IN);
+      const to = Math.max(from + 0.4, a + chunk.length * per);
+      cues.push(`${n++}\n${srtTime(from)} --> ${srtTime(to)}\n${chunk.join(" ")}\n`);
       idx += chunk.length;
     }
   };
