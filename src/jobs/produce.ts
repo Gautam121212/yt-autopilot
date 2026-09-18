@@ -11,6 +11,7 @@ import { closeDb, q, updateVideo } from "../lib/db";
 import { createIssue } from "../lib/github";
 import { isQuota, usage } from "../lib/llm";
 import { incident, log } from "../lib/log";
+import { withTimeout } from "../lib/time";
 import { buildDescription, buildShortDescription, schedulePublic, upload } from "../stages/publish";
 import { renderVideo, VERTICAL } from "../stages/render";
 import { research } from "../stages/research";
@@ -18,7 +19,7 @@ import { finalReview, unreviewed, type Review } from "../stages/review";
 import { pickSlot } from "../stages/schedule";
 import { ensureIllustratable } from "../stages/feasibility";
 import { forecast } from "../stages/forecast";
-import { repairScript, reviseScript, stripUnsourced, writeScript } from "../stages/script";
+import { punchUp, repairScript, reviseScript, stripUnsourced, writeScript } from "../stages/script";
 import { makeThumbnail, safeThumbnailText } from "../stages/thumbnail";
 import { pickTopic } from "../stages/topic";
 import { verify } from "../stages/verify";
@@ -96,6 +97,7 @@ process.on("exit", (code) => {
 async function main() {
   const cfg = loadChannel();
   const playbook = loadPlaybook();
+  log("starting: checking the queue");
 
   let [v] = await q<VideoRow>(
     "select * from videos where status in ('planned','researched','scripted','verified','uploaded') and attempts < $1 order by id limit 1",
@@ -125,7 +127,17 @@ async function main() {
     }
     if (waiting >= cfg.maxAwaitingApproval) return log(`${waiting} videos awaiting your review; skipping so nothing is wasted`);
 
-    const { sub, structure, topic, outliers } = await pickTopic(cfg, process.env.FORCE_SUB_NICHE || undefined);
+    log("picking a topic (demand search + model)");
+    const picked = await withTimeout(
+      pickTopic(cfg, process.env.FORCE_SUB_NICHE || undefined), 12 * 60_000, "topic selection",
+    ).catch(async (e) => {
+      // Never hang on topic choice: retry once without the YouTube demand search.
+      await incident("topic.timeout", e);
+      log("topic selection stalled — retrying without the demand search");
+      process.env.SKIP_DEMAND_SEARCH = "true";
+      return withTimeout(pickTopic(cfg, process.env.FORCE_SUB_NICHE || undefined), 8 * 60_000, "topic selection (retry)");
+    });
+    const { sub, structure, topic, outliers } = picked;
     [v] = await q<VideoRow>(
       "insert into videos (status, sub_niche, structure, topic) values ('planned', $1, $2, $3) returning *",
       [sub.id, structure.id, JSON.stringify({ ...topic, outliers })],
@@ -138,18 +150,30 @@ async function main() {
 
   try {
     if (stage === "planned") {
-      video.dossier = await research(video.topic);
+      log(`#${video.id} researching`);
+      video.dossier = await withTimeout(research(video.topic), 15 * 60_000, "research");
       await updateVideo(video.id, { dossier: video.dossier, status: (stage = "researched") });
       log(`#${video.id} researched: ${video.dossier.sources.length} sources`);
     }
 
     if (stage === "researched") {
+      log(`#${video.id} writing the script`);
       video.script = await writeScript({ cfg, playbook, structure, topic: video.topic, dossier: video.dossier!, recent: await recentForVariety() });
+      // A dedicated comedy pass: the single prompt that writes the facts cannot also find the voice.
+      const punched = await punchUp({ cfg, script: video.script, dossier: video.dossier! }).catch(async (e) => {
+        await incident("punch-up", e, video.id);
+        return null;
+      });
+      if (punched) {
+        video.script = punched;
+        log(`#${video.id} comedy pass applied`);
+      }
       await updateVideo(video.id, { script: video.script, title: video.script.title, status: (stage = "scripted") });
       log(`#${video.id} scripted: ${video.script.scenes.length} scenes + short`);
     }
 
     if (stage === "scripted") {
+      log(`#${video.id} fact + policy check`);
       const recentTitles = (await recentForVariety()).map((r) => r.title).filter((t) => t !== video.script!.title);
       let verification = await verify(video.script!, video.dossier!, recentTitles);
       for (let i = 0; i < MAX_REVISIONS && verification.verdict === "revise"; i++) {

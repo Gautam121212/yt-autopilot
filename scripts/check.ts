@@ -65,6 +65,12 @@ await step("Pexels (optional)", "add PEXELS_API_KEY via `npm run setup`, or igno
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return "reachable";
 });
+await step("Pixabay (optional)", "add PIXABAY_API_KEY via `npm run setup` for a second free video source", async () => {
+  if (!process.env.PIXABAY_API_KEY) return "not set — Pexels only for video";
+  const r = await fetch(`https://pixabay.com/api/?key=${process.env.PIXABAY_API_KEY}&q=library&per_page=3`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return "reachable";
+});
 await step("Wikimedia Commons", "temporary outage, retry later", async () => {
   const r = await fetch("https://commons.wikimedia.org/w/api.php?action=query&format=json&titles=File:Example.jpg&prop=imageinfo&iiprop=extmetadata", { headers: { "User-Agent": "yt-autopilot-check/1.0" } });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);

@@ -21,11 +21,12 @@
   },
   "imageSources": [
     "pexels",
+    "pixabay",
     "commons",
     "openverse",
     "nasa"
   ],
-  "videoClipRatio": 0.6,
+  "videoClipRatio": 0.65,
   "subNiches": [
     {
       "id": "science",

@@ -15,6 +15,9 @@ CHECKLIST
 - advertiser_friendly: shock or disaster framing, graphic descriptions of death.
 - inauthentic_risk: does it add original explanation (comparisons, mental model, synthesis), or is it a reworded Wikipedia article? Too similar to: ${recentTitles.join(" | ") || "none"}?
 - quality: weak hook, flat middle, missing payoff, repetition, imageQuery values that are abstract, name a living person, or could not exist as a real photograph.
+- tone: this channel is deadpan and funny-because-true. Mark it as a MAJOR quality issue if the narration reads
+  as a neutral documentary: no reacting human voice, no understatement, no sentence that would make someone snort.
+  Count the moments that actually land — fewer than three in a 9-minute script is a failure of the brief.
 
 Verdict: "pass" only with no blocker/major issues. "abandon" if the topic can't be done accurately from this dossier.`,
     prompt: `DOSSIER:\n${JSON.stringify(dossier)}\n\nSCRIPT:\n${JSON.stringify(script)}\n\nJSON: { "verdict": "pass"|"revise"|"abandon", "adSuitability": "likely_full"|"likely_limited"|"unsuitable", "issues": [{ "sceneId": string|null, "category": "factual"|"misinformation"|"misleading_metadata"|"advertiser_friendly"|"inauthentic_risk"|"quality", "severity": "blocker"|"major"|"minor", "problem", "fix" }], "summary" }`,

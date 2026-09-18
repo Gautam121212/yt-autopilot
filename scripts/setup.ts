@@ -81,6 +81,15 @@ for (const f of [...PROVIDERS[provider]!.fields, ...COMMON]) {
   }
 }
 
+// Optional: a second free stock library (images AND video), no attribution required.
+{
+  const cur = get("PIXABAY_API_KEY");
+  console.log(`PIXABAY_API_KEY (optional — second free source of photos + video clips)\n  where: pixabay.com/api/docs — sign in and the key is shown inline. Press Enter to skip.`);
+  const ans = (await rl.question(`  paste${cur ? " (Enter = keep current)" : " or Enter to skip"}: `)).trim();
+  const val = ans || cur;
+  if (val) { set("PIXABAY_API_KEY", val); console.log("  ✅ saved\n"); } else console.log("  skipped\n");
+}
+
 // Optional: free stock photos and motion clips.
 {
   const cur = get("PEXELS_API_KEY");

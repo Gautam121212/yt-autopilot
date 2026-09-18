@@ -36,7 +36,7 @@ const Channel = z.object({
   structures: z.array(z.object({ id: z.string(), description: z.string() })).min(2),
   niche: z.string(),
   voice: z.object({ provider: z.enum(["kokoro", "system", "elevenlabs", "openai"]), voiceId: z.string(), model: z.string(), speed: z.number().default(1) }),
-  imageSources: z.array(z.enum(["commons", "openverse", "nasa", "pexels"])).min(1),
+  imageSources: z.array(z.enum(["pexels", "pixabay", "commons", "openverse", "nasa"])).min(1),
   /** Fraction of scenes that may use a moving stock clip instead of a still (needs PEXELS_API_KEY). */
   videoClipRatio: z.number().min(0).max(1).default(0),
   fallbackImageQueries: z.array(z.string()).min(3),

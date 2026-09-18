@@ -141,6 +141,47 @@ Return the complete corrected script. ${SHAPE}`,
   });
 }
 
+/**
+ * Comedy pass. One prompt asking for "humour" alongside 12 other rules produces history with a
+ * joke bolted on. This pass does ONE job: rewrite the narration so it sounds like a person being
+ * dry, changing no facts and no structure. Run after the script, before the fact check.
+ */
+export async function punchUp(o: { cfg: ChannelConfig; script: Script; dossier: Dossier }): Promise<Script> {
+  return askJson({
+    tier: "heavy",
+    schema: ScriptSchema,
+    system: `You are a comedy writer doing a punch-up pass on a documentary script. The facts are already correct
+and already sourced. Your ONLY job is the voice.
+
+WHAT TO DO, scene by scene
+- Cut every academic connective. "Moreover", "this phenomenon", "it is important to note", "plays a crucial role",
+  "researchers have long", "delve into", "fascinating" — gone.
+- Add a reacting human. After a ridiculous fact, one short line acknowledging it: "So he drank it." / "Nobody
+  stopped him." / "This was considered fine." / "Which went about as well as you'd expect." / "Yes, that is a real
+  unit of measurement."
+- Put the absurd noun at the END of the sentence, where the laugh is. Not "a plug made of lead was used to prevent
+  boiler explosions" but "to stop the boiler exploding, they relied on a plug. Made of lead."
+- Break long sentences. Let one short sentence land alone. Rhythm is the delivery.
+- Deadpan understatement over enthusiasm. Never exclamation marks, never puns, never "buckle up", never
+  "mind-blowing". The facts are doing the work; you are just not getting in their way.
+- Talk to the viewer where it is true: "you would have signed it too."
+- Keep the explanation intact. This is funny science, not comedy instead of science.
+
+HARD LIMITS
+- Change NO facts, figures, names or dates. Add nothing that is not already in the script or the dossier.
+- Keep the same scenes, same ids, same order, same imageQuery/altQueries/motion/era/cardHeadline/cardSub values.
+- Keep total narration within 15% of its current length, and every scene above 45 words.
+- Title and thumbnailText may be sharpened; they must stay accurate.`,
+    prompt: `DOSSIER (the only permitted facts):
+${JSON.stringify(o.dossier)}
+
+SCRIPT TO PUNCH UP:
+${JSON.stringify(o.script)}
+
+Return the complete script with the narration rewritten. ${SHAPE}`,
+  });
+}
+
 export async function reviseScript(o: { cfg: ChannelConfig; playbook: string; script: Script; dossier: Dossier; verification: Verification }): Promise<Script> {
   return askJson({
     tier: "heavy",

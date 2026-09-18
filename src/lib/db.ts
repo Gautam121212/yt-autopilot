@@ -6,7 +6,7 @@ function getPool() {
   pool ??= new pg.Pool({
     connectionString: env("DATABASE_URL"),
     ssl: process.env.PGSSL === "disable" ? false : { rejectUnauthorized: true },
-    max: 3,
+    max: 10,
     keepAlive: true,                 // serverless Postgres drops idle sockets
     idleTimeoutMillis: 10_000,       // recycle before the server does it for us
     connectionTimeoutMillis: 15_000,

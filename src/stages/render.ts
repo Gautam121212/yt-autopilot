@@ -60,7 +60,7 @@ async function firstFont(): Promise<string | null> {
 /** A short caption burned into the corner of a shot — the alternative to a full-screen text slide. */
 function captionFilter(text: string, size: Size, font: string, dur: number): string {
   const safe = text.toUpperCase().replace(/[':\\%]/g, "");
-  const fs = Math.round(size.w / (safe.length > 14 ? 17 : 12));
+  const fs = Math.max(34, Math.min(Math.round(size.w / 18), Math.round((size.w * 0.8) / (safe.length * 0.62))));
   const x = Math.round(size.w * 0.055);
   const y = Math.round(size.h * 0.74);
   // appears a beat after the cut, leaves before the scene ends
@@ -234,8 +234,10 @@ export async function renderVideo(o: {
 
   if (o.burnCaptions) {
     const burned = path.join(o.dir, `${name}-cc.mp4`);
-    const style = "FontName=DejaVu Sans,Fontsize=13,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000," +
-      "Outline=4,Shadow=1,Alignment=2,MarginV=240,MarginL=60,MarginR=60";
+    // ASS coordinates, not pixels: MarginV is measured in a 288-tall script space, so 240 put the
+    // captions at the TOP of the frame in production. 34 sits them just above YouTube's UI.
+    const style = "FontName=DejaVu Sans,Fontsize=15,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000," +
+      "Outline=4,Shadow=1,Alignment=2,MarginV=34,MarginL=24,MarginR=24";
     const ok = await sh("ffmpeg", ["-y", "-i", final, "-vf", `subtitles=${srt}:force_style='${style}'`,
       "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "copy", "-movflags", "+faststart", burned])
       .then(() => true, (e) => { console.warn(`captions not burned in (${String(e).slice(0, 120)})`); return false; });

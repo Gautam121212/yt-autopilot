@@ -263,3 +263,18 @@ Default slots (chosen to suit a US audience while staying clickable from India):
 | Short | Wed 8:30 pm | Wed 11:00 am |
 | Long | Sat 7:30 pm | Sat 10:00 am |
 | Short | Sun 9:30 pm | Sun 12:00 pm |
+
+## Visual sources (all free)
+
+| Source | Key needed | Photos | Video | Notes |
+|---|---|---|---|---|
+| Pexels | free key | yes | yes | 200 req/hour, 20k/month |
+| Pixabay | free key | yes | yes | ~100 req/60s, no attribution required |
+| Wikimedia Commons | none | yes | – | licence-filtered to commercial-use only |
+| Openverse | none | yes | – | ~700M CC images, aggregated |
+| NASA | none | yes | – | space topics, people/logos filtered out |
+
+Get the Pixabay key at pixabay.com/api/docs (shown inline once signed in), then `npm run setup`.
+
+**There are no text cards.** If a scene's own searches miss, the pipeline tries every source with every
+query variant, then falls back to a prefetched pool of on-topic real footage. A scene never becomes a slide.

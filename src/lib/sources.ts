@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import { fetchOk, hfetch, withRetry } from "./http";
 import { isPlayable } from "./media";
+import { withTimeout } from "./time";
 import { yt } from "./youtube";
 
 const UA = `yt-autopilot/1.0 (https://github.com/${process.env.GITHUB_REPOSITORY ?? "local"})`;
@@ -82,7 +83,7 @@ export async function nasaImage(query: string, used: Set<string>, file: string):
     .map((d) => ({ d, score: relevance(query, d.title ?? "", `${d.description ?? ""} ${(d.keywords ?? []).join(" ")}`) }))
     .sort((a, b) => b.score - a.score);
 
-  for (const { d, score } of candidates.slice(0, 6)) {
+  for (const { d, score } of candidates.slice(0, 4)) {
     if (used.has(d.nasa_id)) continue;
     used.add(d.nasa_id); // reserve synchronously so parallel scenes never pick the same image
     const assets = await getJson<{ collection: { items: { href: string }[] } }>(`https://images-api.nasa.gov/asset/${encodeURIComponent(d.nasa_id)}`);
@@ -98,7 +99,7 @@ export async function nasaImage(query: string, used: Set<string>, file: string):
 }
 
 // ---------- Wikimedia Commons (any topic, licence-filtered) ----------
-export type ImageHit = { source: "nasa" | "commons" | "pexels" | "openverse"; id: string; title: string; score: number; attribution?: string };
+export type ImageHit = { source: "nasa" | "commons" | "pexels" | "openverse" | "pixabay"; id: string; title: string; score: number; attribution?: string };
 
 type CommonsPage = {
   title: string;
@@ -143,7 +144,7 @@ export async function commonsImage(query: string, used: Set<string>, file: strin
       !c.restrictions && !PEOPLE.test(`${c.title} ${c.usage}`) && !MARKS.test(c.title))
     .sort((a, b) => b.score - a.score);
 
-  for (const c of scored.slice(0, 6)) {
+  for (const c of scored.slice(0, 4)) {
     const id = c.p.title;
     if (used.has(id)) continue;
     used.add(id);
@@ -187,7 +188,7 @@ export async function pexelsImage(query: string, used: Set<string>, file: string
     .map((p) => ({ p, score: relevance(query, p.alt ?? "") }))
     .sort((a, b) => b.score - a.score);
 
-  for (const { p, score } of scored.slice(0, 5)) {
+  for (const { p, score } of scored.slice(0, 4)) {
     const id = `pexels:${p.id}`;
     if (used.has(id)) continue;
     used.add(id);
@@ -237,7 +238,7 @@ const OPENVERSE_OK = /^(cc0|pdm|by|by-sa)$/i; // commercial-use licences only
 
 export async function openverseImage(query: string, used: Set<string>, file: string): Promise<ImageHit | null> {
   const api = `https://api.openverse.org/v1/images/?q=${encodeURIComponent(query)}&license=cc0,pdm,by,by-sa` +
-    `&size=large&mature=false&page_size=30`;
+    `&size=large&mature=false&page_size=40`;
   const res = await getJson<{ results?: OpenverseItem[] }>(api).catch(() => null);
   const scored = (res?.results ?? [])
     .filter((r) => OPENVERSE_OK.test(r.license) && !used.has(`ov:${r.id}`))
@@ -245,7 +246,7 @@ export async function openverseImage(query: string, used: Set<string>, file: str
     .map((r) => ({ r, score: relevance(query, r.title ?? "", (r.tags ?? []).map((t) => t.name).join(" ")) }))
     .sort((a, b) => b.score - a.score);
 
-  for (const { r, score } of scored.slice(0, 5)) {
+  for (const { r, score } of scored.slice(0, 4)) {
     const id = `ov:${r.id}`;
     if (used.has(id)) continue;
     used.add(id);
@@ -261,6 +262,61 @@ export async function openverseImage(query: string, used: Set<string>, file: str
         ? `${r.title ?? "Image"} — ${r.creator ?? "unknown"} — CC ${r.license.toUpperCase()} ${r.license_version ?? ""} — ${r.foreign_landing_url ?? r.url}`.replace(/\s+/g, " ")
         : undefined,
     };
+  }
+  return null;
+}
+
+// ---------- Pixabay (free key, images AND videos, no attribution required) ----------
+type PixImage = { id: number; tags?: string; imageWidth: number; largeImageURL?: string; fullHDURL?: string; pageURL?: string };
+type PixVideo = { id: number; tags?: string; duration: number; pageURL?: string; videos?: Record<string, { url: string; width: number; height: number }> };
+
+const pixKey = () => process.env.PIXABAY_API_KEY ?? "";
+
+export async function pixabayImage(query: string, used: Set<string>, file: string): Promise<ImageHit | null> {
+  if (!pixKey()) return null;
+  const r = await getJson<{ hits?: PixImage[] }>(
+    `https://pixabay.com/api/?key=${pixKey()}&q=${encodeURIComponent(query)}&image_type=photo&orientation=horizontal&per_page=40&safesearch=true`,
+  ).catch(() => null);
+  const scored = (r?.hits ?? [])
+    .filter((h) => h.imageWidth >= 1600 && !used.has(`px:${h.id}`) && !LIFESTYLE.test(h.tags ?? ""))
+    .map((h) => ({ h, score: relevance(query, h.tags ?? "") }))
+    .sort((a, b) => b.score - a.score);
+  for (const { h, score } of scored.slice(0, 4)) {
+    const id = `px:${h.id}`;
+    if (used.has(id)) continue;
+    used.add(id);
+    const url = h.fullHDURL ?? h.largeImageURL;
+    const res = url ? await hfetch(url, {}, 45_000).catch(() => null) : null;
+    if (!res?.ok) { used.delete(id); continue; }
+    await fs.writeFile(file, Buffer.from(await res.arrayBuffer()));
+    return { source: "pixabay", id, title: h.tags ?? id, score: +score.toFixed(2) };
+  }
+  return null;
+}
+
+/** Free stock clip from Pixabay. Written to `file` as .mp4. */
+export async function pixabayVideo(query: string, used: Set<string>, file: string): Promise<ImageHit | null> {
+  if (!pixKey()) return null;
+  const r = await getJson<{ hits?: PixVideo[] }>(
+    `https://pixabay.com/api/videos/?key=${pixKey()}&q=${encodeURIComponent(query)}&per_page=30&safesearch=true`,
+  ).catch(() => null);
+  const scored = (r?.hits ?? [])
+    .filter((h) => h.duration >= 4 && h.duration <= 90 && !used.has(`pxv:${h.id}`) && !LIFESTYLE.test(h.tags ?? ""))
+    .map((h) => ({ h, score: relevance(query, h.tags ?? "") }))
+    .sort((a, b) => b.score - a.score);
+  for (const { h, score } of scored.slice(0, 4)) {
+    const id = `pxv:${h.id}`;
+    if (used.has(id)) continue;
+    used.add(id);
+    const v = h.videos ?? {};
+    const pick = [v.large, v.medium, v.small].find((x) => x && x.width >= 1280 && x.width <= 2560) ?? v.medium ?? v.small;
+    const res = pick?.url ? await hfetch(pick.url, {}, 90_000).catch(() => null) : null;
+    if (!res?.ok) { used.delete(id); continue; }
+    const bytes = Buffer.from(await res.arrayBuffer());
+    if (bytes.length < 200_000) { used.delete(id); continue; }
+    await fs.writeFile(file, bytes);
+    if (!(await isPlayable(file, 2))) { used.delete(id); continue; }
+    return { source: "pixabay", id, title: h.tags ?? id, score: +score.toFixed(2) };
   }
   return null;
 }
@@ -300,16 +356,20 @@ export async function findOutliers(queries: string[], lookbackDays: number, minV
   const after = new Date(Date.now() - lookbackDays * 86400e3).toISOString();
   const ids = new Set<string>();
   for (const q of queries) {
-    const r = await api.search.list({ part: ["id"], q, type: ["video"], order: "viewCount", publishedAfter: after, maxResults: 25, relevanceLanguage: "en", videoDuration: "medium" });
-    for (const i of r.data.items ?? []) if (i.id?.videoId) ids.add(i.id.videoId);
+    const r = await withTimeout(
+      api.search.list({ part: ["id"], q, type: ["video"], order: "viewCount", publishedAfter: after, maxResults: 25, relevanceLanguage: "en", videoDuration: "medium" }),
+      40_000, `YouTube search "${q}"`,
+    ).catch((e) => { console.warn(`  demand search failed (${(e as Error).message}) — continuing`); return null; });
+    for (const i of r?.data.items ?? []) if (i.id?.videoId) ids.add(i.id.videoId);
   }
   if (!ids.size) return [];
-  const vids = (await api.videos.list({ part: ["snippet", "statistics"], id: [...ids].slice(0, 50) })).data.items ?? [];
+  const vids = (await withTimeout(api.videos.list({ part: ["snippet", "statistics"], id: [...ids].slice(0, 50) }), 40_000, "YouTube videos.list")
+    .catch(() => null))?.data.items ?? [];
   const chanIds = [...new Set(vids.map((v) => v.snippet?.channelId).filter((x): x is string => !!x))];
   const subs = new Map<string, number>();
   for (let i = 0; i < chanIds.length; i += 50) {
-    const c = await api.channels.list({ part: ["statistics"], id: chanIds.slice(i, i + 50) });
-    for (const ch of c.data.items ?? []) subs.set(ch.id!, Number(ch.statistics?.subscriberCount ?? 0));
+    const c = await withTimeout(api.channels.list({ part: ["statistics"], id: chanIds.slice(i, i + 50) }), 40_000, "YouTube channels.list").catch(() => null);
+    for (const ch of c?.data.items ?? []) subs.set(ch.id!, Number(ch.statistics?.subscriberCount ?? 0));
   }
   return vids
     .map((v) => {

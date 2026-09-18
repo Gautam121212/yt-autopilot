@@ -28,6 +28,7 @@ export async function pickTopic(cfg: ChannelConfig, forcedSubNiche?: string) {
   // Demand signal: recent videos that beat their channel size by a wide margin.
   let outliers: Outlier[] = [];
   try {
+    if (process.env.SKIP_DEMAND_SEARCH === "true") throw new Error("demand search skipped by request");
     outliers = await findOutliers(shuffle(sub.searchQueries).slice(0, cfg.discovery.queriesPerRun), cfg.discovery.lookbackDays, cfg.discovery.minViews);
   } catch (e) {
     await incident("topic.outliers", e); // keep going without demand data rather than fail the run

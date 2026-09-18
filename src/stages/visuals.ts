@@ -4,13 +4,16 @@ import type { ChannelConfig } from "../config";
 import { incident } from "../lib/log";
 import { mapLimit } from "../lib/media";
 import { log } from "../lib/log";
-import { commonsImage, HISTORICAL_HINT, nasaImage, openverseImage, pexelsImage, pexelsVideo, type ImageHit } from "../lib/sources";
-import { makeCard } from "./cards";
+import {
+  commonsImage, HISTORICAL_HINT, nasaImage, openverseImage, pexelsImage, pexelsVideo,
+  pixabayImage, pixabayVideo, type ImageHit,
+} from "../lib/sources";
 
 export type ImageCredit = { source: string; id: string; title: string; attribution?: string };
 
-const MIN_USABLE = 0.25;        // below this, a designed card beats whatever the archive returned
-const SCENE_BUDGET_MS = Number(process.env.SCENE_BUDGET_MS ?? 180_000); // ceiling per scene before a card is used
+const MIN_USABLE = 0.25;
+// Deliberately generous: a thorough search that takes minutes is better than a text slide.
+const SCENE_BUDGET_MS = Number(process.env.SCENE_BUDGET_MS ?? 8 * 60_000);
 
 function withBudget<T>(p: Promise<T>, ms: number, fallback: () => Promise<T>): Promise<T> {
   let timer: NodeJS.Timeout;
@@ -19,11 +22,15 @@ function withBudget<T>(p: Promise<T>, ms: number, fallback: () => Promise<T>): P
 }
 
 const FINDERS: Record<string, (q: string, used: Set<string>, file: string) => Promise<ImageHit | null>> = {
+  pexels: pexelsImage,
+  pixabay: pixabayImage,
   commons: commonsImage,
   openverse: openverseImage,
   nasa: nasaImage,
-  pexels: pexelsImage,
 };
+
+/** Every video source, tried in order, for scenes the writer marked as motion. */
+const CLIP_FINDERS = [pexelsVideo, pixabayVideo];
 
 /** Fetch a different image for one scene, avoiding everything already used in this video. */
 export async function replaceSceneImage(
@@ -66,21 +73,40 @@ export async function sceneImages(
   const sourcesFor = (era?: string) =>
     cfg.imageSources.filter((n) => !(era === "historical" && n === "pexels")).map((n) => FINDERS[n]!).filter(Boolean);
 
+  // Fetch a small pool of on-topic real footage up front. A scene that misses or stalls takes from
+  // this pool, so a slow network produces a real picture rather than a text slide.
+  const poolDir = path.join(dir, "pool");
+  await fs.mkdir(poolDir, { recursive: true });
+  const pool: { file: string; credit: ImageCredit }[] = [];
+  const poolQueries = (fallbacks?.length ? fallbacks : cfg.fallbackImageQueries).slice(0, 6);
+  await mapLimit(poolQueries, 3, async (q, i) => {
+    const f = path.join(poolDir, `p${i}.jpg`);
+    for (const find of cfg.imageSources.map((n) => FINDERS[n]!).filter(Boolean)) {
+      const hit = await find(q, used, f).catch(() => null);
+      if (hit) { pool.push({ file: f, credit: { source: hit.source, id: hit.id, title: hit.title, attribution: hit.attribution } }); return; }
+    }
+  });
+  log(`  footage pool: ${pool.length} spare images ready`);
+  let poolAt = 0;
+  const fromPool = () => (pool.length ? pool[poolAt++ % pool.length]! : null);
+
   const clipsWanted = Math.round(scenes.length * cfg.videoClipRatio);
   let clipsUsed = 0;
-  // Cards are the slide-deck look. Hard ceiling: at most 1 in 6 scenes, and only as a last resort.
-  const cardBudget = Math.max(1, Math.floor(scenes.length / 6));
-  let cardsUsed = 0;
 
   let done = 0;
   const results = await mapLimit(scenes, 6, async (s, i) => {
-    const card = async () => {
-      const out = path.join(dir, `${String(i).padStart(3, "0")}-card.jpg`);
-      await makeCard({ headline: s.cardHeadline || s.imageQuery, sub: s.cardSub, index: i, width: size?.w ?? 1920, height: size?.h ?? 1080, out, label: cfg.channelName.toUpperCase() });
-      await incident("visuals.slow", new Error(`scene ${s.id} took over ${SCENE_BUDGET_MS / 1000}s to find a picture — used a card`), videoId);
-      return { file: out, credit: { source: "card", id: `card-${s.id}`, title: s.cardHeadline || s.imageQuery } };
+    // Timed out: use real footage from the pool. A card only if the pool is somehow empty.
+    const onTimeout = async () => {
+      const spare = fromPool();
+      if (spare) {
+        const out = path.join(dir, `${String(i).padStart(3, "0")}.jpg`);
+        await fs.copyFile(spare.file, out).catch(() => {});
+        log(`  scene ${s.id}: search too slow — used pooled footage`);
+        return { file: out, credit: spare.credit };
+      }
+      throw new Error(`scene ${s.id} found no picture within ${SCENE_BUDGET_MS / 60000} minutes and the pool is empty`);
     };
-    return withBudget(findOne(s, i), SCENE_BUDGET_MS, card).finally(() => {
+    return withBudget(findOne(s, i), SCENE_BUDGET_MS, onTimeout).finally(() => {
       done++;
       if (done === 1 || done % 5 === 0 || done === scenes.length) log(`  images ${done}/${scenes.length}`);
     });
@@ -89,14 +115,16 @@ export async function sceneImages(
 
   async function findOne(s: (typeof scenes)[number], i: number) {
     // The writer marks which lines describe movement; those are the ones worth a real clip.
-    if (process.env.PEXELS_API_KEY && s.motion === "clip" && s.era !== "historical" && clipsUsed < clipsWanted) {
+    if (s.motion === "clip" && s.era !== "historical" && clipsUsed < clipsWanted) {
       clipsUsed++;
       const mp4 = path.join(dir, `${String(i).padStart(3, "0")}.mp4`);
       for (const q of [s.imageQuery, ...(s.altQueries ?? [])]) {
-        const clip = await pexelsVideo(q, used, mp4).catch(() => null);
-        if (clip) return { file: mp4, credit: { source: clip.source, id: clip.id, title: clip.title, attribution: clip.attribution } };
+        for (const findClip of CLIP_FINDERS) {
+          const clip = await findClip(q, used, mp4).catch(() => null);
+          if (clip) return { file: mp4, credit: { source: clip.source, id: clip.id, title: clip.title, attribution: clip.attribution } };
+        }
       }
-      clipsUsed--; // no clip found; fall through to a still
+      clipsUsed--; // no clip found anywhere; fall through to a still
     }
     const file = path.join(dir, `${String(i).padStart(3, "0")}.jpg`);
     const parts = s.imageQuery.split(/\s+/).filter(Boolean);
@@ -121,31 +149,26 @@ export async function sceneImages(
         if (alt && alt.score >= MIN_USABLE) { best = alt; break; }
       }
     }
-    // Out of card budget? Take the best real image we saw, however weak — footage beats a slide.
-    if ((!best || best.score < MIN_USABLE) && cardsUsed >= cardBudget) {
-      for (const q of [s.imageQuery, ...(s.altQueries ?? []), ...fallbackList]) {
+    // No text cards, ever. Exhaust every source and query before giving up on a real picture.
+    if (!best || best.score < MIN_USABLE) {
+      for (const q of [...(s.altQueries ?? []), s.imageQuery, ...fallbackList]) {
         for (const find of sources) {
           const any = await find(q, used, file).catch(() => null);
-          if (any) { best = any; break; }
+          if (any && (!best || any.score > best.score)) best = any;
+          if (best && best.score >= MIN_USABLE) break;
         }
-        if (best) break;
+        if (best && best.score >= MIN_USABLE) break;
       }
     }
-    // Still nothing honest? Render a card from the scene's own words — always relevant, always licence-clean.
-    if (!best || best.score < MIN_USABLE) {
-      cardsUsed++;
-      const card = path.join(dir, `${String(i).padStart(3, "0")}-card.jpg`);
-      await makeCard({
-        headline: s.cardHeadline || s.imageQuery,
-        sub: s.cardSub,
-        index: i,
-        width: size?.w ?? 1920,
-        height: size?.h ?? 1080,
-        out: card,
-        label: cfg.channelName.toUpperCase(),
-      });
-      await incident("visuals.card", new Error(`no archive match for "${s.imageQuery}" — rendered a card instead`), videoId);
-      return { file: card, credit: { source: "card", id: `card-${s.id}`, title: s.cardHeadline || s.imageQuery } };
+    // Still nothing of our own: take from the prefetched pool of real footage.
+    if (!best) {
+      const spare = fromPool();
+      if (spare) {
+        await fs.copyFile(spare.file, file).catch(() => {});
+        log(`  scene ${s.id}: no match found — used pooled footage`);
+        return { file, credit: spare.credit };
+      }
+      throw new Error(`no image found for scene ${s.id} ("${s.imageQuery}") from any source`);
     }
     return { file, credit: { source: best.source, id: best.id, title: best.title, attribution: best.attribution } };
   }

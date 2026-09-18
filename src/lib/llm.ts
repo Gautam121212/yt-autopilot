@@ -254,6 +254,7 @@ export async function askJson<T>(o: {
   let feedback = "";
   let lastErr = "";
   for (let attempt = 1; attempt <= 3; attempt++) {
+    console.log(`    [llm] ${o.tier} call${attempt > 1 ? ` (attempt ${attempt})` : ""}${o.web ? " +web" : ""}${o.images?.length ? " +images" : ""}`);
     let raw: unknown;
     if (PROVIDER === "claude-code") {
       const readDir = o.readDir ?? (o.images?.length ? path.dirname(o.images[0]!) : undefined);

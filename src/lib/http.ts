@@ -29,7 +29,8 @@ export async function withRetry<T>(fn: () => Promise<T>, label: string, tries = 
 }
 
 /** Every network call needs a deadline: a socket that never answers used to stall the whole job. */
-export const NET_TIMEOUT_MS = Number(process.env.NET_TIMEOUT_MS ?? 45_000);
+// Generous: one good slow run beats a fast thin one. A stalled socket is still capped.
+export const NET_TIMEOUT_MS = Number(process.env.NET_TIMEOUT_MS ?? 30_000);
 
 export function hfetch(url: string, init: RequestInit = {}, timeoutMs = NET_TIMEOUT_MS): Promise<Response> {
   return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
