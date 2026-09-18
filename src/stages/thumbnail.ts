@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ChannelConfig } from "../config";
-import { sh } from "../lib/media";
+import { durationSec, sh } from "../lib/media";
 import { commonsImage, nasaImage, openverseImage, pexelsImage } from "../lib/sources";
 
 const FONTS = [
@@ -60,18 +60,66 @@ export function safeThumbnailText(proposed: string, title: string, narration: st
  * lower-left — white first line, accent-yellow payoff line, thick black outline so it survives at
  * phone size. No slide, no centred serif, no subtlety.
  */
+/**
+ * Picks the most striking frame from the finished video.
+ *
+ * ffmpeg's `thumbnail` filter scores frames against their neighbours and returns the most
+ * representative of a batch — the standard way to avoid a transition, a fade or a dull frame.
+ * Sampling from the first 70% of the runtime keeps the kicker unspoiled.
+ */
+export async function bestFrameFrom(videoPath: string, dir: string): Promise<string | null> {
+  const total = await durationSec(videoPath).catch(() => 0);
+  if (total < 5) return null;
+  const candidates: string[] = [];
+  // three windows across the video, one representative frame each
+  for (const [i, at] of [0.12, 0.33, 0.58].entries()) {
+    const out = path.join(dir, `frame-cand-${i}.jpg`);
+    const ok = await sh("ffmpeg", [
+      "-y", "-ss", String(Math.round(total * at)), "-t", "12", "-i", videoPath,
+      "-vf", "thumbnail=90", "-frames:v", "1", "-q:v", "2", out,
+    ]).then(() => true, () => false);
+    if (ok) candidates.push(out);
+  }
+  if (!candidates.length) return null;
+
+  // Prefer the frame with the most going on. `metadata=print:file=-` puts the stats on stdout,
+  // where we can actually read them — printing to stderr is what made this silently pick black frames.
+  let best = { file: candidates[0]!, score: -1 };
+  for (const f of candidates) {
+    const out = await sh("ffmpeg", ["-v", "error", "-i", f, "-vf", "signalstats,metadata=print:file=-", "-f", "null", "-"]).catch(() => "");
+    const yavg = Number(/YAVG=([0-9.]+)/.exec(out)?.[1] ?? 0);
+    const ylow = Number(/YLOW=([0-9.]+)/.exec(out)?.[1] ?? 0);
+    const yhigh = Number(/YHIGH=([0-9.]+)/.exec(out)?.[1] ?? 0);
+    // mid-brightness plus a wide tonal range = a frame with a subject in it, not a flat wall
+    const exposure = 1 - Math.abs(yavg - 125) / 125;
+    const range = (yhigh - ylow) / 255;
+    const score = exposure + range;
+    console.log(`  thumbnail candidate ${path.basename(f)}: brightness ${yavg.toFixed(0)}, range ${(range * 100).toFixed(0)}% -> ${score.toFixed(2)}`);
+    if (score > best.score) best = { file: f, score };
+  }
+  return best.file;
+}
+
 export async function makeThumbnail(
   cfg: ChannelConfig, query: string, text: string, dir: string, used: Set<string>, fallbackImage: string,
+  /** the finished video — the thumbnail is cut from its own best moment when given */
+  videoPath?: string,
 ): Promise<string> {
-  const raw = path.join(dir, "thumb-raw.jpg");
-  const finders = cfg.imageSources.map((n) =>
-    n === "nasa" ? nasaImage : n === "pexels" ? pexelsImage : n === "openverse" ? openverseImage : commonsImage);
-  let got = null;
-  for (const find of finders) {
-    got = await find(query, used, raw).catch(() => null);
-    if (got && got.score >= 0.4) break;
+  // The thumbnail should promise what the video actually shows, so take it from the video itself.
+  let src = videoPath ? await bestFrameFrom(videoPath, dir).catch(() => null) : null;
+  if (src) console.log("  thumbnail: using the video's own best frame");
+
+  if (!src) {
+    const raw = path.join(dir, "thumb-raw.jpg");
+    const finders = cfg.imageSources.map((n) =>
+      n === "nasa" ? nasaImage : n === "pexels" ? pexelsImage : n === "openverse" ? openverseImage : commonsImage);
+    let got = null;
+    for (const find of finders) {
+      got = await find(query, used, raw).catch(() => null);
+      if (got && got.score >= 0.4) break;
+    }
+    src = got ? raw : fallbackImage;
   }
-  const src = got ? raw : fallbackImage;
   const out = path.join(dir, "thumbnail.jpg");
   const single = isVideoFile(src) ? ["-frames:v", "1", "-update", "1"] : [];
 

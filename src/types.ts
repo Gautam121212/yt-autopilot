@@ -12,6 +12,9 @@ export const TopicSchema = z.object({
     funniestDetail: z.string().min(20),
     /** The whole video in one sentence a stranger would repeat at a dinner table. */
     premise: z.string().min(20).max(200),
+    /** 8-12 CONCRETE, FILMABLE things this story can be shown with. Checked against the stock
+     *  libraries before a single script credit is spent: no footage, no video. */
+    visualSubjects: z.array(z.string()).min(8).max(12),
     scores: z.object({
       absurdity: z.number().min(0).max(10).describe("how indefensible/ridiculous the true events are"),
       retellability: z.number().min(0).max(10).describe("would a viewer retell this to someone else today"),

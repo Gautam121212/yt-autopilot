@@ -42,8 +42,15 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
           FORCE_SUB_NICHE: ${{ inputs.sub_niche }}
           FORCE_PRODUCE: ${{ inputs.force }}
-          PRODUCE_DEADLINE_MIN: "110"
-          PHASE_BUDGET_MS: "1200000"
+          PRODUCE_DEADLINE_MIN: "110"    # our own deadline, below the 160-minute step timeout
+          PHASE_BUDGET_MS: "1200000"     # 20 min ceiling on the whole image phase
+          SCENE_BUDGET_MS: "90000"       # 90s per scene, then pooled footage
+          MIN_TOPIC_SCORE: "7.5"         # average across the six topic axes
+          MIN_TOPIC_VISUAL: "0.7"        # share of visual subjects that must exist in stock libraries
+          MIN_FEASIBLE: "0.6"            # share of scenes with a findable picture
+          SHOT_SECS_H: "7"               # target shot length, long video
+          SHOT_SECS_V: "3.5"             # target shot length, Short
+          LLM_TIMEOUT_MS: "120000"
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CLAUDE_MODEL_HEAVY: ${{ secrets.CLAUDE_MODEL_HEAVY }}

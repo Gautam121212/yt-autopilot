@@ -72,6 +72,12 @@ absurdity >= 7, retellability >= 7, curiosity >= 7, evidence >= 7, illustratabil
 You must also supply, for the chosen topic:
 - funniestDetail: the single funniest TRUE thing in it, in one sentence. No funny detail, no topic.
 - premise: the whole video in one sentence a stranger would repeat at a dinner table.
+- visualSubjects: 8-12 CONCRETE, FILMABLE things this story can be shown with, each 2-4 words.
+  These are checked against real stock libraries before anything else is written, so name things a
+  camera has definitely pointed at: "welding sparks", "steam valve", "cargo ship deck", "glass beaker",
+  "mine shaft", "old ledger", "storm clouds", "hands on lever".
+  NOT: "1888 inspection certificate", "Beaumont's patient", "the committee's decision", "public outrage".
+  A topic whose story cannot be shown with generic footage is the wrong topic, however funny it is.
 If all five candidates fail, search again with different queries and score a fresh set.
 
 MINIMUM BARS — a topic that fails any of these must be rejected, even if it is the best of the five:

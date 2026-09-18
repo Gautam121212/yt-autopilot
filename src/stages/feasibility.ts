@@ -24,6 +24,19 @@ const RewriteSchema = z.object({
 const GOOD = 0.5;
 /** Below this, production would be a slideshow of wrong pictures. Rewrite or drop the topic. */
 export const MIN_FEASIBLE = Number(process.env.MIN_FEASIBLE ?? 0.6);
+/** A topic must clear this before any script is written. */
+export const MIN_TOPIC_VISUAL = Number(process.env.MIN_TOPIC_VISUAL ?? 0.7);
+
+/**
+ * Can this STORY be filmed at all? Probes the topic's own visualSubjects against the stock
+ * libraries before a single script credit is spent. Cheap: metadata only, no downloads.
+ */
+export async function probeTopicVisuals(subjects: string[]): Promise<{ score: number; found: string[]; missing: string[] }> {
+  const results = await mapLimit(subjects, 4, async (sub) => ({ sub, hit: (await probeQuery(sub, "any").catch(() => ({ score: 0 }))).score >= 0.4 }));
+  const found = results.filter((r) => r.hit).map((r) => r.sub);
+  const missing = results.filter((r) => !r.hit).map((r) => r.sub);
+  return { score: subjects.length ? found.length / subjects.length : 0, found, missing };
+}
 
 async function scoreScenes(scenes: Scene[]) {
   return mapLimit(scenes, 4, async (s) => {

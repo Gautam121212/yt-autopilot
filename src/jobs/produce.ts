@@ -17,7 +17,7 @@ import { renderVideo, VERTICAL } from "../stages/render";
 import { research } from "../stages/research";
 import { finalReview, unreviewed, type Review } from "../stages/review";
 import { pickSlot } from "../stages/schedule";
-import { ensureIllustratable, MIN_FEASIBLE } from "../stages/feasibility";
+import { ensureIllustratable, MIN_FEASIBLE, MIN_TOPIC_VISUAL, probeTopicVisuals } from "../stages/feasibility";
 import { forecast } from "../stages/forecast";
 import { expandScript, punchUp, repairScript, reviseScript, stripUnsourced, writeScript } from "../stages/script";
 import { makeThumbnail, safeThumbnailText } from "../stages/thumbnail";
@@ -37,6 +37,15 @@ const MAX_REPAIRS = 2; // rebuild-and-recheck rounds after the final check says 
  * and one skipped repair always beats being killed with nothing to show for an hour of work.
  */
 const DEADLINE_MIN = Number(process.env.PRODUCE_DEADLINE_MIN ?? 50);
+/** A topic must average at least this across all six axes to be worth producing. */
+const MIN_TOPIC_SCORE = Number(process.env.MIN_TOPIC_SCORE ?? 7.5);
+
+/** Writes to the GitHub Actions run summary, so the decision is visible without reading logs. */
+async function summary(lines: string[]) {
+  const f = process.env.GITHUB_STEP_SUMMARY;
+  if (!f) return;
+  await fs.appendFile(f, `${lines.join("\n")}\n\n`).catch(() => {});
+}
 const startedAt = Date.now();
 const minutesLeft = () => DEADLINE_MIN - (Date.now() - startedAt) / 60_000;
 
@@ -138,6 +147,46 @@ async function main() {
       return withTimeout(pickTopic(cfg, process.env.FORCE_SUB_NICHE || undefined), 8 * 60_000, "topic selection (retry)");
     });
     const { sub, structure, topic, outliers } = picked;
+    const c = topic.chosen;
+    const sc = c.scores;
+    const avg = (sc.absurdity + sc.retellability + sc.curiosity + sc.evidence + sc.illustratability + sc.freshness) / 6;
+
+    // Everything about this decision, visible in the run log and the workflow summary.
+    const scoreLines = [
+      `**${c.workingTitle}**`,
+      "",
+      `premise: ${c.premise}`,
+      `funniest true detail: ${c.funniestDetail}`,
+      "",
+      "| axis | score | bar |",
+      "|---|---|---|",
+      `| absurdity | ${sc.absurdity} | 7 |`,
+      `| retellability | ${sc.retellability} | 7 |`,
+      `| curiosity | ${sc.curiosity} | 7 |`,
+      `| evidence | ${sc.evidence} | 7 |`,
+      `| illustratability | ${sc.illustratability} | 7 |`,
+      `| freshness | ${sc.freshness} | 6 |`,
+      `| **average** | **${avg.toFixed(1)}** | **${MIN_TOPIC_SCORE}** |`,
+    ];
+    log(`topic scores — absurdity ${sc.absurdity}, retell ${sc.retellability}, curiosity ${sc.curiosity}, evidence ${sc.evidence}, illustratability ${sc.illustratability}, freshness ${sc.freshness} → avg ${avg.toFixed(1)} (bar ${MIN_TOPIC_SCORE})`);
+
+    if (avg < MIN_TOPIC_SCORE) {
+      // Nothing has been written yet, so nothing is wasted and no row is created.
+      await summary([...scoreLines, "", `❌ dropped: average ${avg.toFixed(1)} is below the ${MIN_TOPIC_SCORE} bar.`]);
+      return log(`dropped "${c.workingTitle}" before research: average ${avg.toFixed(1)} < ${MIN_TOPIC_SCORE}. Next run picks a new topic.`);
+    }
+
+    // Can this story be filmed at all? Metadata-only probe, before any script credits.
+    log(`checking whether the story can be filmed (${c.visualSubjects.length} subjects)`);
+    const vis = await probeTopicVisuals(c.visualSubjects);
+    log(`filmable: ${Math.round(vis.score * 100)}% — missing: ${vis.missing.join(", ") || "none"}`);
+    if (vis.score < MIN_TOPIC_VISUAL) {
+      await summary([...scoreLines, "",
+        `❌ dropped: only ${Math.round(vis.score * 100)}% of its visual subjects exist in the stock libraries (bar ${Math.round(MIN_TOPIC_VISUAL * 100)}%).`,
+        `missing: ${vis.missing.join(", ")}`]);
+      return log(`dropped "${c.workingTitle}" before research: only ${Math.round(vis.score * 100)}% filmable. Next run picks a new topic.`);
+    }
+    await summary([...scoreLines, "", `✅ proceeding — ${Math.round(vis.score * 100)}% of its visual subjects exist in the stock libraries.`]);
     [v] = await q<VideoRow>(
       "insert into videos (status, sub_niche, structure, topic) values ('planned', $1, $2, $3) returning *",
       [sub.id, structure.id, JSON.stringify({ ...topic, outliers })],
@@ -159,9 +208,10 @@ async function main() {
     if (stage === "researched") {
       log(`#${video.id} writing the script`);
       video.script = await writeScript({ cfg, playbook, structure, topic: video.topic, dossier: video.dossier!, recent: await recentForVariety() });
-      // Length first: cheaper to lengthen a good script than to reject and rewrite it.
+      // One safety net only. The topic already cleared the score and filmability gates, so a short
+      // script means the writer under-wrote, not that the topic is wrong.
       let draft: Script = video.script;
-      for (let round = 1; round <= 2; round++) {
+      for (let round = 1; round <= 1; round++) {
         const words = scriptWords(draft);
         if (words >= MIN_WORDS) break;
         log(`#${video.id} script is ${words} words — expanding (round ${round})`);
@@ -227,7 +277,8 @@ async function main() {
       );
       const hist = history.map((h) => ({ predicted: Number(h.predicted), actual: Number(h.actual) }));
       // Check the archive before predicting: image availability dominates the final score.
-      const feas = await ensureIllustratable({ cfg, script, rounds: 3 });
+      // Queries derive from the topic's vetted visual subjects, so one corrective round is enough.
+      const feas = await ensureIllustratable({ cfg, script, rounds: 1 });
       script = feas.script;
       await updateVideo(video.id, { script });
       if (feas.feasible < MIN_FEASIBLE) {
@@ -331,7 +382,7 @@ async function main() {
         script.thumbnailText = thumbText;
       }
       const stillFallback = firstStill(long.files);
-      let thumbPath = await makeThumbnail(cfg, script.thumbnailQuery, thumbText, dir, used, stillFallback)
+      let thumbPath = await makeThumbnail(cfg, script.thumbnailQuery, thumbText, dir, used, stillFallback, videoPath)
         .catch(async (e) => { await incident("thumbnail", e, video.id); return stillFallback; });
       const allCredits = [...long.credits];
       let description = buildDescription(script, script.scenes, timings, video.dossier!, allCredits);
@@ -396,7 +447,7 @@ async function main() {
         rendered = await renderVideo({ scenes: script.scenes, images: long.files, audio, dir, seed: video.id + repairs, name: `final-r${repairs}`, captions: captionsFor(script.scenes) });
         const newThumb = await makeThumbnail(cfg, script.thumbnailQuery,
           safeThumbnailText(script.thumbnailText, script.title, script.scenes.map((sc) => sc.narration).join(" ")),
-          dir, used, stillFallback).catch(() => thumbPath);
+          dir, used, stillFallback, rendered.videoPath).catch(() => thumbPath);
         description = buildDescription(script, script.scenes, rendered.timings, video.dossier!, allCredits);
         review = await finalReview({ dir, script, verification: video.verification!, description, videoPath: rendered.videoPath, shortPath: shortOut?.videoPath, credits: long.credits })
           .catch(async (e) => { await incident("final-check.unavailable", e, video.id); return unreviewed((e as Error).message.slice(0, 160)); });

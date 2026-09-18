@@ -48,6 +48,9 @@ const THIRD_PARTY = /©|copyright|courtesy of/i;
 const STOP = new Set(["the", "a", "an", "of", "in", "on", "and", "view", "picture", "image", "photo", "shot", "scene", "surface"]);
 const words = (q: string) => q.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !STOP.has(w));
 
+/** Appended to historical queries so archives return period material, not modern photos. */
+export const HISTORICAL_HINT = "engraving lithograph archive photograph";
+
 const GENERIC_CAPS = new Set(["Port", "River", "Lake", "Mount", "Bay", "North", "South", "East", "West", "New", "Great", "Old", "The"]);
 /** Capitalised words that are not generic geography words: a place or proper name that MUST be present. */
 const mustHave = (q: string) =>
@@ -330,29 +333,31 @@ export async function pixabayVideo(query: string, used: Set<string>, file: strin
 export async function probeQuery(query: string, era: "historical" | "modern" | "any" = "any"): Promise<{ score: number; best: string }> {
   if (!words(query).length) return { score: 0, best: "" };
 
-  // Stock libraries carry the bulk of usable footage, so ask them first.
+  // For stock libraries, THE PRESENCE OF RESULTS IS THE SIGNAL. Their own search engine already did
+  // the relevance work, and their captions are synonyms of the query at best ("steam rising" comes
+  // back as "white smoke from a pipe") or empty at worst — scoring the caption reports 0% for
+  // footage that is actually perfect. Count usable results instead.
   if (era !== "historical") {
     if (pexelsKey()) {
-      const r = await hfetch(`https://api.pexels.com/v1/search?per_page=10&query=${encodeURIComponent(query)}`,
-        { headers: { Authorization: pexelsKey() } }).then((x) => x.json() as Promise<{ photos?: { alt?: string }[] }>).catch(() => null);
-      let best = { score: 0, best: "" };
-      for (const p of r?.photos ?? []) {
-        const sc = relevance(query, p.alt ?? "");
-        if (sc > best.score) best = { score: +sc.toFixed(2), best: p.alt ?? "" };
+      const r = await hfetch(`https://api.pexels.com/v1/search?per_page=15&orientation=landscape&query=${encodeURIComponent(query)}`,
+        { headers: { Authorization: pexelsKey() } })
+        .then((x) => x.json() as Promise<{ photos?: { width: number; alt?: string }[] }>).catch(() => null);
+      const usable = (r?.photos ?? []).filter((p) => p.width >= 1600);
+      if (usable.length) {
+        return { score: Math.min(1, usable.length / 5), best: `pexels: ${usable.length} results (${usable[0]!.alt?.slice(0, 40) ?? "no caption"})` };
       }
-      if (best.score >= 0.5) return best;
     }
     if (pixKey()) {
-      const r = await hfetch(`https://pixabay.com/api/?key=${pixKey()}&q=${encodeURIComponent(query)}&per_page=10&safesearch=true`)
-        .then((x) => x.json() as Promise<{ hits?: { tags?: string }[] }>).catch(() => null);
-      let best = { score: 0, best: "" };
-      for (const h of r?.hits ?? []) {
-        const sc = relevance(query, h.tags ?? "");
-        if (sc > best.score) best = { score: +sc.toFixed(2), best: h.tags ?? "" };
+      const r = await hfetch(`https://pixabay.com/api/?key=${pixKey()}&q=${encodeURIComponent(query)}&per_page=15&image_type=photo&safesearch=true`)
+        .then((x) => x.json() as Promise<{ hits?: { imageWidth: number; tags?: string }[] }>).catch(() => null);
+      const usable = (r?.hits ?? []).filter((h) => h.imageWidth >= 1600);
+      if (usable.length) {
+        return { score: Math.min(1, usable.length / 5), best: `pixabay: ${usable.length} results (${usable[0]!.tags?.slice(0, 40) ?? ""})` };
       }
-      if (best.score >= 0.5) return best;
     }
   }
+
+  // Archives are different: their titles are descriptive, so word overlap is meaningful there.
   const q = era === "historical" ? `${query} ${HISTORICAL_HINT}` : query;
   const api = `https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=search` +
     `&gsrsearch=${encodeURIComponent(`filetype:bitmap ${q}`)}&gsrnamespace=6&gsrlimit=12&prop=imageinfo&iiprop=size|mime|extmetadata`;
@@ -365,8 +370,6 @@ export async function probeQuery(query: string, era: "historical" | "modern" | "
   }
   return best;
 }
-
-export const HISTORICAL_HINT = "19th century engraving lithograph vintage photograph";
 
 // ---------- YouTube demand signals ----------
 export type Outlier = { title: string; channel: string; views: number; subs: number; ratio: number; ageDays: number };
