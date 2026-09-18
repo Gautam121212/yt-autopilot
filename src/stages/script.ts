@@ -41,7 +41,14 @@ HARD RULES
    dossier.details or dossier.keyFacts. Do not add an eyewitness, a time of day, a piece of equipment, a weather
    condition or a small dramatic beat that is not in the dossier — a script that does this gets thrown away
    however good it reads. If the dossier lacks colour for a scene, write the scene drier rather than inventing it.
-7. imageQuery: 2-5 words naming a CONCRETE, FILMABLE thing — an object, place, animal, machine, building, document.
+7. imageQuery — THE HARD RULE OF THIS CHANNEL.
+   You are given a list of APPROVED VISUAL SUBJECTS that have already been checked against the real stock
+   libraries. Every scene's imageQuery MUST be one of them, word for word. altQueries must also come from
+   that list (different entries). You may reuse a subject across scenes.
+   Inventing your own search — however sensible it reads — is what makes videos fail: the picture does not
+   exist and the scene ends up showing something unrelated. If no approved subject fits a scene, rewrite the
+   scene so an approved subject does fit.
+   For reference, the old rule (now superseded by the list): 2-5 words naming a CONCRETE, FILMABLE thing — an object, place, animal, machine, building, document.
    Prefer things stock footage libraries actually hold: hands doing something, liquid pouring, machinery turning,
    weather, crowds of animals, laboratory glassware, city streets, food, tools, water, fire, sky.
    NEVER: magnified textures, "group photo", people posing, brand-name products, abstractions.
@@ -83,6 +90,9 @@ Angle: ${o.topic.chosen.angle}
 
 Recent uploads - do NOT reuse their title template, opening-line pattern or hook device:
 ${o.recent.map((r) => `- "${r.title}" | opened with: "${r.hook.slice(0, 160)}"`).join("\n") || "- (none yet)"}
+
+APPROVED VISUAL SUBJECTS — every imageQuery and altQuery must be taken from this list, verbatim:
+${(o.topic.chosen.visualSubjects ?? []).map((v) => `- ${v}`).join("\n")}
 
 DOSSIER:
 ${JSON.stringify(o.dossier)}

@@ -220,8 +220,52 @@ async function main() {
     if (stage === "researched") {
       log(`#${video.id} writing the script`);
       video.script = await writeScript({ cfg, playbook, structure, topic: video.topic, dossier: video.dossier!, recent: await recentForVariety() });
-      // One safety net only. The topic already cleared the score and filmability gates, so a short
-      // script means the writer under-wrote, not that the topic is wrong.
+      // ── CHEAP GATES FIRST ──────────────────────────────────────────────────────────────
+      // Everything below here is a heavy call, so anything that can abandon the video must run
+      // BEFORE them. Costing six heavy calls to then fail an 8% feasibility check is the exact
+      // waste this ordering exists to prevent.
+
+      // 1. Snap every image search onto the vetted subjects (free, no model call).
+      const approved = video.topic.chosen.visualSubjects ?? [];
+      if (approved.length) {
+        const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+        const pool = approved.map((a) => ({ raw: a, n: norm(a) }));
+        const nearest = (q: string) => {
+          const qn = norm(q);
+          const exact = pool.find((p) => p.n === qn);
+          if (exact) return exact.raw;
+          const overlap = pool
+            .map((p) => ({ p, hits: p.n.split(" ").filter((w) => w.length > 3 && qn.includes(w)).length }))
+            .sort((a, b) => b.hits - a.hits)[0];
+          return overlap && overlap.hits > 0 ? overlap.p.raw : null;
+        };
+        let snapped = 0;
+        for (const sc of video.script.scenes) {
+          const fixed = nearest(sc.imageQuery);
+          if (fixed && fixed !== sc.imageQuery) { sc.imageQuery = fixed; snapped++; }
+          sc.altQueries = (sc.altQueries ?? []).map((q) => nearest(q) ?? q);
+        }
+        const offList = video.script.scenes.filter((sc) => !pool.some((p) => p.n === norm(sc.imageQuery)));
+        log(`#${video.id} image searches: ${video.script.scenes.length - offList.length}/${video.script.scenes.length} on the approved list (snapped ${snapped})`);
+        // Anything still off-list gets an approved subject assigned round-robin: the list was
+        // already proven to exist, so this can only improve feasibility.
+        for (const [k, sc] of offList.entries()) {
+          sc.imageQuery = approved[k % approved.length]!;
+          sc.altQueries = [approved[(k + 1) % approved.length]!, approved[(k + 2) % approved.length]!];
+        }
+      }
+
+      // 2. Feasibility — a LIGHT call, and now the last gate before any heavy work.
+      const early = await ensureIllustratable({ cfg, script: video.script, rounds: 1 });
+      video.script = early.script;
+      log(`#${video.id} image feasibility: ${Math.round(early.feasible * 100)}% (bar ${Math.round(MIN_FEASIBLE * 100)}%)`);
+      if (early.feasible < MIN_FEASIBLE) {
+        await updateVideo(video.id, { status: "abandoned" });
+        await incident("feasibility.abandoned", new Error(`${Math.round(early.feasible * 100)}% findable before any heavy pass`), video.id);
+        return log(`#${video.id} abandoned after ${Math.round(early.feasible * 100)}% feasibility — no heavy calls spent. Next run starts a new topic.`);
+      }
+
+      // ── HEAVY PASSES, only now that the video is worth them ────────────────────────────
       let draft: Script = video.script;
       for (let round = 1; round <= 2; round++) {
         const words = scriptWords(draft);
@@ -236,8 +280,6 @@ async function main() {
       const finalWords = scriptWords(draft);
       log(`#${video.id} narration: ${finalWords} words (~${Math.round(finalWords / cfg.wordsPerMinute)} min)`);
       if (finalWords < MIN_WORDS) {
-        // Producing a 3-minute video against an 8-10 minute target wastes the render, the upload
-        // and your attention. Drop it here and start a new topic next run.
         await updateVideo(video.id, { status: "abandoned" });
         await incident("script.too-short", new Error(`${finalWords} words after 2 expand rounds (need ${MIN_WORDS})`), video.id);
         return log(`#${video.id} abandoned: only ${finalWords} words after expanding twice. Next run starts a new topic.`);
@@ -297,16 +339,9 @@ async function main() {
       );
       const hist = history.map((h) => ({ predicted: Number(h.predicted), actual: Number(h.actual) }));
       // Check the archive before predicting: image availability dominates the final score.
-      // Queries derive from the topic's vetted visual subjects, so one corrective round is enough.
-      const feas = await ensureIllustratable({ cfg, script, rounds: 1 });
+      // Feasibility already passed before the heavy passes; re-measure only to inform the forecast.
+      const feas = await ensureIllustratable({ cfg, script, rounds: 0 });
       script = feas.script;
-      await updateVideo(video.id, { script });
-      if (feas.feasible < MIN_FEASIBLE) {
-        // Producing this would mean a slideshow of wrong pictures and hours of futile searching.
-        await updateVideo(video.id, { status: "abandoned" });
-        await incident("feasibility.abandoned", new Error(`only ${Math.round(feas.feasible * 100)}% of scenes have a findable picture (need ${Math.round(MIN_FEASIBLE * 100)}%)`), video.id);
-        return log(`#${video.id} abandoned: ${Math.round(feas.feasible * 100)}% image feasibility after 3 rewrite rounds. Next run starts a new topic.`);
-      }
       let fc = await forecast({ cfg, script, dossier: video.dossier!, history: hist, feasible: feas.feasible });
       log(`#${video.id} forecast: likely ${fc.likely}/10, ceiling ${fc.ceiling}/10 — ${fc.verdict} (weakest: ${fc.weakest.slice(0, 70)})`);
 
