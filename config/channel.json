@@ -172,9 +172,9 @@
   ],
   "voice": {
     "provider": "kokoro",
-    "voiceId": "af_heart",
-    "model": "onnx-community/Kokoro-82M-v1.0-ONNX",
-    "speed": 0.95
+    "voiceId": "af_bella",
+    "speed": 1.05,
+    "model": "onnx-community/Kokoro-82M-v1.0-ONNX"
   },
   "fallbackImageQueries": [
     "welding sparks",
