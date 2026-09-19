@@ -55,6 +55,16 @@ return, which is how several of these appeared twice.
 | 27 | Expand hit MAX_TOKENS | thinking budget took a share of the 8192 output cap on the longest-output call | `thinkingBudget: 0` for writing passes |
 | 28 | Manual run ignored the day's target | `FORCE` bypassed the daily quota as well as the failure cap | daily quota is unconditional; `FORCE` only lifts the failure cap |
 
+| 29 | `.env` role settings ignored in CI | `github.sh` pushes them as SECRETS; the workflow read only `vars` | workflow reads `secrets.X \|\| vars.X \|\| default`; guard compares the two files |
+| 31 | Prober declared a working Mistral key dead | it fired ~1.7 req/s against a 1.00 req/s limit and treated 429 as "unavailable" | paced to 2.5s, retries a 429 twice with backoff before condemning a model |
+| 32 | `-latest` aliases 403 while dated ids work | an alias can resolve to a model the key is not entitled to | defaults are dated ids taken from the account's limits page |
+| 33 | A run could rate-limit itself mid-production | no pacing between calls to the same endpoint | `paceFor()` enforces a minimum gap per endpoint |
+| 35 | Prober tested only models this plan cannot call | it ranked by name ("medium" > "ministral"), so it never reached the working models and stopped after 10 | ranks by the throughput the limits page grants; probes every listed model |
+| 36 | `source .env` reported a valid key as 401 | one odd line (`LLM_FALLBACKS` contains `\|` and spaces) makes `source` stop, leaving later vars unset | diagnose with `npx tsx --env-file-if-exists=.env`, never `source` |
+| 34 | Routed calls ignored the shrinking retry budget | the routed path used a fixed `maxTokens`, so an overflow repeated the same oversized ask | routed and fallback calls use `Math.min(budget, …)` |
+| — | *(nearly #35)* A second Gemini pacer | `grep paceFor` missed the existing `lastGemini` timer, which uses a different mechanism | guard asserts exactly one pacer per provider; read the function, not the search result |
+| 30 | Mistral 429 on every model | free tier needs phone verification before it serves anything; prober also fired 10 requests in 6s | prober paced to ~1 req/1.8s and explains a universal 429 |
+
 ## Adding a bug
 
 1. Add a row: what broke, what caused it, which guard catches it.

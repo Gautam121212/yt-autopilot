@@ -513,3 +513,52 @@ A 403 in the logs now says so explicitly rather than showing a truncated error b
 Once today's video exists, `produce` stops — whether it was triggered by cron or by you. `FORCE`
 lifts the weekly *failure* cap only. To make more than one a day, raise `videosPerDay` in
 `config/channel.json`.
+
+## Mistral rate limits
+
+Check yours at **admin.mistral.ai → Limits**. Most models are capped at **1.00 requests/second**,
+which is the single most important number here: a burst of calls rate-limits you out of your own
+quota. The pipeline now paces every call to an endpoint (`PROVIDER_MIN_GAP_MS`, default 1100ms).
+
+Tokens per minute vary enormously and are worth choosing on:
+
+| Model | Tokens/min | Req/s | Good for |
+|---|---|---|---|
+| `mistral-large-2512` | 250,000 | 1.00 | script writing (default heavy) |
+| `ministral-8b-2512` | 625,000 | 3.13 | gate calls (default light) |
+| `ministral-3b-2512` | 1,300,000 | 12.50 | high-volume checks |
+| `mistral-medium-latest` | 20,000 | 1.00 | too small for a full script |
+| `mistral-small-2603` | 20,000 | 1.00 | too small for a full script |
+
+Use **dated ids**, not `-latest` aliases: an alias can resolve to a model your key is not entitled
+to, which returns 403 while the dated id works.
+
+`npm run models:mistral` probes at 2.5s intervals and retries a 429 twice before condemning a model
+— it previously declared a working key dead by outrunning the limiter itself.
+
+## If `source .env` shows a 401
+
+Don't diagnose keys with `source .env`. One line it dislikes — `LLM_FALLBACKS` contains `|` and
+spaces — makes it stop silently, leaving every later variable unset. The shell then sends an empty
+bearer token and Mistral answers "Invalid API Key" for a key that works perfectly.
+
+Test the way the app loads it:
+
+```bash
+npx tsx --env-file-if-exists=.env -e 'console.log(process.env.MISTRAL_API_KEY?.length)'
+```
+
+## Which Mistral models a free key is actually served
+
+Not the impressive-sounding ones. On a free plan the `mistral-medium` family returns `1300
+rate_limited` no matter how slowly you ask, while the **ministral** family works:
+
+| Model | Tokens/min | Req/s |
+|---|---|---|
+| `ministral-3b-2512` | 1,300,000 | 12.50 |
+| `ministral-8b-2512` | 625,000 | 3.13 |
+| `ministral-14b-2512` | 937,500 | 0.50 |
+| `mistral-medium-*` | 20,000 | 1.00 (returns 1300 on free plans) |
+
+Defaults are `ministral-14b-2512` (heavy) and `ministral-3b-2512` (light). `npm run models:mistral`
+probes in throughput order and reports which ones your key is served.

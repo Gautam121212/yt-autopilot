@@ -44,9 +44,14 @@ const NAMED: Record<string, { baseUrl: string; key: string; heavy: string; light
   mistral: {
     baseUrl: process.env.MISTRAL_BASE_URL || "https://api.mistral.ai/v1",
     key: process.env.MISTRAL_API_KEY || "",
-    // Free keys are NOT entitled to mistral-large — that returns 403. These are the free models.
-    heavy: process.env.MISTRAL_MODEL_HEAVY || "mistral-small-latest",
-    light: process.env.MISTRAL_MODEL_LIGHT || "open-mistral-nemo",
+    // Dated ids, not "-latest" aliases: an alias can point at a model the key is not entitled to,
+    // which is what produced 403s. Defaults chosen from the account's own limits page —
+    // mistral-large-2512 at 250k tokens/min for writing, ministral-8b at 625k/min and 3.13 rps
+    // for the many small gate calls.
+    // The ministral family is what free keys are actually served: 937k/625k/1.3M tokens per minute
+    // against 20k for the mistral-medium family, which returns 1300 (rate limited) on a free plan.
+    heavy: process.env.MISTRAL_MODEL_HEAVY || "ministral-14b-2512",
+    light: process.env.MISTRAL_MODEL_LIGHT || "ministral-3b-2512",
   },
   groq: {
     baseUrl: process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
@@ -209,11 +214,24 @@ async function anthropic(model: string, system: string, prompt: string, maxToken
 }
 
 // ---------------- openai-compatible (Groq, OpenRouter, Cerebras, Mistral, DeepSeek, ...) ----------------
+/**
+ * Per-endpoint pacing. Mistral's limits page caps most models at 1.00 requests/second; exceeding it
+ * returns 429, and a run that fires several calls in a burst limits itself out of its own quota.
+ */
+const lastCallAt = new Map<string, number>();
+async function paceFor(endpoint: string, minGapMs = Number(process.env.PROVIDER_MIN_GAP_MS ?? 1100)) {
+  const prev = lastCallAt.get(endpoint) ?? 0;
+  const wait = prev + minGapMs - Date.now();
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  lastCallAt.set(endpoint, Date.now());
+}
+
 async function openaiCompatible(
   model: string, system: string, prompt: string, maxTokens: number, images?: string[],
   timeoutMs = LLM_TIMEOUT_HEAVY, baseUrl?: string, apiKey?: string,
 ): Promise<string> {
   const base = (baseUrl ?? process.env.OPENAI_COMPAT_BASE_URL ?? "").replace(/\/$/, "");
+  await paceFor(base);
   // Some free tiers cap output tokens per minute (Groq's is 1000), and reject the request outright
   // if max_tokens is larger than that — so keep the ask small and configurable.
   const cap = Number(process.env.OPENAI_COMPAT_MAX_TOKENS ?? 4096);
@@ -370,7 +388,7 @@ export async function askJson<T>(o: {
         const m = o.tier === "heavy" ? named.heavy : named.light;
         console.log(`    [llm] ${o.role} -> ${routed} (${m})`);
         try {
-          const out = await openaiCompatible(m, o.system, body, o.maxTokens ?? 16000,
+          const out = await openaiCompatible(m, o.system, body, Math.min(budget, o.maxTokens ?? 16000),
             o.images, timeoutFor(o.tier), named.baseUrl, named.key);
           try { raw = extractJson(out); } catch (e) { raw = undefined; lastErr = (e as Error).message; }
           if (raw !== undefined) {
@@ -415,7 +433,7 @@ export async function askJson<T>(o: {
               const model = o.tier === "heavy" ? fb.heavy : fb.light;
               try {
                 console.warn(`    [llm] Gemini unavailable — trying ${fb.name} (${model})`);
-                return await openaiCompatible(model, o.system, body, o.maxTokens ?? 16000,
+                return await openaiCompatible(model, o.system, body, Math.min(budget, o.maxTokens ?? 16000),
                   seesImages ? o.images : undefined, timeoutFor(o.tier), fb.baseUrl, fb.apiKey);
               } catch (err) {
                 last = err;

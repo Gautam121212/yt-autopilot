@@ -116,7 +116,22 @@ for (const [file, role] of Object.entries(stageRole)) {
 }
 ok(llm.includes("ROLE_PROVIDER") && llm.includes("NAMED"), "#22 role routing is wired in the client");
 ok(!llm.includes('"mistral-large-latest"'), "#25 no paid Mistral model as a free-tier default");
+// #29 anything github.sh pushes as a secret must be READ as a secret by the workflow.
+const ghsh = src("scripts/github.sh");
+const pushesEnvSecrets = /LLM_ROLE|MISTRAL/.test(ghsh) || ghsh.includes("while read");
+for (const key of ["LLM_ROLE_GATE", "LLM_ROLE_WRITE", "LLM_ROLE_JUDGE", "MISTRAL_MODEL_HEAVY"]) {
+  const line = workflow.split("\n").find((l) => l.trim().startsWith(`${key}:`)) ?? "";
+  ok(!pushesEnvSecrets || line.includes("secrets."), `#29 workflow reads ${key} from secrets, not just vars`);
+}
 ok(llm.includes('o.role === "write" ? 0'), "#27 writing passes disable thinking so the output fits");
+ok(llm.includes("paceFor("), "#33 calls to a provider are paced against its rate limit");
+// Exactly one pacing mechanism per provider — two would double every gap and halve throughput.
+ok(count(llm, "lastGemini = Date.now()") === 1 && count(llm, "lastCallAt.set") === 1,
+  "#35 one pacer per provider, not two");
+ok(count(llm, "Math.min(budget, o.maxTokens") === 2,
+  "#34 routed and fallback calls honour the shrinking budget");
+ok(!llm.includes('"mistral-large-latest"') && llm.includes("mistral-large-2512"),
+  "#32 Mistral defaults are dated ids, not aliases");
 ok(!produce.includes('todaysWins >= cfg.videosPerDay && !isDryRun() && process.env.FORCE_PRODUCE'),
   "#28 the daily target is not bypassed by FORCE");
 const scriptTxt = src("src/stages/script.ts");
