@@ -415,3 +415,80 @@ npm run verify     # audit (30 gate checks) + selftest (20 schema/invariant chec
 
 The self-test parses realistic model answers against every schema and asserts the invariants that
 past fixes have broken — including that the token fix did not trade away research quality.
+
+## Fallback chain (so a quota wall never stops the pipeline)
+
+Gemini first, then every provider you list, in order. Each has its own free tier, so one being
+exhausted says nothing about the next.
+
+```bash
+# .env — name|baseUrl|apiKey|heavyModel|lightModel, separated by ";"
+LLM_FALLBACKS="mistral|https://api.mistral.ai/v1|KEY|mistral-large-latest|mistral-small-latest; groq|https://api.groq.com/openai/v1|KEY|llama-3.3-70b-versatile|llama-3.1-8b-instant"
+```
+
+Free tiers with no card, measured September 2026:
+
+| Provider | Free limit | Endpoint |
+|---|---|---|
+| Mistral La Plateforme | ~1B tokens/month (Experiment tier; opt in to training) | `https://api.mistral.ai/v1` |
+| Groq | 30 RPM · 1,000 req/day · 100k tokens/day | `https://api.groq.com/openai/v1` |
+| Cerebras | 30 RPM · 14,400 req/day · 1M tokens/day | `https://api.cerebras.ai/v1` |
+| OpenRouter `:free` | 20 RPM · 50 req/day without a $10 top-up | `https://openrouter.ai/api/v1` |
+
+**Mistral is the strongest single addition** — roughly a billion tokens a month is far beyond what
+this pipeline uses, and its models write well enough to carry a script. Groq is fast but its per-day
+token cap is small; treat it as a third link, not a second.
+
+The existing `OPENAI_COMPAT_*` variables still work and are tried first.
+
+## Bug registry
+
+`BUGS.md` lists every defect found here, its cause, and the guard that prevents its return. Writing
+the guard is part of fixing the bug. `npm run verify` runs all of them in about two seconds — it has
+already caught a fix being silently reverted by a later edit.
+
+## Who does what (role routing)
+
+One provider doing everything is what made a quota wall stop the pipeline. The work is now split by
+what each model is good at and what its free tier can carry:
+
+| Role | Stages | Default | Why |
+|---|---|---|---|
+| `gate` | topic scoring, filmability, feasibility, per-scene checks | **Mistral** | many small calls; needs volume, not brilliance |
+| `write` | research, script, expand, comedy pass | **Mistral** | the bulk tokens, ~1B/month free |
+| `judge` | fact check, forecast, repairs, final review | **Gemini** | the only free provider here that can SEE images |
+
+```bash
+# .env
+MISTRAL_API_KEY=...            # mistral.ai → La Plateforme, no card
+LLM_ROLE_GATE=mistral
+LLM_ROLE_WRITE=mistral
+LLM_ROLE_JUDGE=gemini
+```
+
+Leave a role unset and it uses `LLM_PROVIDER` as before. A routed provider that fails falls through
+to the default rather than failing the stage, and the `LLM_FALLBACKS` chain still sits underneath.
+
+This is also why quality holds: Gemini's scarce quota is spent entirely on judging and repairing,
+which is where a good model matters most, while the volume writing runs on a tier that cannot run out.
+
+## The three bars
+
+| Bar | Where | Effect |
+|---|---|---|
+| 7.5 | script forecast, **before rendering** | repaired twice, then abandoned — no pixels wasted on a 6/10 script |
+| 7.5 | every scene's picture | retried with new queries; >25% failures abandons the video |
+| 6.5 | final check | below this nothing is uploaded; notes go to the learning loop |
+
+A rendered video scores at best about what its script forecast, so the 7.5 script bar is what makes
+an 8/10 video likely rather than hoped for.
+
+## Music
+
+```bash
+npm run music:make
+```
+
+Synthesises three documentary beds with ffmpeg — generated tones, so no licence and no attribution.
+Measured: energy sits 35 dB below the speech band, so it never competes with narration. Replace them
+with YouTube Audio Library tracks any time; anything in `assets/music/` is used automatically.

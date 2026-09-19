@@ -85,6 +85,7 @@ export async function imageQa(o: {
       await sheet(batch, img);
       const qa = await askJson({
         tier: "heavy",
+        role: "judge",
         images: [img],
         schema: QaSchema,
         system: `You are a picture editor checking images before they go into a published video.

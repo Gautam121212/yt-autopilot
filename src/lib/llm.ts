@@ -24,9 +24,43 @@ const LLM_TIMEOUT_HEAVY = Number(process.env.LLM_TIMEOUT_HEAVY_MS ?? 7 * 60_000)
 const timeoutFor = (tier: "light" | "heavy") => (tier === "heavy" ? LLM_TIMEOUT_HEAVY : LLM_TIMEOUT_LIGHT);
 
 export type Tier = "heavy" | "light";
+
+/**
+ * Which model does which job.
+ *
+ * Splitting the work is what makes a free-tier pipeline survive: Gemini's daily quota is small but
+ * it is the only provider here that can SEE (vision), so it is spent on judging and repairing.
+ * Mistral's free tier is roughly a billion tokens a month, so it does the bulk writing.
+ *
+ * "auto" = use LLM_PROVIDER, i.e. the old single-provider behaviour.
+ */
+export type Role = "gate" | "write" | "judge" | "auto";
 const PROVIDER = process.env.LLM_PROVIDER || "gemini";
 
 export const usage = { inputTokens: 0, outputTokens: 0, calls: 0, webSearches: 0, estCostUsd: 0 };
+
+/** name -> OpenAI-compatible endpoint for stage routing. Gemini is handled separately. */
+const NAMED: Record<string, { baseUrl: string; key: string; heavy: string; light: string }> = {
+  mistral: {
+    baseUrl: process.env.MISTRAL_BASE_URL || "https://api.mistral.ai/v1",
+    key: process.env.MISTRAL_API_KEY || "",
+    heavy: process.env.MISTRAL_MODEL_HEAVY || "mistral-large-latest",
+    light: process.env.MISTRAL_MODEL_LIGHT || "mistral-small-latest",
+  },
+  groq: {
+    baseUrl: process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
+    key: process.env.GROQ_API_KEY || "",
+    heavy: process.env.GROQ_MODEL_HEAVY || "llama-3.3-70b-versatile",
+    light: process.env.GROQ_MODEL_LIGHT || "llama-3.1-8b-instant",
+  },
+};
+
+/** Which named provider (or "gemini") handles each role; unset roles fall back to LLM_PROVIDER. */
+const ROLE_PROVIDER: Record<Exclude<Role, "auto">, string> = {
+  gate: process.env.LLM_ROLE_GATE || "",     // topic scoring, feasibility, per-scene checks
+  write: process.env.LLM_ROLE_WRITE || "",   // research, script, expand, comedy
+  judge: process.env.LLM_ROLE_JUDGE || "",   // verify, forecast, repair, final review
+};
 
 const MODELS: Record<string, Record<Tier, string>> = {
   "claude-code": { heavy: process.env.CLAUDE_MODEL_HEAVY || "opus", light: process.env.CLAUDE_MODEL_LIGHT || "sonnet" },
@@ -48,6 +82,39 @@ export type CallOpts = {
 
 /** claude-code can search the live web; the Gemini free path cannot (grounding + JSON output conflict). */
 export class QuotaError extends Error {}
+
+/**
+ * A chain of OpenAI-compatible fallbacks, tried in order when Gemini is out of quota.
+ *
+ * One backup is not enough: when it is also rate-limited the whole pipeline stops. Free tiers that
+ * need no card, measured September 2026:
+ *   Mistral La Plateforme  ~1B tokens/month (Experiment tier)   https://api.mistral.ai/v1
+ *   Groq                   30 RPM · 1k req/day · 100k tokens/day https://api.groq.com/openai/v1
+ *   Cerebras               30 RPM · 14.4k req/day · 1M tokens/day https://api.cerebras.ai/v1
+ *   OpenRouter (:free)     20 RPM · 50 req/day without a top-up  https://openrouter.ai/api/v1
+ *
+ * LLM_FALLBACKS="name|baseUrl|apiKey|heavyModel|lightModel; name|..."
+ */
+export type Fallback = { name: string; baseUrl: string; apiKey: string; heavy: string; light: string };
+
+export function fallbackChain(): Fallback[] {
+  const chain: Fallback[] = [];
+  // The original single-provider variables stay supported and go first.
+  if (process.env.OPENAI_COMPAT_BASE_URL && process.env.OPENAI_COMPAT_API_KEY && process.env.OPENAI_COMPAT_MODEL_HEAVY) {
+    chain.push({
+      name: "openai-compat",
+      baseUrl: process.env.OPENAI_COMPAT_BASE_URL,
+      apiKey: process.env.OPENAI_COMPAT_API_KEY,
+      heavy: process.env.OPENAI_COMPAT_MODEL_HEAVY,
+      light: process.env.OPENAI_COMPAT_MODEL_LIGHT || process.env.OPENAI_COMPAT_MODEL_HEAVY,
+    });
+  }
+  for (const entry of (process.env.LLM_FALLBACKS ?? "").split(";").map((x) => x.trim()).filter(Boolean)) {
+    const [name, baseUrl, apiKey, heavy, light] = entry.split("|").map((x) => x.trim());
+    if (name && baseUrl && apiKey && heavy) chain.push({ name, baseUrl, apiKey, heavy, light: light || heavy });
+  }
+  return chain;
+}
 /** The model stopped because it ran out of output budget — retryable with a smaller ask. */
 export const isMaxTokens = (e: unknown) => /hit max tokens|MAX_TOKENS|finishReason.{0,12}length/i.test((e as Error)?.message ?? "");
 
@@ -141,8 +208,11 @@ async function anthropic(model: string, system: string, prompt: string, maxToken
 }
 
 // ---------------- openai-compatible (Groq, OpenRouter, Cerebras, Mistral, DeepSeek, ...) ----------------
-async function openaiCompatible(model: string, system: string, prompt: string, maxTokens: number, images?: string[], timeoutMs = LLM_TIMEOUT_HEAVY): Promise<string> {
-  const base = (process.env.OPENAI_COMPAT_BASE_URL || "").replace(/\/$/, "");
+async function openaiCompatible(
+  model: string, system: string, prompt: string, maxTokens: number, images?: string[],
+  timeoutMs = LLM_TIMEOUT_HEAVY, baseUrl?: string, apiKey?: string,
+): Promise<string> {
+  const base = (baseUrl ?? process.env.OPENAI_COMPAT_BASE_URL ?? "").replace(/\/$/, "");
   // Some free tiers cap output tokens per minute (Groq's is 1000), and reject the request outright
   // if max_tokens is larger than that — so keep the ask small and configurable.
   const cap = Number(process.env.OPENAI_COMPAT_MAX_TOKENS ?? 4096);
@@ -155,7 +225,7 @@ async function openaiCompatible(model: string, system: string, prompt: string, m
   content.push({ type: "text", text: prompt });
   const res = await withRetry(() => fetchOk(`${base}/chat/completions`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${env("OPENAI_COMPAT_API_KEY")}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${apiKey ?? env("OPENAI_COMPAT_API_KEY")}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
       messages: [{ role: "system", content: system }, { role: "user", content: images?.length ? content : prompt }],
@@ -266,6 +336,8 @@ export function extractJson(text: string): unknown {
 /** Calls the LLM and validates JSON output with zod; feeds validation errors back, 3 attempts. */
 export async function askJson<T>(o: {
   tier: Tier;
+  /** which job this call is doing; decides which provider handles it */
+  role?: Role;
   system: string;
   prompt: string;
   schema: z.ZodType<T, z.ZodTypeDef, unknown>;
@@ -289,7 +361,30 @@ export async function askJson<T>(o: {
       const body = `${o.prompt}\n\nReturn ONE JSON object only matching this JSON Schema:\n${JSON.stringify(jsonSchema)}${feedback}`;
       // Shrink the ask on each retry: a second failure is usually the same overflow again.
       const budget = Math.max(3000, Math.round((o.maxTokens ?? 24000) * (attempt === 1 ? 1 : attempt === 2 ? 0.7 : 0.5)));
-      const backupReady = !!(process.env.OPENAI_COMPAT_BASE_URL && process.env.OPENAI_COMPAT_API_KEY && process.env.OPENAI_COMPAT_MODEL_HEAVY);
+
+      // Role routing: a named provider takes the call, unless the role is unset or its key is missing.
+      const routed = o.role && o.role !== "auto" ? ROLE_PROVIDER[o.role] : "";
+      const named = routed && routed !== "gemini" ? NAMED[routed] : undefined;
+      if (named?.key) {
+        const m = o.tier === "heavy" ? named.heavy : named.light;
+        console.log(`    [llm] ${o.role} -> ${routed} (${m})`);
+        try {
+          const out = await openaiCompatible(m, o.system, body, o.maxTokens ?? 16000,
+            o.images, timeoutFor(o.tier), named.baseUrl, named.key);
+          try { raw = extractJson(out); } catch (e) { raw = undefined; lastErr = (e as Error).message; }
+          if (raw !== undefined) {
+            const first = o.schema.safeParse(raw);
+            if (first.success) return first.data;
+            lastErr = first.error.message.slice(0, 1500);
+            feedback = `\n\nYour previous answer was rejected by the validator:\n${lastErr}\nFix every listed problem.`;
+            continue;
+          }
+        } catch (err) {
+          // A routed provider failing is not fatal: fall through to the default path below.
+          console.warn(`    [llm] ${routed} failed (${(err as Error).message.slice(0, 80)}); using ${PROVIDER}`);
+        }
+      }
+
       const text = PROVIDER === "anthropic" ? await anthropic(model, o.system, body, o.maxTokens ?? 32000)
         : PROVIDER === "openai-compatible" ? await openaiCompatible(model, o.system, body, o.maxTokens ?? 16000, o.images, timeoutFor(o.tier))
         : await geminiWithFallback(model, o.system, body, budget, o.images, timeoutFor(o.tier)).catch(async (e) => {
@@ -299,18 +394,25 @@ export async function askJson<T>(o: {
               console.warn("    [llm] output budget exhausted by reasoning; retrying with thinking disabled");
               return geminiWithFallback(model, o.system, body, budget, o.images, timeoutFor(o.tier), 0);
             }
-            if (!isQuota(e) || !backupReady) throw e;
-            const cap = Number(process.env.OPENAI_COMPAT_MAX_TOKENS ?? 4096);
-            if ((o.maxTokens ?? 16000) > cap && cap < 4096) {
-              throw new QuotaError(`${(e as Error).message}\n\nThe backup provider's output cap (OPENAI_COMPAT_MAX_TOKENS=${cap}) is too small for this step.`);
+            if (!isQuota(e)) throw e;
+            const chain = fallbackChain();
+            if (!chain.length) throw e;
+            // Walk the whole chain: each provider has its own free-tier limit, so one being
+            // exhausted says nothing about the next.
+            const seesImages = process.env.OPENAI_COMPAT_VISION === "true";
+            let last: unknown = e;
+            for (const fb of chain) {
+              const model = o.tier === "heavy" ? fb.heavy : fb.light;
+              try {
+                console.warn(`    [llm] Gemini unavailable — trying ${fb.name} (${model})`);
+                return await openaiCompatible(model, o.system, body, o.maxTokens ?? 16000,
+                  seesImages ? o.images : undefined, timeoutFor(o.tier), fb.baseUrl, fb.apiKey);
+              } catch (err) {
+                last = err;
+                console.warn(`    [llm] ${fb.name} failed: ${(err as Error).message.slice(0, 90)}`);
+              }
             }
-            const backup = (o.tier === "heavy" ? process.env.OPENAI_COMPAT_MODEL_HEAVY : process.env.OPENAI_COMPAT_MODEL_LIGHT) || process.env.OPENAI_COMPAT_MODEL_HEAVY!;
-            // Most backup models are text-only; sending images gets a hard 404 from the router.
-            const backupSeesImages = process.env.OPENAI_COMPAT_VISION === "true";
-            if (o.images?.length && !backupSeesImages) {
-              console.warn(`Gemini is out of quota; ${backup} cannot see images, so judging on text only`);
-            }
-            return openaiCompatible(backup, o.system, body, o.maxTokens ?? 16000, backupSeesImages ? o.images : undefined, timeoutFor(o.tier));
+            throw last;
           });
       try { raw = extractJson(text); } catch (e) { raw = undefined; lastErr = (e as Error).message; }
     }

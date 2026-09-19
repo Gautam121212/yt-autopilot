@@ -65,6 +65,7 @@ export async function ensureIllustratable(o: { cfg: ChannelConfig; script: Scrip
 
     const fixed = await askJson({
       tier: "light",
+      role: "gate",
       schema: RewriteSchema,
       system: `You rewrite image searches for a video whose footage comes from STOCK LIBRARIES (Pexels, Pixabay)
 first and photo archives second. A search that returns nothing means the scene gets an unrelated picture, which is

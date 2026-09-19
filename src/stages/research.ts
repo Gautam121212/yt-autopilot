@@ -10,7 +10,8 @@ export async function research(topic: Topic): Promise<Dossier> {
   if (pages.length < 2) throw new Error(`only ${pages.length} Wikipedia pages found for ${topic.chosen.wikipediaQueries.join(", ")}`);
   const web = providerSupportsWeb();
   return askJson({
-    tier: "heavy", // reads a lot and writes the whole dossier
+    tier: "heavy",
+    role: "write", // reads a lot and writes the whole dossier
     maxTokens: 8192, // the model's real ceiling; thinking is capped separately so the answer fits
     web,
     schema: DossierSchema,

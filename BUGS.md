@@ -1,0 +1,58 @@
+# Bug registry
+
+Every defect found in this pipeline, what caused it, and the automated guard that now prevents it
+coming back. Adding to this list is part of fixing a bug — a fix without a guard is a bug waiting to
+return, which is how several of these appeared twice.
+
+`npm run verify` runs every guard in about two seconds.
+
+## Pattern: what keeps causing these
+
+1. **Patch-on-patch editing duplicates code.** A block is added next to an existing one that already
+   did the job. → Guards must assert COUNTS, not presence.
+2. **A rewrite silently drops a feature.** The new code path never calls what the old one did.
+   → Guard: assert the feature is still wired, not just still defined.
+3. **Two rules disagree by construction.** Min scenes × min words < the length gate; two probes with
+   different thresholds. → Guard: assert the arithmetic between rules.
+4. **A setting fixes one call and breaks another.** One global timeout for 3-second and 3-minute calls.
+   → Guard: assert per-purpose settings exist.
+5. **Config never updates.** `rsync` covers `src/` but not `config/`, so new defaults never land.
+   → Guard: assert config contents, not just that the file parses.
+
+## The registry
+
+| # | Bug | Cause | Guard |
+|---|---|---|---|
+| 1 | Card text cropped ("X INSURED VALU") | Ken Burns zoom applied to text images | cards removed entirely; `audit`: no card code |
+| 2 | Video 3.7 min against an 8-10 min target | nothing enforced total length | `MIN_WORDS` gate + `selftest`: word counter agrees |
+| 3 | 32-second shots, 6 cuts in 226s | shot planner no-op when sentence timings missing | `selftest`: "shot cutting cannot silently fail" |
+| 4 | Short captions at the top, clipped | `MarginV` is in ASS's 288-tall space, not pixels | `audit`: captions never over the fade |
+| 5 | Image feasibility 0% on good queries | probe scored stock captions by word overlap; captions are synonyms | probe counts results; `selftest` era parity |
+| 6 | Topic probe 100% vs scene probe 0% | era="historical" disabled stock sources in one path only | one shared `FINDABLE`; source list never shrinks |
+| 7 | Historical scenes found nothing | period hint appended to stock queries too | hint applied per source |
+| 8 | "Today's video done" at 05:30 IST | day boundary was UTC; dry runs counted as wins | `productionTimezone`; `selftest` asserts both |
+| 9 | Research killed at exactly 120s | one global `LLM_TIMEOUT_MS` for every call | per-tier timeouts; `selftest` guard |
+| 10 | "Gemini hit max tokens", empty content | asked 24k against an 8192 cap; thinking shared the budget | cap + `thinkingBudget`; `selftest` guard |
+| 11 | Crash on `uncertain[0]` | schema demanded strings, model returned objects | union + transform; `selftest` parses both |
+| 12 | Schema-valid script failing the length gate | 12 scenes × 75 words = 900 < 1000 | min 13 scenes; `selftest` asserts the arithmetic |
+| 13 | Audio ducked and normalised twice | added passes next to existing ones | `selftest`: exactly one of each |
+| 14 | Music silently disappeared | shot-based rewrite orphaned `pickMusic` | `selftest`: one picker, and it is called |
+| 15 | Scheduled runs never fired | cron at minute 0, which GitHub drops under load | staggered off-peak crons; `selftest` guard |
+| 16 | NASA imagery in non-space videos | listed as a visual source | removed from the schema; `audit` + `selftest` |
+| 17 | Old 8 sub-niches still in use | `rsync` skips `config/`, so new defaults never landed | `selftest`: asserts ≥10 sub-niches |
+| 18 | Production paused for a week | runaway guard counted human rejections as waste | counts only `failed`/`abandoned` |
+| 19 | Six heavy calls before a cheap gate | gates ran in the wrong order | `audit`: stage ordering |
+| 20 | Everything stopped when one backup failed | a single fallback provider | `LLM_FALLBACKS` chain; `selftest` guard |
+| 21 | Timezone fix silently reverted | a later restructure of `produce.ts` overwrote the region containing it | `selftest`: asserts `productionTimezone` is used in the query — caught this within minutes of being written |
+
+| 22 | Whole pipeline stopped when Gemini's quota ran out | every stage used one provider | role routing: writing on Mistral, judging on Gemini |
+| 23 | A 6/10 script still consumed an hour of rendering | quality was only checked after production | `minScriptScore` 7.5 gate before any render |
+
+| 24 | Audit's stage-ordering check failed on a code comment | it matched bare words like "rendering" anywhere in the file | matches log CALLS (`} rendering\``), not prose |
+
+## Adding a bug
+
+1. Add a row: what broke, what caused it, which guard catches it.
+2. Add the guard to `scripts/selftest.ts` (behaviour/shape) or `scripts/audit.ts` (wiring/order).
+3. Confirm the guard FAILS against the old code, then passes against the fix. A guard never seen red
+   proves nothing.

@@ -18,7 +18,8 @@
     "mode": "claude",
     "humanReviewFirst": 3,
     "minScore": 6.5,
-    "uploadHeldVideos": false
+    "uploadHeldVideos": false,
+    "minScriptScore": 7.5
   },
   "imageSources": [
     "pexels",

@@ -40,6 +40,7 @@ export async function pickTopic(cfg: ChannelConfig, forcedSubNiche?: string) {
 
   const topic: Topic = await askJson({
     tier: "light",
+    role: "gate",
     web: providerSupportsWeb(),
     schema: TopicSchema,
     system: `You are the editorial lead of "${cfg.channelName}", a YouTube channel: ${cfg.niche}.

@@ -4,6 +4,7 @@ import { VerifySchema, type Dossier, type Script, type Verification } from "../t
 export async function verify(script: Script, dossier: Dossier, recentTitles: string[]): Promise<Verification> {
   const v = await askJson({
     tier: "heavy",
+    role: "judge",
     schema: VerifySchema,
     system: `You are an independent standards editor. You did not write this script and gain nothing by passing it.
 Check the long script AND the short against the dossier and YouTube's rules. Be specific; cite scene ids.

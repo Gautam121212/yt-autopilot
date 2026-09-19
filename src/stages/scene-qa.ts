@@ -68,6 +68,7 @@ export async function sceneQa(o: {
 
       const v = await askJson({
         tier: "light",
+        role: "gate",
         schema: Verdict,
         images: [shot],
         system: `You are checking ONE picture against ONE line of narration for a documentary channel.

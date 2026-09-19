@@ -32,7 +32,8 @@
     "voice:sample": "tsx --env-file-if-exists=.env scripts/voice-sample.ts",
     "audit": "tsx --env-file-if-exists=.env scripts/audit.ts",
     "selftest": "tsx --env-file-if-exists=.env scripts/selftest.ts",
-    "verify": "npm run audit && npm run selftest"
+    "verify": "npm run audit && npm run selftest",
+    "music:make": "tsx --env-file-if-exists=.env scripts/make-music.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

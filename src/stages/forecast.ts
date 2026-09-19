@@ -40,6 +40,7 @@ export async function forecast(o: {
 
   return askJson({
     tier: "heavy",
+    role: "judge",
     schema: ForecastSchema,
     system: `You predict how a finished video will be rated, from its script alone, before it is produced.
 This channel is science and history told deadpan and funny-because-true. A technically correct but humourless

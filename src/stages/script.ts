@@ -81,6 +81,7 @@ export async function writeScript(o: {
 }): Promise<Script> {
   return askJson({
     tier: "heavy",
+    role: "write",
     schema: ScriptSchema,
     system: system(o.cfg, o.playbook),
     prompt: `Structure: ${o.structure.id} - ${o.structure.description}
@@ -108,6 +109,7 @@ export async function repairScript(o: {
 }): Promise<Script> {
   return askJson({
     tier: "heavy",
+    role: "judge",
     schema: ScriptSchema,
     system: system(o.cfg, o.playbook),
     prompt: `A reviewer watched the finished video and refused to publish it. Fix exactly what they listed.
@@ -139,6 +141,7 @@ Return the complete repaired script. ${SHAPE}`,
 export async function stripUnsourced(o: { cfg: ChannelConfig; playbook: string; script: Script; dossier: Dossier; issues: { what: string; fix: string }[] }): Promise<Script> {
   return askJson({
     tier: "heavy",
+    role: "judge",
     schema: ScriptSchema,
     system: system(o.cfg, o.playbook),
     prompt: `A fact-checker found details in this script that are not in the dossier. Your ONLY job is to remove or
@@ -174,6 +177,7 @@ export async function expandScript(o: { cfg: ChannelConfig; playbook: string; sc
   const targetWords = Math.round(((minM + maxM) / 2) * o.cfg.wordsPerMinute);
   return askJson({
     tier: "heavy",
+    role: "write",
     schema: ScriptSchema,
     system: system(o.cfg, o.playbook),
     prompt: `This script is too short: ${o.words} words, and it needs about ${targetWords} (${minM}-${maxM} minutes).
@@ -199,6 +203,7 @@ Return the complete lengthened script. ${SHAPE}`,
 export async function punchUp(o: { cfg: ChannelConfig; script: Script; dossier: Dossier }): Promise<Script> {
   return askJson({
     tier: "heavy",
+    role: "write",
     schema: ScriptSchema,
     system: `You are a comedy writer doing a punch-up pass on a documentary script. The facts are already correct
 and already sourced. Your ONLY job is the voice.
@@ -237,6 +242,7 @@ Return the complete script with the narration rewritten. ${SHAPE}`,
 export async function reviseScript(o: { cfg: ChannelConfig; playbook: string; script: Script; dossier: Dossier; verification: Verification }): Promise<Script> {
   return askJson({
     tier: "heavy",
+    role: "judge",
     schema: ScriptSchema,
     system: system(o.cfg, o.playbook),
     prompt: `A standards editor reviewed your script. Fix EVERY blocker and major issue, and minor ones where cheap. Keep everything else intact.

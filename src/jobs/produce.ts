@@ -126,11 +126,12 @@ async function main() {
     // often and cheaply. Once the day's video exists, stop — no point burning quota for nothing.
     const [{ n: todaysWins }] = await q<{ n: number }>(
       `select count(*)::int as n from videos
-       where created_at >= date_trunc('day', now())
+       where (created_at at time zone $1)::date = (now() at time zone $1)::date
          and status in ('ready','awaiting_publish','awaiting_approval','scheduled','published')`,
+      [cfg.productionTimezone],
     );
     if (todaysWins >= cfg.videosPerDay && !isDryRun() && process.env.FORCE_PRODUCE !== "true") {
-      return log(`today's video is already done (${todaysWins}/${cfg.videosPerDay}); nothing to do until tomorrow. Override with FORCE=true npm run video:live`);
+      return log(`today's video is already done (${todaysWins}/${cfg.videosPerDay} in ${cfg.productionTimezone}); nothing to do until tomorrow. Override with FORCE=true npm run video:live`);
     }
     if (todaysWins) log(`${todaysWins}/${cfg.videosPerDay} done today — going again`);
 
@@ -379,6 +380,24 @@ async function main() {
         fc = winner.fc;
         await updateVideo(video.id, { script, title: script.title });
       }
+
+      // THE SCRIPT BAR. A rendered video scores at best around what its script forecast, so a script
+      // below this can only waste an hour of rendering. Repair is cheap; rendering is not.
+      const bar = cfg.approval.minScriptScore;
+      for (let attempt = 1; fc.likely < bar && attempt <= 2; attempt++) {
+        log(`#${video.id} script at ${fc.likely}/10, below the ${bar} bar — repairing (${attempt}/2)`);
+        const better = await repairScript({ cfg, playbook, script, dossier: video.dossier!, issues: fc.fixes }).catch(() => null);
+        if (!better) break;
+        const bfc = await forecast({ cfg, script: better, dossier: video.dossier!, history: hist, feasible: feas.feasible });
+        if (bfc.likely > fc.likely) { script = better; fc = bfc; await updateVideo(video.id, { script, title: script.title }); }
+        log(`#${video.id} after repair: ${fc.likely}/10`);
+      }
+      if (fc.likely < bar) {
+        await updateVideo(video.id, { status: "abandoned", predicted_score: fc.likely });
+        await incident("script.below-bar", new Error(`forecast ${fc.likely}/10 after repairs (bar ${bar}); weakest: ${fc.weakest}`), video.id);
+        return log(`#${video.id} abandoned: script forecast ${fc.likely}/10 < ${bar}. Nothing was rendered. Next run starts a new topic.`);
+      }
+      log(`#${video.id} script cleared the bar at ${fc.likely}/10 — production begins`);
       await updateVideo(video.id, { predicted_score: fc.likely });
       const [{ n: abandonedRecently }] = await q<{ n: number }>(
         "select count(*)::int as n from videos where status = 'abandoned' and id < $1 and id >= $1 - 2", [video.id],

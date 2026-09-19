@@ -55,6 +55,13 @@ jobs:
           MIN_FEASIBLE: "0.6"            # share of scenes with a findable picture
           SHOT_SECS_H: "7"               # target shot length, long video
           SHOT_SECS_V: "3.5"             # target shot length, Short
+          LLM_ROLE_GATE: ${{ vars.LLM_ROLE_GATE || 'mistral' }}   # topic + feasibility + scene checks
+          LLM_ROLE_WRITE: ${{ vars.LLM_ROLE_WRITE || 'mistral' }}  # research, script, expand, comedy
+          LLM_ROLE_JUDGE: ${{ vars.LLM_ROLE_JUDGE || 'gemini' }}   # verify, forecast, repair, final review (vision)
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          MISTRAL_MODEL_HEAVY: ${{ vars.MISTRAL_MODEL_HEAVY || 'mistral-large-latest' }}
+          MISTRAL_MODEL_LIGHT: ${{ vars.MISTRAL_MODEL_LIGHT || 'mistral-small-latest' }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GEMINI_OUTPUT_CAP: "8192"        # Flash's real output ceiling, thinking included
           GEMINI_THINKING_BUDGET: "1536"   # leaves ~6.6k tokens for the answer itself
           LLM_TIMEOUT_LIGHT_MS: "150000"   # classification-sized calls fail fast

@@ -91,6 +91,37 @@ ok(render.includes("loudnorm=I=-14"), "render: audio normalised to YouTube's -14
 ok(render.includes("MUSIC_GAIN"), "render: music level is configurable");
 ok(render.includes("planShots") && render.includes("Cut on the clock"), "render: shot cutting cannot silently fail");
 
+// ── registry guards (BUGS.md) ────────────────────────────────────────────────────────────
+const produce = src("src/jobs/produce.ts");
+const workflow = src(".github/workflows/produce.yml");
+const feas = src("src/stages/feasibility.ts");
+const visuals = src("src/stages/visuals.ts");
+
+ok(llm.includes("fallbackChain"), "#20 fallback chain exists (not a single backup provider)");
+ok(llm.includes("LLM_TIMEOUT_LIGHT") && llm.includes("LLM_TIMEOUT_HEAVY"), "#9 per-tier timeouts");
+ok(!/cron:\s*"0\s/.test(workflow), "#15 no cron at minute 0 (GitHub drops those)");
+ok(feas.includes("FINDABLE") && !feas.includes("const GOOD"), "#6 one shared findability threshold");
+ok(visuals.includes("sourceNamesFor") && !visuals.includes('!(era === "historical" && n === "pexels")'), "#6 era orders sources, never drops them");
+ok(produce.includes("productionTimezone"), "#8 daily quota counted in the channel's timezone");
+ok(produce.includes("worthUploading"), "#final gate: nothing uploaded below the bar");
+ok(count(render, "pickMusic(o.seed)") >= 1, "#14 music picker is actually called");
+
+// #22 role routing: every stage must declare which model does its job, and the split must be sane.
+const stageRole: Record<string, string> = {
+  "topic.ts": "gate", "feasibility.ts": "gate", "scene-qa.ts": "gate",
+  "research.ts": "write", "verify.ts": "judge", "forecast.ts": "judge", "review.ts": "judge",
+};
+for (const [file, role] of Object.entries(stageRole)) {
+  ok(src(`src/stages/${file}`).includes(`role: "${role}"`), `#22 ${file} routes to "${role}"`);
+}
+ok(llm.includes("ROLE_PROVIDER") && llm.includes("NAMED"), "#22 role routing is wired in the client");
+const scriptSrc = src("src/stages/script.ts");
+ok(count(scriptSrc, 'role: "write"') >= 3 && count(scriptSrc, 'role: "judge"') >= 3,
+  "#22 script.ts: writing passes write, repair passes judge");
+// #23 the script bar must sit before rendering, not after.
+ok(produce.includes("script.below-bar") && produce.indexOf("script.below-bar") < produce.indexOf("#${video.id} rendering"),
+  "#23 script bar sits before rendering");
+
 console.log(bad ? `\n❌ ${bad} regression(s).\n` : "\n✅ schemas accept real answers; invariants hold.\n");
 process.exitCode = bad ? 1 : 0;
 export {};

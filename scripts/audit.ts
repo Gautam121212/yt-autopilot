@@ -24,9 +24,11 @@ const sceneQaSrc = read("src/stages/scene-qa.ts");
 console.log("\n── the pipeline, in order ──");
 // Search only the body, so the file's own header comment cannot satisfy a check.
 const body = produce.slice(produce.indexOf("async function main("));
-const order = ["picking a topic", "topic scores", "checking whether the story can be filmed",
-  "researching", "writing the script", "expanding", "comedy pass", "fact + policy check",
-  "scene-by-scene visual check", "rendering", "final check"];
+// Match the log CALLS, not any comment that happens to contain the word — that is how a comment
+// about "an hour of rendering" made this check fail.
+const order = ['log("picking a topic', "topic scores —", "checking whether the story can be filmed",
+  "} researching`", "} writing the script`", "} script is ${words} words", "} comedy pass applied`",
+  "} fact + policy check`", "scene-by-scene visual check", "} rendering`", "} final check`"];
 let last = -1, sequenced = true;
 for (const step of order) {
   const at = body.indexOf(step);
