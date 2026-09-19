@@ -48,6 +48,9 @@ export type CallOpts = {
 
 /** claude-code can search the live web; the Gemini free path cannot (grounding + JSON output conflict). */
 export class QuotaError extends Error {}
+/** The model stopped because it ran out of output budget — retryable with a smaller ask. */
+export const isMaxTokens = (e: unknown) => /hit max tokens|MAX_TOKENS|finishReason.{0,12}length/i.test((e as Error)?.message ?? "");
+
 export const isQuota = (e: unknown) =>
   e instanceof QuotaError ||
   /\b429\b|\b402\b|exceeded your current quota|rate[- ]?limit|out of daily quota|requires more credits|insufficient|RESOURCE_EXHAUSTED/i
@@ -191,7 +194,12 @@ async function geminiParts(images: string[] = []) {
   return parts;
 }
 
-async function gemini(model: string, system: string, prompt: string, maxTokens: number, images?: string[], timeoutMs = LLM_TIMEOUT_HEAVY): Promise<string> {
+/** Hard ceiling on Gemini output, whatever we ask for. */
+const GEMINI_OUTPUT_CAP = Number(process.env.GEMINI_OUTPUT_CAP ?? 8192);
+/** Thinking models only; sending thinkingConfig to an older model is rejected. */
+const supportsThinking = (model: string) => /gemini-(?:2\.5|3\.\d|omni)/i.test(model);
+
+async function gemini(model: string, system: string, prompt: string, maxTokens: number, images?: string[], timeoutMs = LLM_TIMEOUT_HEAVY, thinkBudget = Number(process.env.GEMINI_THINKING_BUDGET ?? 1536)): Promise<string> {
   const wait = lastGemini + 7000 - Date.now();
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
   lastGemini = Date.now();
@@ -202,7 +210,15 @@ async function gemini(model: string, system: string, prompt: string, maxTokens: 
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: system }] },
       contents: [{ role: "user", parts: [...imageParts, { text: prompt }] }],
-      generationConfig: { responseMimeType: "application/json", maxOutputTokens: maxTokens, temperature: 0.8 },
+      generationConfig: {
+        responseMimeType: "application/json",
+        // Flash caps output at 8192 however much you ask for; requesting 24k just hides the real limit.
+        maxOutputTokens: Math.min(maxTokens, GEMINI_OUTPUT_CAP),
+        temperature: 0.8,
+        // On thinking models the reasoning spends the SAME allowance as the answer. Uncapped, it can
+        // consume all 8192 and return MAX_TOKENS with no content — which is the failure we kept hitting.
+        ...(supportsThinking(model) ? { thinkingConfig: { thinkingBudget: thinkBudget } } : {}),
+      },
     }),
   }, timeoutMs), `gemini ${model}`, 5).catch((e: Error) => {
     // Listing a model does not mean you may call it; Google closes older ones to new keys.
@@ -222,7 +238,7 @@ async function gemini(model: string, system: string, prompt: string, maxTokens: 
 const geminiDown = new Set<string>(); // models that returned 503/429 during this run
 
 /** GEMINI_MODEL_* may list several models, newest first: "gemini-3.8-flash,gemini-3.6-flash". */
-async function geminiWithFallback(spec: string, system: string, prompt: string, maxTokens: number, images?: string[], timeoutMs = LLM_TIMEOUT_HEAVY): Promise<string> {
+async function geminiWithFallback(spec: string, system: string, prompt: string, maxTokens: number, images?: string[], timeoutMs = LLM_TIMEOUT_HEAVY, thinkBudget?: number): Promise<string> {
   const chain = spec.split(",").map((m) => m.trim()).filter(Boolean);
   const order = [...chain.filter((m) => !geminiDown.has(m)), ...chain.filter((m) => geminiDown.has(m))];
   let last: Error | undefined;
@@ -271,10 +287,18 @@ export async function askJson<T>(o: {
         : PROVIDER === "openai-compatible" ? "OPENAI_COMPAT_MODEL_HEAVY/LIGHT are not set in .env."
         : `Unknown LLM_PROVIDER ${PROVIDER}`);
       const body = `${o.prompt}\n\nReturn ONE JSON object only matching this JSON Schema:\n${JSON.stringify(jsonSchema)}${feedback}`;
+      // Shrink the ask on each retry: a second failure is usually the same overflow again.
+      const budget = Math.max(3000, Math.round((o.maxTokens ?? 24000) * (attempt === 1 ? 1 : attempt === 2 ? 0.7 : 0.5)));
       const backupReady = !!(process.env.OPENAI_COMPAT_BASE_URL && process.env.OPENAI_COMPAT_API_KEY && process.env.OPENAI_COMPAT_MODEL_HEAVY);
       const text = PROVIDER === "anthropic" ? await anthropic(model, o.system, body, o.maxTokens ?? 32000)
         : PROVIDER === "openai-compatible" ? await openaiCompatible(model, o.system, body, o.maxTokens ?? 16000, o.images, timeoutFor(o.tier))
-        : await geminiWithFallback(model, o.system, body, o.maxTokens ?? 24000, o.images, timeoutFor(o.tier)).catch(async (e) => {
+        : await geminiWithFallback(model, o.system, body, budget, o.images, timeoutFor(o.tier)).catch(async (e) => {
+            // Ran out of output budget. On thinking models the cure is to stop it thinking — the
+            // reasoning was eating the same 8192 tokens the answer needed.
+            if (isMaxTokens(e)) {
+              console.warn("    [llm] output budget exhausted by reasoning; retrying with thinking disabled");
+              return geminiWithFallback(model, o.system, body, budget, o.images, timeoutFor(o.tier), 0);
+            }
             if (!isQuota(e) || !backupReady) throw e;
             const cap = Number(process.env.OPENAI_COMPAT_MAX_TOKENS ?? 4096);
             if ((o.maxTokens ?? 16000) > cap && cap < 4096) {

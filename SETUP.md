@@ -388,3 +388,30 @@ capped at `maxVideosPerWeek` long videos + `shortsPerWeek` Shorts — extra succ
 
 A run that finds the day already won costs one database query and exits, so eight crons a day is
 cheap. The expensive calls only happen when there is actually work to do.
+
+## Why runs used to die with "hit max tokens"
+
+Flash models cap output at **8192 tokens**, and on thinking models the reasoning spends that same
+allowance. Asking for 24,000 did nothing except hide the real ceiling, and uncapped thinking could
+consume the whole budget and return MAX_TOKENS with no content at all.
+
+Now: `maxOutputTokens` is capped at 8192, `thinkingBudget` is 1536 (leaving ~6.6k for the answer),
+and a MAX_TOKENS failure retries with thinking disabled rather than by asking for a shorter answer.
+Research input stays at 20,000 characters per page — the input was never the problem, and cutting it
+would have starved the script of the specifics the comedy runs on.
+
+## Audio mastering
+
+Every serious faceless-video pipeline normalises before upload. The render now applies EBU R128
+loudness normalisation to **-14 LUFS** with a true-peak ceiling of -1.5 dB and a limiter — YouTube's
+own target, so your audio no longer sounds thin next to professional channels. Measured on a test
+mix: -38.4 LUFS in, -13.6 LUFS out, video stream stream-copied and untouched.
+
+## Guarding against regressions
+
+```bash
+npm run verify     # audit (30 gate checks) + selftest (20 schema/invariant checks)
+```
+
+The self-test parses realistic model answers against every schema and asserts the invariants that
+past fixes have broken — including that the token fix did not trade away research quality.

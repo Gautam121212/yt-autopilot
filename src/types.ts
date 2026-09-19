@@ -40,7 +40,11 @@ export const DossierSchema = z
     details: z.array(z.object({ detail: z.string(), sourceIds: z.array(z.string()).min(1) })).min(6),
     figures: z.array(z.object({ claim: z.string(), value: z.string(), sourceIds: z.array(z.string()).min(1) })),
     mentalModel: z.string().describe("the one idea the viewer should walk away understanding"),
-    uncertain: z.array(z.string()).default([]).describe("open questions / hypotheses, never to be stated as fact"),
+    // Models return either ["a doubt"] or [{ claim: "...", why: "..." }]. Both are fine; we flatten.
+    uncertain: z.array(z.union([z.string(), z.record(z.any())]))
+      .default([])
+      .transform((xs) => xs.map((x) => (typeof x === "string" ? x : Object.values(x).filter((v) => typeof v === "string").join(" — "))))
+      .describe("open questions / hypotheses, never to be stated as fact"),
   })
   .refine((d) => {
     const ids = new Set(d.sources.map((s) => s.id));
@@ -75,7 +79,8 @@ export const ScriptSchema = z.object({
   tags: z.array(z.string()).max(15),
   thumbnailText: z.string().max(32),
   thumbnailQuery: z.string(),
-  scenes: z.array(SceneSchema).min(12).max(18),   // enforced: more scenes means a slower render and weaker pictures
+  // 13 scenes x 78 words = 1014, so the scene count and the length gate agree by construction.
+  scenes: z.array(SceneSchema).min(13).max(18),
   short: z.object({
     title: z.string().max(90),
     scenes: z.array(z.object({

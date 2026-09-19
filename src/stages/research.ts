@@ -4,16 +4,19 @@ import { DossierSchema, type Dossier, type Topic } from "../types";
 
 export async function research(topic: Topic): Promise<Dossier> {
   // More pages: a funny, specific script needs far more raw material than a dry summary does.
+  // Input is not what overflowed — the output cap was. Rich input is what gives the script its
+  // specifics, so it stays generous.
   const pages = await wikiPages(topic.chosen.wikipediaQueries, 20000);
   if (pages.length < 2) throw new Error(`only ${pages.length} Wikipedia pages found for ${topic.chosen.wikipediaQueries.join(", ")}`);
   const web = providerSupportsWeb();
   return askJson({
-    tier: "heavy", // reads tens of thousands of characters and writes the whole dossier
+    tier: "heavy", // reads a lot and writes the whole dossier
+    maxTokens: 8192, // the model's real ceiling; thinking is capped separately so the answer fits
     web,
     schema: DossierSchema,
     system: `You are a meticulous research producer for an educational channel.
 ${web
-  ? `Use the source texts below plus pages you open yourself with WebFetch/WebSearch. Add up to 4 authoritative web sources (nasa.gov, jpl.nasa.gov, esa.int, universities, peer-reviewed journals, major science outlets) that add facts or newer numbers; id them after the provided ones. Where sources disagree, prefer the most recent authoritative one and note the disagreement in "uncertain".`
+  ? `Use the source texts below plus pages you open yourself with WebFetch/WebSearch. Add up to 4 authoritative web sources (universities, peer-reviewed journals, national archives, museum collections, major science outlets) that add facts or newer numbers; id them after the provided ones. Where sources disagree, prefer the most recent authoritative one and note the disagreement in "uncertain".`
   : `Use ONLY the source texts provided below. You have no web access: never invent a URL and never add a source that is not listed below. Facts you merely remember do not belong here.`}
 Every fact and figure must cite the source ids it came from. Anything the sources describe as hypothesis, estimate or debated goes in "uncertain", never in keyFacts.
 

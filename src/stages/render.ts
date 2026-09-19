@@ -272,6 +272,21 @@ export async function renderVideo(o: {
   // Stream copy: no re-encode, so joining 28 clips takes seconds instead of ~17 minutes.
   await sh("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", list, "-c", "copy", joined]);
 
+  // Broadcast loudness. Every faceless-video project worth reading normalises to EBU R128 before
+  // upload: YouTube targets about -14 LUFS and turns anything louder DOWN, which is why raw TTS
+  // sounds thin next to professional channels. Video is stream-copied, so this costs only the audio.
+  const levelled = path.join(o.dir, `levelled-${name}.mp4`);
+  const ok = await sh("ffmpeg", [
+    "-y", "-i", joined, "-c:v", "copy",
+    "-af", "loudnorm=I=-14:TP=-1.5:LRA=11,alimiter=limit=0.95",
+    "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", levelled,
+  ]).then(() => true, () => false);
+  if (ok) {
+    await fs.rm(joined, { force: true });
+    await fs.rename(levelled, joined);
+    console.log("  audio levelled to -14 LUFS (YouTube's target)");
+  }
+
   const final = path.join(o.dir, `${name}.mp4`);
   const music = await pickMusic();
   const loud = "loudnorm=I=-14:TP=-1.5:LRA=11";

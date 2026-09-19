@@ -535,6 +535,23 @@ async function main() {
         return log(`#${video.id} DRY RUN complete (${repairs} repair round(s)) -> ${rendered.videoPath}`);
       }
 
+      // FINAL GATE: nothing reaches YouTube unless it is worth uploading. A held video is kept
+      // locally, its reasons are recorded for the learning loop, and the day moves on.
+      const worthUploading = review.decision !== "hold" || review.overall >= cfg.approval.minScore || cfg.approval.uploadHeldVideos;
+      if (!worthUploading) {
+        const notes = [
+          `**${script.title}** — held at ${review.overall}/10 (bar ${cfg.approval.minScore}).`,
+          review.noteForOwner ?? "",
+          ...review.issues.map((i) => `- [${i.severity}/${i.area}] ${i.what}${i.fix ? ` → ${i.fix}` : ""}`),
+        ].filter(Boolean).join("\n");
+        await updateVideo(video.id, { status: "rejected", actual_score: review.overall, review });
+        await incident("final-check.not-uploaded", new Error(notes.slice(0, 1500)), video.id);
+        await createIssue(`Not uploaded: ${script.title}`.slice(0, 90),
+          `${notes}\n\nThe file is in this run's artifacts if you want to watch it. Nothing was uploaded to YouTube.\nThese notes feed the weekly learning cycle.`,
+          ["learning"]).catch(() => 0);
+        return log(`#${video.id} NOT uploaded (${review.overall}/10 < ${cfg.approval.minScore}). Reasons recorded for the learning loop.`);
+      }
+
       const youtubeId = video.youtube_id ?? await upload(cfg, { videoPath: rendered.videoPath, thumbPath, srtPath: rendered.srtPath, title: script.title, description, tags: script.tags });
       await updateVideo(video.id, { youtube_id: youtubeId });
       video.youtube_id = youtubeId;

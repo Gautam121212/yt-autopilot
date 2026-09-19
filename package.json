@@ -30,7 +30,9 @@
     "models:backup": "tsx --env-file-if-exists=.env scripts/list-compat-models.ts",
     "queue": "tsx --env-file-if-exists=.env src/jobs/queue.ts",
     "voice:sample": "tsx --env-file-if-exists=.env scripts/voice-sample.ts",
-    "audit": "tsx --env-file-if-exists=.env scripts/audit.ts"
+    "audit": "tsx --env-file-if-exists=.env scripts/audit.ts",
+    "selftest": "tsx --env-file-if-exists=.env scripts/selftest.ts",
+    "verify": "npm run audit && npm run selftest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

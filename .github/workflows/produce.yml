@@ -55,6 +55,8 @@ jobs:
           MIN_FEASIBLE: "0.6"            # share of scenes with a findable picture
           SHOT_SECS_H: "7"               # target shot length, long video
           SHOT_SECS_V: "3.5"             # target shot length, Short
+          GEMINI_OUTPUT_CAP: "8192"        # Flash's real output ceiling, thinking included
+          GEMINI_THINKING_BUDGET: "1536"   # leaves ~6.6k tokens for the answer itself
           LLM_TIMEOUT_LIGHT_MS: "150000"   # classification-sized calls fail fast
           LLM_TIMEOUT_HEAVY_MS: "420000"   # research and script writing need minutes
           SCENE_BAR: "7.5"               # every scene must clear this before the next is judged

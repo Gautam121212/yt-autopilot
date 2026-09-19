@@ -34,6 +34,8 @@ const Channel = z.object({
     mode: z.enum(["claude", "human"]).describe("claude = Claude's final check publishes on your behalf; human = you approve every video"),
     humanReviewFirst: z.number().int().min(0).describe("even in claude mode, send the first N videos to you"),
     minScore: z.number().min(0).max(10),
+    /** false = a held video is never uploaded; its review notes go to the learning loop instead. */
+    uploadHeldVideos: z.boolean().default(false),
   }),
   categoryId: z.string(),
   subNiches: z.array(SubNiche).min(1),

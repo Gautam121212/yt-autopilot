@@ -31,7 +31,7 @@ You may repeat escalation and mechanism as needed to fill 14-18 scenes.
 
 LENGTH — this is the constraint writers miss most, so count as you go:
 15 scenes x 80 words = 1,200 words = about 8 minutes. That is the target.
-HARD FLOOR: ${minM * cfg.wordsPerMinute} words total and 75 words in EVERY scene. A 500-word script is a failure
+HARD FLOOR: ${minM * cfg.wordsPerMinute} words total and 78 words in EVERY scene (13 x 78 = 1,014 minimum). A 500-word script is a failure
 even if every other rule is followed. Write full paragraphs, not bullet points in prose form.
 
 HARD RULES

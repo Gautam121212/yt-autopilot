@@ -17,7 +17,8 @@
   "approval": {
     "mode": "claude",
     "humanReviewFirst": 3,
-    "minScore": 6.5
+    "minScore": 6.5,
+    "uploadHeldVideos": false
   },
   "imageSources": [
     "pexels",
@@ -28,146 +29,194 @@
   "videoClipRatio": 0.65,
   "subNiches": [
     {
-      "id": "science",
-      "label": "Science explainers (physics, chemistry, earth)",
-      "weight": 1.2,
-      "adRisk": "low",
-      "examples": [
-        "Why glass is technically a liquid myth",
-        "What actually happens when lightning strikes sand"
-      ],
-      "searchQueries": [
-        "science explained documentary",
-        "physics explained",
-        "how does it actually work"
-      ]
-    },
-    {
-      "id": "history",
-      "label": "History with a mechanism",
-      "weight": 1.2,
-      "adRisk": "low",
-      "examples": [
-        "The map error that created a country",
-        "How one shipping container changed the world"
-      ],
-      "searchQueries": [
-        "history documentary short",
-        "how history changed",
-        "forgotten history story"
-      ]
-    },
-    {
-      "id": "psychology",
-      "label": "Psychology and human behaviour",
-      "weight": 1.2,
-      "adRisk": "low",
-      "examples": [
-        "Why you remember insults better than praise",
-        "The experiment that broke social psychology"
-      ],
-      "searchQueries": [
-        "psychology explained",
-        "why do people behave",
-        "famous psychology experiment"
-      ]
-    },
-    {
-      "id": "engineering",
-      "label": "How things are built and why",
+      "id": "reckless_science",
+      "label": "Reckless science",
+      "description": "Researchers who experimented on themselves or their friends and somehow published",
       "weight": 1,
       "adRisk": "low",
-      "examples": [
-        "Why skyscrapers sway on purpose",
-        "The standard that quietly runs the internet"
-      ],
       "searchQueries": [
-        "engineering explained",
-        "how it's built documentary",
-        "why engineers design"
+        "self experiment scientist",
+        "scientist tested on himself",
+        "dangerous experiment history"
       ]
     },
     {
-      "id": "biology",
-      "label": "Biology and the body",
+      "id": "engineering_failures",
+      "label": "Engineering failures",
+      "description": "Structures, machines and vehicles that failed in ways nobody thought to prevent",
       "weight": 1,
       "adRisk": "low",
-      "examples": [
-        "The organ nobody could explain until recently",
-        "How a seed knows which way is up"
-      ],
       "searchQueries": [
-        "biology explained",
-        "how the body works",
-        "nature documentary explained"
+        "engineering disaster explained",
+        "why bridge failed",
+        "design flaw collapse"
       ]
     },
     {
-      "id": "economics",
-      "label": "Money, markets and incentives",
+      "id": "bureaucratic_absurdity",
+      "label": "Bureaucratic absurdity",
+      "description": "Serious institutions solemnly regulating something ridiculous, and the paperwork that followed",
       "weight": 1,
       "adRisk": "low",
-      "examples": [
-        "Why identical goods cost different amounts",
-        "The price signal nobody notices"
-      ],
       "searchQueries": [
-        "economics explained",
-        "why things cost",
-        "market explained documentary"
+        "strange law reason",
+        "weird regulation history",
+        "bureaucracy absurd rule"
       ]
     },
     {
-      "id": "space",
-      "label": "Space and astronomy",
+      "id": "animal_behaviour",
+      "label": "Animal behaviour",
+      "description": "Animals doing things that look like a bug in the system, and the biology behind it",
       "weight": 1,
       "adRisk": "low",
-      "examples": [
-        "Why Venus is hotter than Mercury",
-        "How Voyager still talks to Earth"
-      ],
       "searchQueries": [
-        "space documentary explained",
-        "astronomy explained",
-        "nasa mission story"
+        "animal strange behaviour explained",
+        "weird animal adaptation",
+        "animal does impossible thing"
       ]
     },
     {
-      "id": "technology",
-      "label": "Technology and computing",
-      "weight": 0.8,
+      "id": "body_weirdness",
+      "label": "Body weirdness",
+      "description": "Parts of the human body that behave like a design mistake",
+      "weight": 1,
       "adRisk": "low",
-      "examples": [
-        "The bug that cost a spacecraft",
-        "Why your photos take up so much space"
-      ],
       "searchQueries": [
-        "technology explained",
-        "computer science explained",
-        "how software works"
+        "human body design flaw",
+        "weird thing your body does",
+        "anatomy strange fact"
+      ]
+    },
+    {
+      "id": "everyday_origins",
+      "label": "Everyday origins",
+      "description": "Ordinary objects and rules with a stupid, specific, documented reason behind them",
+      "weight": 1,
+      "adRisk": "low",
+      "searchQueries": [
+        "why everyday object designed",
+        "origin of common thing",
+        "reason behind everyday rule"
+      ]
+    },
+    {
+      "id": "measurement_units",
+      "label": "Measurement and standards",
+      "description": "Units and calibrations defined by something absurd, and what broke before them",
+      "weight": 1,
+      "adRisk": "low",
+      "searchQueries": [
+        "how unit was defined",
+        "weird measurement standard",
+        "calibration history"
+      ]
+    },
+    {
+      "id": "lost_and_found",
+      "label": "Lost at scale",
+      "description": "Things misplaced at enormous scale — cargo, islands, spacecraft — and how they turned up",
+      "weight": 1,
+      "adRisk": "low",
+      "searchQueries": [
+        "cargo lost at sea",
+        "island that did not exist",
+        "lost spacecraft found"
+      ]
+    },
+    {
+      "id": "space_mishaps",
+      "label": "Space mishaps",
+      "description": "Spaceflight and astronomy where the plan met reality and reality won",
+      "weight": 1,
+      "adRisk": "low",
+      "searchQueries": [
+        "space mission went wrong",
+        "nasa mistake explained",
+        "satellite failure story"
+      ]
+    },
+    {
+      "id": "food_chemistry",
+      "label": "Food chemistry",
+      "description": "Why food does what it does, including the accidents that created staples",
+      "weight": 1,
+      "adRisk": "low",
+      "searchQueries": [
+        "food invented by accident",
+        "food chemistry explained",
+        "why food behaves"
+      ]
+    },
+    {
+      "id": "materials_gone_wrong",
+      "label": "Materials gone wrong",
+      "description": "Substances that seemed brilliant and turned out to be a problem, or the reverse",
+      "weight": 1,
+      "adRisk": "low",
+      "searchQueries": [
+        "material seemed great turned bad",
+        "invention had side effect",
+        "chemical history mistake"
+      ]
+    },
+    {
+      "id": "early_medicine",
+      "label": "Early medicine",
+      "description": "Treatments that were standard practice and should never have been",
+      "weight": 1,
+      "adRisk": "low",
+      "searchQueries": [
+        "historical medical treatment strange",
+        "victorian medicine history",
+        "old cure that worked"
+      ]
+    },
+    {
+      "id": "infrastructure_hidden",
+      "label": "Hidden infrastructure",
+      "description": "The unglamorous systems holding cities up, and what happens when one stops",
+      "weight": 1,
+      "adRisk": "low",
+      "searchQueries": [
+        "hidden city infrastructure",
+        "what happens when system fails",
+        "underground city system"
+      ]
+    },
+    {
+      "id": "competition_gone_odd",
+      "label": "Competition loopholes",
+      "description": "Contests and records won by exploiting a rule nobody had closed",
+      "weight": 1,
+      "adRisk": "low",
+      "searchQueries": [
+        "sport rule loophole",
+        "record broken loophole",
+        "competition exploited rule"
       ]
     }
   ],
   "structures": [
     {
-      "id": "question_answer",
-      "description": "Open with a startling question, give the intuitive wrong answer, then build to the real answer with escalating reveals."
+      "id": "one_absurd_event",
+      "description": "A single documented incident told in order: what they did, what happened, what everyone learned. The default and the strongest."
     },
     {
-      "id": "journey",
-      "description": "Take the viewer on a journey (outward, inward, forward in time), each stop a new reveal."
-    },
-    {
-      "id": "story",
-      "description": "Tell a true story with a human problem at its core and a clear climax that reveals the idea."
+      "id": "mechanism_reveal",
+      "description": "Open on a result that seems impossible, then take the machine apart until the viewer sees why it was inevitable."
     },
     {
       "id": "countdown_of_extremes",
-      "description": "Escalating sequence of 4-5 examples, each more surprising than the last, biggest saved for the end. Each example must advance ONE running idea (state it in the first 20 seconds and pay it off at the end) and get a specific number and a reveal — never a catalogue of similar cases, never more than 5 items."
+      "description": "4-5 examples, each more surprising than the last, all advancing ONE running idea stated in the first 20 seconds and paid off at the end. Never a catalogue."
     },
     {
-      "id": "mechanism_first",
-      "description": "State a surprising principle up front, then prove it with two or three concrete cases."
+      "id": "someone_had_to_find_out",
+      "description": "Follow the specific person who established what everyone now takes for granted, including what it cost them."
+    },
+    {
+      "id": "the_rule_and_its_corpse",
+      "description": "A rule exists because something went wrong. Show the rule, then show the thing that created it."
     }
   ],
   "voice": {
