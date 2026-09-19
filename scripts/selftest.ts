@@ -83,7 +83,12 @@ ok(llm.includes("thinking disabled") || llm.includes("thinkBudget"), "llm: MAX_T
 ok(research.includes("20000"), "research: input stays rich (quality was not traded for the token fix)");
 ok(src("src/types.ts").includes('detail: z.string(), sourceIds: z.array(z.string()).min(1) })).min(6)'),
   "research: still demands 6 sourced narrative details");
+const count = (hay: string, needle: string) => hay.split(needle).length - 1;
+ok(count(render, "loudnorm") === 1, "render: loudness applied exactly once", `${count(render, "loudnorm")} pass(es)`);
+ok(count(render, "sidechaincompress") === 1, "render: music ducked exactly once", `${count(render, "sidechaincompress")} pass(es)`);
+ok(count(render, "async function pickMusic") === 1, "render: one music picker, not two");
 ok(render.includes("loudnorm=I=-14"), "render: audio normalised to YouTube's -14 LUFS");
+ok(render.includes("MUSIC_GAIN"), "render: music level is configurable");
 ok(render.includes("planShots") && render.includes("Cut on the clock"), "render: shot cutting cannot silently fail");
 
 console.log(bad ? `\n❌ ${bad} regression(s).\n` : "\n✅ schemas accept real answers; invariants hold.\n");

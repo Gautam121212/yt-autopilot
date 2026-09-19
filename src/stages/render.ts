@@ -76,6 +76,9 @@ function planShots(audio: SceneAudio, target: number): { start: number; dur: num
 /** Mixed archives look mismatched; one grade pulls Commons, Pexels, NASA and Openverse together. */
 const GRADE = "eq=contrast=1.06:saturation=0.92:gamma=0.98,unsharp=5:5:0.4";
 
+/** Music sits well below the voice; the sidechain ducking does the rest. */
+const MUSIC_GAIN = Number(process.env.MUSIC_GAIN ?? 0.10);
+
 const FONTS = [
   "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
   "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
@@ -198,10 +201,16 @@ function buildSrt(scenes: Narrated[], timings: SceneTiming[], audio: SceneAudio[
   return cues.join("\n");
 }
 
-async function pickMusic(): Promise<string | undefined> {
+/**
+ * Any audio file in assets/music/ becomes a candidate bed; an empty folder means no music and
+ * nothing breaks. Chosen by seed rather than at random so a video and its Short can differ
+ * deliberately and a re-render is reproducible.
+ */
+async function pickMusic(seed: number): Promise<string | undefined> {
+  if (process.env.MUSIC === "off") return undefined;
   const dir = path.join(ROOT, "assets/music");
-  const files = (await fs.readdir(dir).catch(() => [])).filter((f) => /\.(mp3|m4a|wav)$/i.test(f));
-  return files.length ? path.join(dir, files[Math.floor(Math.random() * files.length)]!) : undefined;
+  const files = (await fs.readdir(dir).catch(() => [])).filter((f) => /\.(mp3|m4a|wav|ogg|flac)$/i.test(f)).sort();
+  return files.length ? path.join(dir, files[seed % files.length]!) : undefined;
 }
 
 export async function renderVideo(o: {
@@ -272,27 +281,14 @@ export async function renderVideo(o: {
   // Stream copy: no re-encode, so joining 28 clips takes seconds instead of ~17 minutes.
   await sh("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", list, "-c", "copy", joined]);
 
-  // Broadcast loudness. Every faceless-video project worth reading normalises to EBU R128 before
-  // upload: YouTube targets about -14 LUFS and turns anything louder DOWN, which is why raw TTS
-  // sounds thin next to professional channels. Video is stream-copied, so this costs only the audio.
-  const levelled = path.join(o.dir, `levelled-${name}.mp4`);
-  const ok = await sh("ffmpeg", [
-    "-y", "-i", joined, "-c:v", "copy",
-    "-af", "loudnorm=I=-14:TP=-1.5:LRA=11,alimiter=limit=0.95",
-    "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", levelled,
-  ]).then(() => true, () => false);
-  if (ok) {
-    await fs.rm(joined, { force: true });
-    await fs.rename(levelled, joined);
-    console.log("  audio levelled to -14 LUFS (YouTube's target)");
-  }
-
   const final = path.join(o.dir, `${name}.mp4`);
-  const music = await pickMusic();
+  const music = await pickMusic(o.seed);
   const loud = "loudnorm=I=-14:TP=-1.5:LRA=11";
   await sh("ffmpeg", music
     ? ["-y", "-i", joined, "-stream_loop", "-1", "-i", music, "-filter_complex",
-        `[0:a]asplit=2[voice][sc];[1:a]volume=0.25[m];[m][sc]sidechaincompress=threshold=0.03:ratio=10:attack=15:release=350[duck];` +
+        // 0.25 was loud enough to fight the narration; 0.10 sits under it. Ducking then dips it further
+        // whenever the voice is speaking.
+        `[0:a]asplit=2[voice][sc];[1:a]volume=${MUSIC_GAIN}[m];[m][sc]sidechaincompress=threshold=0.03:ratio=10:attack=15:release=350[duck];` +
         `[voice][duck]amix=inputs=2:duration=first:normalize=0,${loud}[a]`,
         "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", final]
     : ["-y", "-i", joined, "-af", loud, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", final]);
