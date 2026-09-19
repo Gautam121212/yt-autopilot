@@ -342,7 +342,11 @@ export async function probeQuery(query: string, era: "historical" | "modern" | "
   // the relevance work, and their captions are synonyms of the query at best ("steam rising" comes
   // back as "white smoke from a pipe") or empty at worst — scoring the caption reports 0% for
   // footage that is actually perfect. Count usable results instead.
-  if (era !== "historical") {
+  //
+  // This runs for EVERY era. Skipping stock for historical scenes is what made the topic probe say
+  // 100% and the scene probe say 0% for the same words: stock has "wooden wheel" and "old ledger",
+  // and era only decides whether we ALSO ask an archive with a period hint.
+  {
     if (pexelsKey()) {
       const r = await hfetch(`https://api.pexels.com/v1/search?per_page=15&orientation=landscape&query=${encodeURIComponent(query)}`,
         { headers: { Authorization: pexelsKey() } })

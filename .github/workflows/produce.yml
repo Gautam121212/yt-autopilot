@@ -1,7 +1,12 @@
 name: produce
 on:
   schedule:
-    - cron: "0 */3 * * *"   # every 3 hours; exits in seconds once the day's video exists
+    # GitHub drops or delays scheduled runs at the top of the hour under load ("high load times
+    # include the start of every hour" — Actions docs), so never use minute 0. Two staggered
+    # entries every 2 hours: 12 chances a day, and a dropped one costs nothing because a run that
+    # finds the day already won exits in seconds.
+    - cron: "23 1-23/2 * * *"
+    - cron: "47 0-22/2 * * *"
   workflow_dispatch:
     inputs:
       dry_run:

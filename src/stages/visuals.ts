@@ -45,7 +45,12 @@ const CLIP_FINDERS = [pexelsVideo, pixabayVideo];
 export async function replaceSceneImage(
   cfg: ChannelConfig, scene: { id: string; imageQuery: string; altQueries?: string[]; era?: string }, file: string, used: Set<string>, videoId: number, fallbacks?: string[],
 ): Promise<ImageCredit | null> {
-  const sources = cfg.imageSources.filter((n) => !(scene.era === "historical" && n === "pexels")).map((n) => FINDERS[n]!).filter(Boolean);
+  // Same rule as above: order by era, never drop a source.
+  const names = cfg.imageSources.filter((n) => FINDERS[n]);
+  const ordered = scene.era === "historical"
+    ? [...names.filter((n) => n === "commons" || n === "openverse"), ...names.filter((n) => n !== "commons" && n !== "openverse")]
+    : names;
+  const sources = ordered.map((n) => FINDERS[n]!);
   const parts = scene.imageQuery.split(/\s+/).filter(Boolean);
   for (const q of [...(scene.altQueries ?? []), scene.imageQuery, parts.slice(0, 2).join(" "), ...(fallbacks ?? cfg.fallbackImageQueries)]) {
     for (const find of sources) {
@@ -78,9 +83,24 @@ export async function sceneImages(
   const fallbackList = fallbacks?.length ? fallbacks : cfg.fallbackImageQueries;
   await fs.mkdir(dir, { recursive: true });
   if (!cfg.imageSources.length) throw new Error(`imageSources must name known sources: ${Object.keys(FINDERS).join(", ")}`);
-  // Pexels is modern stock; a 19th-century subject must never be illustrated from it.
-  const sourcesFor = (era?: string) =>
-    cfg.imageSources.filter((n) => !(era === "historical" && n === "pexels")).map((n) => FINDERS[n]!).filter(Boolean);
+  /**
+   * Source ORDER changes with era; the source LIST never shrinks.
+   *
+   * Excluding stock for historical scenes left them with archives only, and archive titles are
+   * scored by word overlap, which reports nothing for generic terms. Stock genuinely holds
+   * "wooden wheel", "old ledger", "rusty hull" — timeless objects and textures that suit a
+   * period scene. What must not come from stock is anything visibly modern, and the approved
+   * subject list plus the people filter already prevent that.
+   */
+  const sourceNamesFor = (era?: string): string[] => {
+    const all = cfg.imageSources.filter((n) => FINDERS[n]);
+    if (era !== "historical") return all;
+    const isArchive = (n: string) => n === "commons" || n === "openverse";
+    return [...all.filter((n) => isArchive(n)), ...all.filter((n) => !isArchive(n))];
+  };
+  const namedSourcesFor = (era?: string): [string, (q: string, u: Set<string>, f: string) => Promise<ImageHit | null>][] =>
+    sourceNamesFor(era).map((n) => [n, FINDERS[n]!]);
+  const sourcesFor = (era?: string) => sourceNamesFor(era).map((n) => FINDERS[n]!);
 
   // Fetch a small pool of on-topic real footage up front. A scene that misses or stalls takes from
   // this pool, so a slow network produces a real picture rather than a text slide.
@@ -152,14 +172,18 @@ export async function sceneImages(
     const file = path.join(dir, `${String(i).padStart(3, "0")}.jpg`);
     const parts = s.imageQuery.split(/\s+/).filter(Boolean);
     const sources = sourcesFor(s.era);
-    const hint = s.era === "historical" ? ` ${HISTORICAL_HINT}` : "";
-    const queries = [s.imageQuery + hint, ...(s.altQueries ?? []).map((q) => q + hint), parts.slice(0, 2).join(" ")]
+    // The period hint helps archives and actively HURTS stock libraries — "old ledger engraving
+    // lithograph archive photograph" finds nothing on Pexels — so it is applied per source, never globally.
+    const named = namedSourcesFor(s.era);
+    const archival = (n: string) => n === "commons" || n === "openverse";
+    const hintFor = (n: string) => (s.era === "historical" && archival(n) ? ` ${HISTORICAL_HINT}` : "");
+    const queries = [s.imageQuery, ...(s.altQueries ?? []), parts.slice(0, 2).join(" ")]
       .filter((q, j, a) => q && a.indexOf(q) === j);
 
     let best: ImageHit | null = null;
     outer: for (const q of queries) {
-      for (const find of sources) {
-        const got = await find(q, used, file).catch(() => null);
+      for (const [name, find] of named) {
+        const got = await find(q + hintFor(name), used, file).catch(() => null);
         if (got && (!best || got.score > best.score)) best = got;
         if (best && best.score >= 0.5) break outer; // clearly on-topic
       }
@@ -212,7 +236,7 @@ export async function sceneImages(
       if (files.length >= WANT) break;
       const more = path.join(dir, `${String(i).padStart(3, "0")}b${files.length}.jpg`);
       for (const find of sources) {
-        const hit = await find(q + (s.era === "historical" ? ` ${HISTORICAL_HINT}` : ""), used, more).catch(() => null);
+        const hit = await find(q, used, more).catch(() => null);
         if (hit) { files.push(more); break; }
       }
     }
