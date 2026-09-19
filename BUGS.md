@@ -50,6 +50,11 @@ return, which is how several of these appeared twice.
 
 | 24 | Audit's stage-ordering check failed on a code comment | it matched bare words like "rendering" anywhere in the file | matches log CALLS (`} rendering\``), not prose |
 
+| 25 | Mistral 403 on every call, silently falling back to Gemini | default `mistral-large-latest` is not on the free tier | free-tier defaults + `npm run models:mistral`; the 403 now explains itself |
+| 26 | 601-word script after two expand rounds | the brief gave a TOTAL word target; models work to per-item quotas | per-role word budget; expand names the short scenes and their targets |
+| 27 | Expand hit MAX_TOKENS | thinking budget took a share of the 8192 output cap on the longest-output call | `thinkingBudget: 0` for writing passes |
+| 28 | Manual run ignored the day's target | `FORCE` bypassed the daily quota as well as the failure cap | daily quota is unconditional; `FORCE` only lifts the failure cap |
+
 ## Adding a bug
 
 1. Add a row: what broke, what caused it, which guard catches it.

@@ -44,8 +44,9 @@ const NAMED: Record<string, { baseUrl: string; key: string; heavy: string; light
   mistral: {
     baseUrl: process.env.MISTRAL_BASE_URL || "https://api.mistral.ai/v1",
     key: process.env.MISTRAL_API_KEY || "",
-    heavy: process.env.MISTRAL_MODEL_HEAVY || "mistral-large-latest",
-    light: process.env.MISTRAL_MODEL_LIGHT || "mistral-small-latest",
+    // Free keys are NOT entitled to mistral-large — that returns 403. These are the free models.
+    heavy: process.env.MISTRAL_MODEL_HEAVY || "mistral-small-latest",
+    light: process.env.MISTRAL_MODEL_LIGHT || "open-mistral-nemo",
   },
   groq: {
     baseUrl: process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
@@ -381,13 +382,22 @@ export async function askJson<T>(o: {
           }
         } catch (err) {
           // A routed provider failing is not fatal: fall through to the default path below.
-          console.warn(`    [llm] ${routed} failed (${(err as Error).message.slice(0, 80)}); using ${PROVIDER}`);
+          const msg = (err as Error).message;
+          const hint = /\b403\b/.test(msg)
+            ? ` — 403 usually means this key cannot use "${m}". Run \`npm run models:mistral\` to pick one it can.`
+            : /\b401\b/.test(msg) ? " — 401: the key is wrong or not activated."
+            : "";
+          console.warn(`    [llm] ${routed} failed: ${msg.slice(0, 160)}${hint}`);
+          console.warn(`    [llm] falling back to ${PROVIDER} for this call`);
         }
       }
 
       const text = PROVIDER === "anthropic" ? await anthropic(model, o.system, body, o.maxTokens ?? 32000)
         : PROVIDER === "openai-compatible" ? await openaiCompatible(model, o.system, body, o.maxTokens ?? 16000, o.images, timeoutFor(o.tier))
-        : await geminiWithFallback(model, o.system, body, budget, o.images, timeoutFor(o.tier)).catch(async (e) => {
+        : await geminiWithFallback(model, o.system, body, budget, o.images, timeoutFor(o.tier),
+            // Writing passes produce the most text and need no reasoning; giving thinking a share
+            // of the 8192 output budget is what made expand hit MAX_TOKENS.
+            o.role === "write" ? 0 : undefined).catch(async (e) => {
             // Ran out of output budget. On thinking models the cure is to stop it thinking — the
             // reasoning was eating the same 8192 tokens the answer needed.
             if (isMaxTokens(e)) {

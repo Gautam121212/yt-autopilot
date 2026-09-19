@@ -130,8 +130,10 @@ async function main() {
          and status in ('ready','awaiting_publish','awaiting_approval','scheduled','published')`,
       [cfg.productionTimezone],
     );
-    if (todaysWins >= cfg.videosPerDay && !isDryRun() && process.env.FORCE_PRODUCE !== "true") {
-      return log(`today's video is already done (${todaysWins}/${cfg.videosPerDay} in ${cfg.productionTimezone}); nothing to do until tomorrow. Override with FORCE=true npm run video:live`);
+    // FORCE exists to bypass the weekly FAILURE cap, not the day's target: once today's video
+    // exists, a manual run should stop too, or the cron and the human fight each other.
+    if (todaysWins >= cfg.videosPerDay && !isDryRun()) {
+      return log(`today's video is already done (${todaysWins}/${cfg.videosPerDay} in ${cfg.productionTimezone}); nothing to do until tomorrow. Raise videosPerDay in config/channel.json to make more.`);
     }
     if (todaysWins) log(`${todaysWins}/${cfg.videosPerDay} done today — going again`);
 

@@ -29,10 +29,26 @@ THE BEAT SHEET — every video uses exactly this shape. Each scene declares its 
 12. kicker (last scene) — the best absurd detail, deliberately held back until now.
 You may repeat escalation and mechanism as needed to fill 14-18 scenes.
 
-LENGTH — this is the constraint writers miss most, so count as you go:
-15 scenes x 80 words = 1,200 words = about 8 minutes. That is the target.
-HARD FLOOR: ${minM * cfg.wordsPerMinute} words total and 78 words in EVERY scene (13 x 78 = 1,014 minimum). A 500-word script is a failure
-even if every other rule is followed. Write full paragraphs, not bullet points in prose form.
+LENGTH — writers miss this more than any other rule, so work to a PER-SCENE budget, not a total.
+Write each scene to its own quota and the total takes care of itself:
+
+  role         how many   words each
+  cold_open        1        60-75    (a hook, not an essay)
+  reaction         1        45-60    (one beat; the shortest scene in the video)
+  premise          1        85-100
+  escalation      4-6       90-110   (the body of the video — these carry the length)
+  turn             1        90-110
+  mechanism       1-2      110-130   (the longest scenes: the real explanation lives here)
+  payoff           1        85-100
+  kicker           1        60-80    (land it and stop)
+
+13-18 scenes, ${minM * cfg.wordsPerMinute}-${maxM * cfg.wordsPerMinute} words in total.
+HARD FLOOR: ${minM * cfg.wordsPerMinute} words total, and no scene under 45 words.
+
+Before answering, count the words in each scene and compare it against its quota above. A 600-word
+script is thrown away however good it reads, because the video is unpublishable at that length.
+Write full paragraphs of flowing narration — never bullet points rendered as prose, never a summary
+of what the scene would say.
 
 HARD RULES
 6. Every factual statement is backed by a claim whose sourceIds exist in the dossier. Never invent numbers,
@@ -185,7 +201,14 @@ export async function expandScript(o: { cfg: ChannelConfig; playbook: string; sc
 Your ONLY job is to lengthen it. Keep every scene, its id, its role, its order, its imageQuery, altQueries,
 motion, era, cardHeadline and cardSub exactly as they are. Keep the title and thumbnailText.
 
-Bring EVERY scene to 75-95 words by adding material that is already in the dossier: the specific numbers, the
+SCENES THAT ARE SHORT, with their targets — fix these specifically:
+${o.script.scenes
+  .map((sc) => ({ sc, w: sc.narration.trim().split(/\s+/).filter(Boolean).length }))
+  .filter((x) => x.w < 85)
+  .map((x) => `- ${x.sc.id} (${x.sc.role}): ${x.w} words -> needs ${x.sc.role === "mechanism" ? "110-130" : x.sc.role === "reaction" || x.sc.role === "cold_open" || x.sc.role === "kicker" ? "60-80" : "90-110"}`)
+  .join("\n")}
+
+Bring every listed scene to its target by adding material that is already in the dossier: the specific numbers, the
 named people, the times of day, what people saw, what the equipment did, the bureaucratic aftermath. Where the
 dossier has a detail you skipped, use it. Add a deadpan beat where one fits. Do NOT invent facts, do NOT add
 scenes, do NOT restate the same point twice to pad.

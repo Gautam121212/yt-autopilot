@@ -33,7 +33,8 @@
     "audit": "tsx --env-file-if-exists=.env scripts/audit.ts",
     "selftest": "tsx --env-file-if-exists=.env scripts/selftest.ts",
     "verify": "npm run audit && npm run selftest",
-    "music:make": "tsx --env-file-if-exists=.env scripts/make-music.ts"
+    "music:make": "tsx --env-file-if-exists=.env scripts/make-music.ts",
+    "models:mistral": "tsx --env-file-if-exists=.env scripts/list-mistral-models.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

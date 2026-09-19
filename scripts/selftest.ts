@@ -115,6 +115,12 @@ for (const [file, role] of Object.entries(stageRole)) {
   ok(src(`src/stages/${file}`).includes(`role: "${role}"`), `#22 ${file} routes to "${role}"`);
 }
 ok(llm.includes("ROLE_PROVIDER") && llm.includes("NAMED"), "#22 role routing is wired in the client");
+ok(!llm.includes('"mistral-large-latest"'), "#25 no paid Mistral model as a free-tier default");
+ok(llm.includes('o.role === "write" ? 0'), "#27 writing passes disable thinking so the output fits");
+ok(!produce.includes('todaysWins >= cfg.videosPerDay && !isDryRun() && process.env.FORCE_PRODUCE'),
+  "#28 the daily target is not bypassed by FORCE");
+const scriptTxt = src("src/stages/script.ts");
+ok(scriptTxt.includes("words each") && scriptTxt.includes("mechanism"), "#26 script brief gives a per-role word budget");
 const scriptSrc = src("src/stages/script.ts");
 ok(count(scriptSrc, 'role: "write"') >= 3 && count(scriptSrc, 'role: "judge"') >= 3,
   "#22 script.ts: writing passes write, repair passes judge");

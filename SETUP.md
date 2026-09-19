@@ -492,3 +492,24 @@ npm run music:make
 Synthesises three documentary beds with ffmpeg — generated tones, so no licence and no attribution.
 Measured: energy sits 35 dB below the speech band, so it never competes with narration. Replace them
 with YouTube Audio Library tracks any time; anything in `assets/music/` is used automatically.
+
+## Mistral: pick a model your key can actually call
+
+A free Mistral key is **not** entitled to `mistral-large-latest` — it returns 403 and the routed call
+silently falls back to Gemini, which defeats the whole split.
+
+```bash
+npm run models:mistral
+```
+
+It lists what your key may call, probes each with a real JSON request, and writes the working ones
+into `MISTRAL_MODEL_HEAVY` / `_LIGHT`. Defaults if you skip it: `mistral-small-latest` and
+`open-mistral-nemo`, both on the free tier.
+
+A 403 in the logs now says so explicitly rather than showing a truncated error body.
+
+## The daily target is unconditional
+
+Once today's video exists, `produce` stops — whether it was triggered by cron or by you. `FORCE`
+lifts the weekly *failure* cap only. To make more than one a day, raise `videosPerDay` in
+`config/channel.json`.
