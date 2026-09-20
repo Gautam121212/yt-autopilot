@@ -57,13 +57,20 @@ jobs:
           SHOT_SECS_V: "3.5"             # target shot length, Short
           # `npm run github` pushes .env values as SECRETS, so secrets must be read first — reading
           # only `vars` silently ignored everything you configured locally.
+          # Jobs go to whoever is best at them: Mistral for volume and long output, Gemini kept
+          # for the two stages that must SEE pixels.
           LLM_ROLE_GATE: ${{ secrets.LLM_ROLE_GATE || vars.LLM_ROLE_GATE || 'mistral' }}
           LLM_ROLE_WRITE: ${{ secrets.LLM_ROLE_WRITE || vars.LLM_ROLE_WRITE || 'mistral' }}
-          LLM_ROLE_JUDGE: ${{ secrets.LLM_ROLE_JUDGE || vars.LLM_ROLE_JUDGE || 'gemini' }}
+          LLM_ROLE_JUDGE: ${{ secrets.LLM_ROLE_JUDGE || vars.LLM_ROLE_JUDGE || 'mistral' }}
+          LLM_ROLE_VISION: ${{ secrets.LLM_ROLE_VISION || vars.LLM_ROLE_VISION || 'gemini' }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           MISTRAL_MODEL_HEAVY: ${{ secrets.MISTRAL_MODEL_HEAVY || vars.MISTRAL_MODEL_HEAVY || 'mistral-small-latest' }}
           MISTRAL_MODEL_LIGHT: ${{ secrets.MISTRAL_MODEL_LIGHT || vars.MISTRAL_MODEL_LIGHT || 'open-mistral-nemo' }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GEMINI_OUTPUT_CAP: "8192"        # Flash's real output ceiling, thinking included
           GEMINI_THINKING_BUDGET: "1536"   # leaves ~6.6k tokens for the answer itself
           LLM_TIMEOUT_LIGHT_MS: "150000"   # classification-sized calls fail fast

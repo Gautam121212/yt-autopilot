@@ -387,12 +387,24 @@ async function main() {
       // below this can only waste an hour of rendering. Repair is cheap; rendering is not.
       const bar = cfg.approval.minScriptScore;
       for (let attempt = 1; fc.likely < bar && attempt <= 2; attempt++) {
-        log(`#${video.id} script at ${fc.likely}/10, below the ${bar} bar — repairing (${attempt}/2)`);
-        const better = await repairScript({ cfg, playbook, script, dossier: video.dossier!, issues: fc.fixes }).catch(() => null);
+        // Attempt 1 repairs the draft. Attempt 2 writes a NEW one that knows what was wrong —
+        // repairing twice produced identical scores, because the weakness was in the draft's
+        // conception, not in fixable details.
+        const label = attempt === 1 ? "repairing" : "rewriting from scratch";
+        log(`#${video.id} script at ${fc.likely}/10, below the ${bar} bar — ${label} (${attempt}/2)`);
+        const better = attempt === 1
+          ? await repairScript({ cfg, playbook, script, dossier: video.dossier!, issues: fc.fixes }).catch(() => null)
+          : await writeScript({
+              cfg, playbook, structure, topic: video.topic, dossier: video.dossier!,
+              recent: await recentForVariety(),
+              critique: `A reviewer scored the previous draft ${fc.likely}/10, below the ${bar} bar. Its weakest point: ` +
+                `${fc.weakest}. Specific faults: ${fc.fixes.map((f) => f.what).join("; ")}. ` +
+                `Write a DIFFERENT draft — a different opening, a different order of reveals — that does not repeat them.`,
+            }).catch(() => null);
         if (!better) break;
         const bfc = await forecast({ cfg, script: better, dossier: video.dossier!, history: hist, feasible: feas.feasible });
+        log(`#${video.id} after ${attempt === 1 ? "repair" : "rewrite"}: ${bfc.likely}/10`);
         if (bfc.likely > fc.likely) { script = better; fc = bfc; await updateVideo(video.id, { script, title: script.title }); }
-        log(`#${video.id} after repair: ${fc.likely}/10`);
       }
       if (fc.likely < bar) {
         await updateVideo(video.id, { status: "abandoned", predicted_score: fc.likely });

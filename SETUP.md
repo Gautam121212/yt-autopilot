@@ -562,3 +562,79 @@ rate_limited` no matter how slowly you ask, while the **ministral** family works
 
 Defaults are `ministral-14b-2512` (heavy) and `ministral-3b-2512` (light). `npm run models:mistral`
 probes in throughput order and reports which ones your key is served.
+
+## Who does what, and why
+
+Measured with `npm run providers`, not copied from documentation:
+
+| Job | Stages | Provider | Why that one |
+|---|---|---|---|
+| `gate` | topic scoring, filmability, feasibility, per-scene checks | Mistral `ministral-3b` | dozens of tiny JSON calls; needs 12.5 req/s, not intelligence |
+| `write` | research, script, expand, comedy | Mistral `ministral-14b` | one long answer; 937k tokens/min and no 8K output ceiling |
+| `judge` | fact check, forecast, repairs | Mistral | reading and scoring text — no reason to spend Gemini on it |
+| `vision` | image QA, final check | **Gemini only** | these look at pixels; no other free provider here can |
+
+The point of the split: **Gemini's daily quota is now spent only on the two stages nothing else can
+do.** Writing a 1,200-word script against Gemini's 8192-token output cap was the binding constraint
+all week; Mistral has no such ceiling. A call carrying images is never routed away from Gemini, so
+the vision stages cannot be broken by a misconfigured role.
+
+```bash
+LLM_ROLE_GATE=mistral
+LLM_ROLE_WRITE=mistral
+LLM_ROLE_JUDGE=mistral
+LLM_ROLE_VISION=gemini
+```
+
+## Free providers that actually exist in 2026
+
+GitHub Models is gone (retired 30 July 2026). What remains, measured September 2026 — no card
+required for any of these:
+
+Tested September 2026 with `npm run providers`. Advertised free tiers and real ones differ a lot:
+
+| Provider | Status when tested | Notes |
+|---|---|---|
+| **Gemini** | ✅ works | the only one that can see images |
+| **Mistral** | ✅ works | ~1B tokens/month; `ministral-14b` / `ministral-3b` |
+| Z.ai GLM-4.7-Flash | ⚠️ error 1305 "model too busy" | 200K context when it answers, but one concurrent request and often congested |
+| Cerebras | ❌ HTTP 402 payment required | the $5 credit needs a card; not a standing free tier |
+| Groq | ⚠️ `gpt-oss-120b` fails JSON mode; `llama-3.1-8b-instant` retired | `qwen/qwen3-32b` is the working default |
+| NVIDIA NIM | ❌ HTTP 410 Gone | the llama-3.x endpoints were retired |
+| OpenRouter | ❌ the known `:free` slugs are now paid | check openrouter.ai/models?q=free for a current one |
+
+**Two providers is enough.** Gemini for vision, Mistral for everything else, and Mistral's monthly
+budget is far larger than this pipeline consumes. Extra keys add resilience, not capability.
+
+**No single one replaces Gemini.** Each runs out in a different dimension — tokens per day, requests
+per day, tokens per minute, context size — so the pipeline now treats a role as a *preference* and
+tries every configured provider before falling back to Gemini.
+
+Add as many keys as you like; all are optional:
+
+```bash
+# .env — every one of these is optional
+MISTRAL_API_KEY=...      # mistral.ai → La Plateforme
+ZAI_API_KEY=...          # open.bigmodel.cn  (best context for script writing)
+CEREBRAS_API_KEY=...     # cloud.cerebras.ai (1M tokens/day, 8K context)
+GROQ_API_KEY=...         # console.groq.com
+NVIDIA_API_KEY=...       # build.nvidia.com
+OPENROUTER_API_KEY=...   # openrouter.ai
+```
+
+With three of these configured the pipeline simply does not run out: a `write` call tries Z.ai, then
+Mistral, then Groq, then Cerebras, then NVIDIA, then OpenRouter, and only then Gemini.
+
+**Note on Cerebras**: 1M tokens/day sounds ideal but the free tier caps *context* at 8K, which a
+script call against a full dossier exceeds. Use it for `gate`, not `write`.
+
+## Checking every provider
+
+```bash
+npm run providers
+```
+
+Sends one real JSON-mode request to Gemini and to every configured provider, reporting what works,
+what is rate-limited, and what is misconfigured — and, when a heavy model fails, whether the light
+one works so you can use that instead. Tests what the pipeline actually does, because a key can list
+models happily and still be refused a completion.

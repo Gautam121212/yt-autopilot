@@ -104,12 +104,19 @@ ok(feas.includes("FINDABLE") && !feas.includes("const GOOD"), "#6 one shared fin
 ok(visuals.includes("sourceNamesFor") && !visuals.includes('!(era === "historical" && n === "pexels")'), "#6 era orders sources, never drops them");
 ok(produce.includes("productionTimezone"), "#8 daily quota counted in the channel's timezone");
 ok(produce.includes("worthUploading"), "#final gate: nothing uploaded below the bar");
+// #37 the CLI must not claim an upload it cannot verify.
+const cloud = src("scripts/cloud.sh");
+ok(!/echo "✅ Uploaded\./.test(cloud) && cloud.includes("youtube_id"),
+  "#37 the finish message reports the real outcome, not just a clean exit");
 ok(count(render, "pickMusic(o.seed)") >= 1, "#14 music picker is actually called");
 
 // #22 role routing: every stage must declare which model does its job, and the split must be sane.
 const stageRole: Record<string, string> = {
   "topic.ts": "gate", "feasibility.ts": "gate", "scene-qa.ts": "gate",
-  "research.ts": "write", "verify.ts": "judge", "forecast.ts": "judge", "review.ts": "judge",
+  "research.ts": "write",
+  "verify.ts": "judge", "forecast.ts": "judge",
+  // These two look at pixels, so they belong to vision, not judge (#41).
+  "review.ts": "vision", "image-qa.ts": "vision",
 };
 for (const [file, role] of Object.entries(stageRole)) {
   ok(src(`src/stages/${file}`).includes(`role: "${role}"`), `#22 ${file} routes to "${role}"`);
@@ -125,11 +132,36 @@ for (const key of ["LLM_ROLE_GATE", "LLM_ROLE_WRITE", "LLM_ROLE_JUDGE", "MISTRAL
 }
 ok(llm.includes('o.role === "write" ? 0'), "#27 writing passes disable thinking so the output fits");
 ok(llm.includes("paceFor("), "#33 calls to a provider are paced against its rate limit");
+ok(llm.includes("cerebras") && llm.includes("zai") && llm.includes("nvidia") && llm.includes("openrouter"),
+  "#39 several free providers are configured, not one");
+// Every provider in the client must be testable, or a broken key is only discovered mid-run.
+{
+  const checker = src("scripts/check-providers.ts");
+  const names = ["mistral", "zai", "groq", "cerebras", "nvidia", "openrouter"];
+  ok(names.every((n) => checker.includes(`name: "${n}"`)), "#40 every provider is covered by `npm run providers`");
+}
+ok(llm.includes("trying ${nextName}") || llm.includes("for (const nextName of order"),
+  "#39 a failing provider tries the next before Gemini");
+ok(produce.includes("rewriting from scratch"), "#38 the script bar rewrites, not just repairs");
+// #41 only the two stages that look at pixels may claim the vision role.
+ok(src("src/stages/review.ts").includes('role: "vision"') && src("src/stages/image-qa.ts").includes('role: "vision"'),
+  "#41 image QA and the final check are routed to vision");
+ok(src("src/stages/verify.ts").includes('role: "judge"') && src("src/stages/forecast.ts").includes('role: "judge"'),
+  "#41 text-only judging does not consume the vision provider");
+ok(llm.includes("needsSight"), "#41 a call carrying images is never routed to a text-only provider");
+ok(!llm.includes('"llama-3.1-8b-instant"'), "#42 no defaults pointing at retired models");
 // Exactly one pacing mechanism per provider — two would double every gap and halve throughput.
 ok(count(llm, "lastGemini = Date.now()") === 1 && count(llm, "lastCallAt.set") === 1,
   "#35 one pacer per provider, not two");
-ok(count(llm, "Math.min(budget, o.maxTokens") === 2,
-  "#34 routed and fallback calls honour the shrinking budget");
+{
+  // Count call sites that pass a fixed size versus the shrinking budget — a number would go stale
+  // every time a provider is added, which is exactly what just happened.
+  const fixed = count(llm, "body, o.maxTokens ?? 16000");
+  const budgeted = count(llm, "Math.min(budget, o.maxTokens");
+  ok(budgeted >= 3 && fixed === 1,
+    "#34 every routed/fallback call honours the shrinking budget",
+    `${budgeted} budgeted, ${fixed} fixed (the single-provider legacy path)`);
+}
 ok(!llm.includes('"mistral-large-latest"') && llm.includes("mistral-large-2512"),
   "#32 Mistral defaults are dated ids, not aliases");
 ok(!produce.includes('todaysWins >= cfg.videosPerDay && !isDryRun() && process.env.FORCE_PRODUCE'),

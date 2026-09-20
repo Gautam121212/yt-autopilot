@@ -60,6 +60,12 @@ return, which is how several of these appeared twice.
 | 32 | `-latest` aliases 403 while dated ids work | an alias can resolve to a model the key is not entitled to | defaults are dated ids taken from the account's limits page |
 | 33 | A run could rate-limit itself mid-production | no pacing between calls to the same endpoint | `paceFor()` enforces a minimum gap per endpoint |
 | 35 | Prober tested only models this plan cannot call | it ranked by name ("medium" > "ministral"), so it never reached the working models and stopped after 10 | ranks by the throughput the limits page grants; probes every listed model |
+| 38 | Script bar repaired twice to the same 7/10 | repairing a structurally-fine draft cannot lift it; only a different draft can | attempt 2 rewrites from scratch with the critique |
+| 41 | Gemini's scarce quota spent on text-only judging | one "judge" role covered both reading scripts and looking at pixels | split into `judge` (text, Mistral) and `vision` (Gemini only) |
+| 42 | Provider defaults pointed at dead or paid models | copied from documentation rather than tested | every default now matches what `npm run providers` actually returned |
+| 40 | A broken key was only discovered mid-run | nothing tested providers end to end | `npm run providers` sends a real JSON request to each; guard keeps it in sync with the client |
+| 39 | A failing routed provider dropped straight to an exhausted Gemini | the role named one provider and nothing else was tried | the role is a preference; every configured provider is tried first |
+| 37 | "✅ Uploaded" printed when nothing was uploaded | the message fired on any zero exit; abandoning at a gate, and holding a video, both exit 0 | the finish line reads the database and reports the real outcome |
 | 36 | `source .env` reported a valid key as 401 | one odd line (`LLM_FALLBACKS` contains `\|` and spaces) makes `source` stop, leaving later vars unset | diagnose with `npx tsx --env-file-if-exists=.env`, never `source` |
 | 34 | Routed calls ignored the shrinking retry budget | the routed path used a fixed `maxTokens`, so an overflow repeated the same oversized ask | routed and fallback calls use `Math.min(budget, …)` |
 | — | *(nearly #35)* A second Gemini pacer | `grep paceFor` missed the existing `lastGemini` timer, which uses a different mechanism | guard asserts exactly one pacer per provider; read the function, not the search result |

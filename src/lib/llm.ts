@@ -34,7 +34,7 @@ export type Tier = "heavy" | "light";
  *
  * "auto" = use LLM_PROVIDER, i.e. the old single-provider behaviour.
  */
-export type Role = "gate" | "write" | "judge" | "auto";
+export type Role = "gate" | "write" | "judge" | "vision" | "auto";
 const PROVIDER = process.env.LLM_PROVIDER || "gemini";
 
 export const usage = { inputTokens: 0, outputTokens: 0, calls: 0, webSearches: 0, estCostUsd: 0 };
@@ -50,22 +50,70 @@ const NAMED: Record<string, { baseUrl: string; key: string; heavy: string; light
     // for the many small gate calls.
     // The ministral family is what free keys are actually served: 937k/625k/1.3M tokens per minute
     // against 20k for the mistral-medium family, which returns 1300 (rate limited) on a free plan.
+    // 937k tokens/min for the long script answer; 1.3M/min at 12.5 req/s for the many small calls.
     heavy: process.env.MISTRAL_MODEL_HEAVY || "ministral-14b-2512",
     light: process.env.MISTRAL_MODEL_LIGHT || "ministral-3b-2512",
   },
   groq: {
+    // gpt-oss-120b fails JSON-mode validation and llama-3.1-8b-instant no longer exists.
+    // qwen3-32b honours response_format properly.
     baseUrl: process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
     key: process.env.GROQ_API_KEY || "",
-    heavy: process.env.GROQ_MODEL_HEAVY || "llama-3.3-70b-versatile",
-    light: process.env.GROQ_MODEL_LIGHT || "llama-3.1-8b-instant",
+    heavy: process.env.GROQ_MODEL_HEAVY || "qwen/qwen3-32b",
+    light: process.env.GROQ_MODEL_LIGHT || "qwen/qwen3-32b",
+  },
+  cerebras: {
+    // NOTE: returns 402 "payment required" on new accounts — the $5 credit needs a card attached.
+    // Kept configurable in case that changes; do not rely on it.
+    baseUrl: process.env.CEREBRAS_BASE_URL || "https://api.cerebras.ai/v1",
+    key: process.env.CEREBRAS_API_KEY || "",
+    heavy: process.env.CEREBRAS_MODEL_HEAVY || "gpt-oss-120b",
+    light: process.env.CEREBRAS_MODEL_LIGHT || "gpt-oss-120b",
+  },
+  zai: {
+    // GLM-4.7-Flash: 200K context, 128K output, but ONE concurrent request and frequently
+    // congested (error 1305 "model too busy"). Good when it answers; never rely on it alone.
+    baseUrl: process.env.ZAI_BASE_URL || "https://open.bigmodel.cn/api/paas/v4",
+    key: process.env.ZAI_API_KEY || "",
+    heavy: process.env.ZAI_MODEL_HEAVY || "glm-4.7-flash",
+    light: process.env.ZAI_MODEL_LIGHT || "glm-4.5-flash",
+  },
+  nvidia: {
+    // NOTE: the llama-3.x endpoints now return 410 Gone. Set NVIDIA_MODEL_* to a model that is
+    // still live at build.nvidia.com before enabling this.
+    baseUrl: process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1",
+    key: process.env.NVIDIA_API_KEY || "",
+    heavy: process.env.NVIDIA_MODEL_HEAVY || "meta/llama-3.3-70b-instruct",
+    light: process.env.NVIDIA_MODEL_LIGHT || "meta/llama-3.1-8b-instruct",
+  },
+  openrouter: {
+    baseUrl: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
+    key: process.env.OPENROUTER_API_KEY || "",
+    // NOTE: the well-known ":free" slugs now answer "unavailable for free". Check
+    // openrouter.ai/models?q=free for a current one before enabling this.
+    heavy: process.env.OPENROUTER_MODEL_HEAVY || "z-ai/glm-4.5-air:free",
+    light: process.env.OPENROUTER_MODEL_LIGHT || "z-ai/glm-4.5-air:free",
   },
 };
 
-/** Which named provider (or "gemini") handles each role; unset roles fall back to LLM_PROVIDER. */
+/**
+ * Which provider handles each job, chosen by what each is actually good at rather than by
+ * preference. Measured with `npm run providers`:
+ *
+ *   gate   — dozens of small JSON calls. Wants requests-per-second, not intelligence.
+ *            ministral-3b: 1.3M tokens/min at 12.5 req/s.
+ *   write  — one long JSON answer against a big dossier. Wants output budget and context.
+ *            ministral-14b: 937k tokens/min. Gemini's 8192-token output cap is the binding
+ *            constraint there, which is why writing should NOT be Gemini's job.
+ *   judge  — reading a script and scoring it. Text only, so it need not cost Gemini quota.
+ *   vision — image QA and the final check. These look at pixels, and Gemini is the only free
+ *            provider here that can. Everything else is kept off it so this always has quota.
+ */
 const ROLE_PROVIDER: Record<Exclude<Role, "auto">, string> = {
-  gate: process.env.LLM_ROLE_GATE || "",     // topic scoring, feasibility, per-scene checks
-  write: process.env.LLM_ROLE_WRITE || "",   // research, script, expand, comedy
-  judge: process.env.LLM_ROLE_JUDGE || "",   // verify, forecast, repair, final review
+  gate: process.env.LLM_ROLE_GATE || "",      // topic scoring, feasibility, per-scene checks
+  write: process.env.LLM_ROLE_WRITE || "",    // research, script, expand, comedy
+  judge: process.env.LLM_ROLE_JUDGE || "",    // verify, forecast, repairs — text only
+  vision: process.env.LLM_ROLE_VISION || "",  // image QA, final review — needs to SEE
 };
 
 const MODELS: Record<string, Record<Tier, string>> = {
@@ -383,10 +431,19 @@ export async function askJson<T>(o: {
 
       // Role routing: a named provider takes the call, unless the role is unset or its key is missing.
       const routed = o.role && o.role !== "auto" ? ROLE_PROVIDER[o.role] : "";
-      const named = routed && routed !== "gemini" ? NAMED[routed] : undefined;
+      // The role names a preference, not the only option: every other configured provider is tried
+      // before falling back to Gemini, because each free tier runs out in a different way.
+      // A call carrying images can only go to a provider that can see. Of the free providers here
+      // that is Gemini alone, so a vision call is never routed away from it.
+      const needsSight = (o.images?.length ?? 0) > 0 || o.role === "vision";
+      const order = routed && routed !== "gemini" && !needsSight
+        ? [routed, ...Object.keys(NAMED).filter((n) => n !== routed)]
+        : [];
+      const named = order.map((n) => NAMED[n]).find((x) => x?.key);
+      const namedName = order.find((n) => NAMED[n]?.key) ?? routed;
       if (named?.key) {
         const m = o.tier === "heavy" ? named.heavy : named.light;
-        console.log(`    [llm] ${o.role} -> ${routed} (${m})`);
+        console.log(`    [llm] ${o.role} -> ${namedName} (${m})`);
         try {
           const out = await openaiCompatible(m, o.system, body, Math.min(budget, o.maxTokens ?? 16000),
             o.images, timeoutFor(o.tier), named.baseUrl, named.key);
@@ -405,8 +462,25 @@ export async function askJson<T>(o: {
             ? ` — 403 usually means this key cannot use "${m}". Run \`npm run models:mistral\` to pick one it can.`
             : /\b401\b/.test(msg) ? " — 401: the key is wrong or not activated."
             : "";
-          console.warn(`    [llm] ${routed} failed: ${msg.slice(0, 160)}${hint}`);
-          console.warn(`    [llm] falling back to ${PROVIDER} for this call`);
+          console.warn(`    [llm] ${namedName} failed: ${msg.slice(0, 160)}${hint}`);
+          // Try every other configured provider before giving the call to Gemini.
+          for (const nextName of order.filter((n) => n !== namedName)) {
+            const next = NAMED[nextName];
+            if (!next?.key) continue;
+            const nm = o.tier === "heavy" ? next.heavy : next.light;
+            try {
+              console.warn(`    [llm] trying ${nextName} (${nm})`);
+              const out2 = await openaiCompatible(nm, o.system, body, Math.min(budget, o.maxTokens ?? 16000),
+                o.images, timeoutFor(o.tier), next.baseUrl, next.key);
+              const raw2 = extractJson(out2);
+              const parsed2 = o.schema.safeParse(raw2);
+              if (parsed2.success) return parsed2.data;
+              lastErr = parsed2.error.message.slice(0, 1500);
+            } catch (e2) {
+              console.warn(`    [llm] ${nextName} failed: ${(e2 as Error).message.slice(0, 100)}`);
+            }
+          }
+          console.warn(`    [llm] all configured providers failed; using ${PROVIDER}`);
         }
       }
 

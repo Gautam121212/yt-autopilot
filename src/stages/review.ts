@@ -69,7 +69,7 @@ export async function finalReview(o: {
   const images = [path.join(o.dir, "thumbnail.jpg"), path.join(o.dir, "contact-long.jpg"), ...(o.shortPath ? [path.join(o.dir, "contact-short.jpg")] : [])];
   return askJson({
     tier: "heavy",
-    role: "judge",
+    role: "vision",
     readDir: vision ? o.dir : undefined,
     images: vision ? images : undefined,
     schema: ReviewSchema,
