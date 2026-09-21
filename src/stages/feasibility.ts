@@ -45,8 +45,8 @@ async function scoreScenes(scenes: Scene[]) {
     const probes = await Promise.all([s.imageQuery, ...(s.altQueries ?? [])].map((q) => probeQuery(q, s.era)));
     const best = probes.reduce((a, b) => (b.score > a.score ? b : a), { score: 0, best: "" });
     return { scene: s, score: best.score, best: best.best };
-    // Note: the probe only checks Commons. Production also searches Openverse, Pexels and NASA,
-    // so real coverage is higher than this number — the forecast is told so below.
+    // Best of the scene's own search and its backups: one findable query is enough, because the
+    // footage selector searches all of them.
   });
 }
 

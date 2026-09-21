@@ -200,6 +200,114 @@ console.log("\nScenario 6 — an image-bearing call whose role is routed to a te
     "#51 the reason, the weakest axis and the title all reach the prompt");
 }
 
+// ── Scenarios 15-19: the run on 21 Sep 20:00 — every scene 0-4/10, then a crash. ──
+{
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const { sceneQa } = await import("../src/stages/scene-qa");
+  const { resetCandidateState } = await import("../src/lib/candidates");
+
+  // Real image bytes so ffmpeg really builds the contact sheet.
+  const tmp = fs.mkdtempSync("/tmp/replay-sel-");
+  // Detailed images, not flat colour: a flat 1920px jpg compresses to 12 KB, under the floor that
+  // (correctly) rejects truncated downloads, which made the first version of this test fail for
+  // a reason that could never happen with real stock photos.
+  const jpg = (w: number, h: number, tag: string) => {
+    const f = path.join(tmp, `${tag}-${w}.jpg`);
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", `testsrc2=size=${w}x${h}`, "-frames:v", "1", f]);
+    return fs.readFileSync(f);
+  };
+  const THUMB = jpg(640, 360, "thumb");
+  const FULL = jpg(1920, 1080, "full");
+  check(FULL.length > 20_000, "fixture: the full-size test image is as large as a real photo", `${FULL.length} bytes`);
+
+  process.env.PEXELS_API_KEY = "test"; process.env.PIXABAY_API_KEY = "test";
+  process.env.GEMINI_MIN_GAP_MS = "0";
+
+  // One search returns 5 Pexels photos; ids are unique per query so dedupe can be observed.
+  const pexelsSearch = (q: string) => ({ photos: Array.from({ length: 5 }, (_, k) => {
+    const id = Math.abs([...q].reduce((a, ch) => a * 31 + ch.charCodeAt(0), 7)) % 100000 * 10 + k;
+    return { id, width: 1920, alt: `${q} ${k}`, src: { medium: `https://thumbs.test/${id}.jpg`, large2x: `https://full.test/${id}.jpg` } };
+  }) });
+  let visionCalls = 0;
+  let rankFor: (sheetSize: number) => unknown = () => ({ ranking: [{ n: 2, score: 8, why: "strong b-roll" }, { n: 1, score: 7, why: "ok" }, { n: 5, score: 6.5, why: "fine" }] });
+  let failThumbs = new Set<string>();
+
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    const u = new URL(url);
+    calls.push({ host: u.host });
+    if (u.host === "api.pexels.com") return new Response(JSON.stringify(pexelsSearch(u.searchParams.get("query") ?? "")), { status: 200 });
+    if (u.host === "pixabay.com") return new Response(JSON.stringify({ hits: [] }), { status: 200 });
+    if (u.host === "thumbs.test") return failThumbs.has(u.pathname) ? new Response("", { status: 404 }) : new Response(THUMB, { status: 200 });
+    if (u.host === "full.test") return new Response(FULL, { status: 200 });
+    if (u.host.includes("googleapis")) {
+      visionCalls++;
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      const hasImage = JSON.stringify(body).includes("inline_data");
+      const text = JSON.stringify(hasImage ? rankFor(9) : {});
+      return new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text }] } }] }), { status: 200 });
+    }
+    return new Response("not scripted", { status: 500 });
+  }) as typeof fetch;
+
+  const scene = (id: string, q: string) => ({ id, narration: `The cable ${id} whipped through the air.`, imageQuery: q,
+    altQueries: [`${q} close`, "steel cable"], era: "modern", motion: "still" });
+  const run = async (scenes: ReturnType<typeof scene>[], used = new Set<string>()) => {
+    const dir = fs.mkdtempSync(path.join(tmp, "run-"));
+    const files = scenes.map(() => [path.join(dir, "orig.jpg")]);
+    const credits = scenes.map(() => ({ source: "x", id: "x", title: "x" }));
+    visionCalls = 0;
+    const r = await sceneQa({ cfg: {} as never, dir, videoId: 1, used, scenes, files, credits });
+    return { r, files, credits, used };
+  };
+
+  console.log("\nScenario 15 — a good option exists among the candidates: ONE vision call, three chosen shots");
+  resetCandidateState(); calls = [];
+  const s15 = await run([scene("sc01", "coiled steel cable")]);
+  check(visionCalls === 1, "#55 one vision call per scene when the first sheet has a good shot", `${visionCalls} call(s)`);
+  check(s15.r.passed === 1, "#55 the scene passes the bar with strong B-roll", `lead 8/10, passed ${s15.r.passed}`);
+  check(s15.files[0]!.length === 3 && s15.files[0]!.every((f) => fs.existsSync(f) && fs.statSync(f).size > 1000),
+    "#55 the scene's cuts are the three chosen shots, downloaded at full size", `${s15.files[0]!.length} files`);
+  check(calls.filter((c) => c.host === "full.test").length === 3, "#55 only the chosen shots are downloaded at full size");
+
+  console.log("\nScenario 16 — nothing on the first sheet is good enough: a second sheet from the editor's own suggestions");
+  resetCandidateState(); calls = [];
+  let round = 0;
+  rankFor = () => (++round === 1
+    ? { ranking: [{ n: 1, score: 4, why: "static pylons, not a whipping cable" }], suggestQueries: ["rope snapping slow motion", "whip crack"] }
+    : { ranking: [{ n: 3, score: 8, why: "rope under tension, right action" }] });
+  const s16 = await run([scene("sc06", "falling cable")]);
+  check(visionCalls === 2, "#55 exactly two sheets, then it stops", `${visionCalls} call(s)`);
+  check(s16.r.passed === 1, "#55 the editor's suggested searches find a shot that clears the bar");
+
+  console.log("\nScenario 17 — the model names a shot that is not on the sheet");
+  resetCandidateState(); calls = [];
+  rankFor = () => ({ ranking: [{ n: 42, score: 9, why: "hallucinated" }, { n: 1, score: 7.8, why: "real" }] });
+  const s17 = await run([scene("sc07", "copper wire")]).then((x) => x, (e) => ({ error: (e as Error).message }) as never);
+  check(!("error" in s17) && s17.r.passed === 1 && s17.files[0]!.length >= 1,
+    "#55 an out-of-range pick is ignored rather than crashing", "error" in s17 ? String((s17 as { error: string }).error).slice(0, 60) : "used shot 1");
+
+  console.log("\nScenario 18 — thumbnails fail to download (the ENOENT crash in the 21 Sep run)");
+  resetCandidateState(); calls = [];
+  rankFor = () => ({ ranking: [{ n: 1, score: 8, why: "good" }] });
+  failThumbs = new Set(Array.from({ length: 5 }, (_, k) => `/${Math.abs([..."broken glass"].reduce((a, ch) => a * 31 + ch.charCodeAt(0), 7)) % 100000 * 10 + k}.jpg`).slice(0, 3));
+  const s18 = await run([scene("sc10", "broken glass")]).then((x) => x, (e) => ({ error: (e as Error).message }) as never);
+  failThumbs = new Set();
+  check(!("error" in s18), "#56 missing thumbnails are skipped, never an ENOENT", "error" in s18 ? String((s18 as { error: string }).error).slice(0, 70) : "sheet built from the rest");
+
+  console.log("\nScenario 19 — two scenes asking for the same thing must not get the same shot");
+  resetCandidateState(); calls = [];
+  rankFor = () => ({ ranking: [{ n: 1, score: 8, why: "good" }] });
+  const s19 = await run([scene("sc02", "steel cable"), scene("sc03", "steel cable")]);
+  const keysUsed = [...s19.used].filter((k) => k.startsWith("pexels:"));
+  check(s19.credits[0]!.id !== s19.credits[1]!.id, "#55 each scene gets its own shot", `${s19.credits[0]!.id} vs ${s19.credits[1]!.id}`);
+  check(calls.filter((c) => c.host === "api.pexels.com").length <= 3, "#55 a repeated search is served from the run cache",
+    `${calls.filter((c) => c.host === "api.pexels.com").length} Pexels searches for 2 identical scenes`);
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 console.log(bad ? `\n❌ ${bad} behaviour(s) wrong.\n` : "\n✅ every replayed failure now behaves correctly.\n");
 process.exitCode = bad ? 1 : 0;
 export {};

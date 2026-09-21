@@ -365,7 +365,7 @@ const GEMINI_OUTPUT_CAP = Number(process.env.GEMINI_OUTPUT_CAP ?? 8192);
 const supportsThinking = (model: string) => /gemini-(?:2\.5|3\.\d|omni)/i.test(model);
 
 async function gemini(model: string, system: string, prompt: string, maxTokens: number, images?: string[], timeoutMs = LLM_TIMEOUT_HEAVY, thinkBudget = Number(process.env.GEMINI_THINKING_BUDGET ?? 1536)): Promise<string> {
-  const wait = lastGemini + 7000 - Date.now();
+  const wait = lastGemini + Number(process.env.GEMINI_MIN_GAP_MS ?? 7000) - Date.now();
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
   lastGemini = Date.now();
   const imageParts = await geminiParts(images); // read files once, outside the retry loop

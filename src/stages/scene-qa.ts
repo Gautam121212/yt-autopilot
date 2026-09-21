@@ -1,41 +1,124 @@
 /**
- * Per-scene visual gate.
+ * Per-scene footage selection — an editor choosing B-roll, not a judge grading one picture.
  *
- * The old whole-video QA judged 12 images in one batch and replaced a few. This instead scores
- * EVERY scene on its own and refuses to move on until it clears the bar — retrying with the scene's
- * alternative queries, then the topic's fallbacks. One scene at a time, sequentially, so a bad scene
- * is fixed before the next one is even attempted.
+ * WHAT WAS WRONG (run of 21 Sep, every scene 0-4/10):
+ *  - The rubric demanded a literal depiction: "10 = exactly the thing being described; merely not
+ *    wrong is a 5". Stock cannot show THIS cable whipping at THIS moment, so the best honest stock
+ *    shot scored 4-5 and the 7.5 bar was unreachable whatever the search returned.
+ *  - Each search returned 30-40 results; one was kept (ranked by caption word-overlap, which bug #5
+ *    already showed is meaningless) and judged alone. Retries were further blind single picks.
  *
- * Cheap on purpose: one light vision call per scene, images only (no rendering), so a failing scene
- * costs one small call rather than a whole render.
+ * WHAT THIS DOES:
+ *  - Gathers up to 9 candidates per scene from several searches (thumbnails only — cheap).
+ *  - Lays them out as a numbered contact sheet and asks ONE vision call to pick the best three,
+ *    scored on the question a documentary editor actually asks: would I cut this under this line?
+ *  - Only if nothing clears the bar, a second sheet from the editor's own suggested searches.
+ *  - Downloads full resolution for the chosen shots only, and uses the top three as the scene's cuts,
+ *    so every shot in the scene was chosen rather than just the first.
+ *
+ * At most two vision calls per scene, each seeing nine options — against up to three calls each
+ * seeing one. More chances, fewer calls.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { ChannelConfig } from "../config";
+import { downloadCandidate, fetchThumb, gatherCandidates, type Candidate } from "../lib/candidates";
 import { askJson, providerSupportsVision } from "../lib/llm";
 import { incident, log } from "../lib/log";
 import { sh } from "../lib/media";
 import type { ImageCredit } from "./visuals";
-import { replaceSceneImage } from "./visuals";
 
 export const SCENE_BAR = Number(process.env.SCENE_BAR ?? 7.5);
+/** A second or third cut in a scene may be a little weaker than its lead shot, but not unrelated. */
+const SUPPORT_BAR = Number(process.env.SCENE_SUPPORT_BAR ?? 6);
+const SHEET_SIZE = 9;
 
-const Verdict = z.object({
-  score: z.number().min(0).max(10).describe("does this picture belong to this line of narration"),
-  problem: z.string().describe("what is wrong, or 'none'"),
-  betterQuery: z.string().describe("a concrete, filmable 2-5 word search that would fit better, or 'none'"),
+const Pick = z.object({
+  ranking: z.array(z.object({
+    n: z.coerce.number().int().min(1),
+    score: z.coerce.number().min(0).max(10),
+    why: z.string(),
+  })).min(1).max(3),
+  // Only needed when nothing clears the bar; models sometimes send a string or omit it.
+  suggestQueries: z.preprocess((x) => (Array.isArray(x) ? x : typeof x === "string" ? [x] : []), z.array(z.string())).default([]),
 });
 
-type Scene = { id: string; narration: string; imageQuery: string; altQueries?: string[]; era?: string };
+type Scene = { id: string; narration: string; imageQuery: string; altQueries?: string[]; era?: string; motion?: string };
 
-/** One frame from a clip, or the still itself, so the model can look at what the viewer will see. */
-async function preview(file: string, dir: string, tag: string): Promise<string | null> {
-  if (!/\.(mp4|mov|webm)$/i.test(file)) return file;
-  const out = path.join(dir, `preview-${tag}.jpg`);
-  const ok = await sh("ffmpeg", ["-y", "-ss", "1", "-i", file, "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "4", out])
-    .then(() => true, () => false);
-  return ok ? out : null;
+const FONTS = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/System/Library/Fonts/Supplemental/Arial Bold.ttf"];
+async function font(): Promise<string | null> {
+  for (const f of FONTS) if (await fs.access(f).then(() => true, () => false)) return f;
+  return null;
+}
+
+/** Numbered 3x3 grid of thumbnails. Returns the sheet and which candidate sits at each number. */
+async function contactSheet(cands: Candidate[], dir: string, tag: string): Promise<{ sheet: string; order: Candidate[] } | null> {
+  const work = path.join(dir, `sheet-${tag}`);
+  await fs.mkdir(work, { recursive: true });
+  const f = await font();
+  const order: Candidate[] = [];
+  for (const c of cands) {
+    const raw = path.join(work, `raw-${order.length + 1}.jpg`);
+    if (!(await fetchThumb(c, raw))) continue;
+    const n = order.length + 1;
+    const tile = path.join(work, `tile-${String(n).padStart(2, "0")}.jpg`);
+    const label = f ? `,drawtext=fontfile='${f}':text='${n}${c.kind === "video" ? " ▶" : ""}':x=10:y=8:fontsize=40:fontcolor=white:box=1:boxcolor=black@0.75:boxborderw=8` : "";
+    const ok = await sh("ffmpeg", ["-y", "-v", "error", "-i", raw, "-vf",
+      `scale=384:216:force_original_aspect_ratio=decrease,pad=384:216:(ow-iw)/2:(oh-ih)/2${label}`,
+      "-frames:v", "1", tile]).then(() => true, () => false);
+    // A clean exit does not prove a file was written (that is what caused the ENOENT in the 21 Sep
+    // run), so check the file itself.
+    if (ok && (await fs.stat(tile).then((s) => s.size > 500, () => false))) order.push(c);
+    if (order.length >= SHEET_SIZE) break;
+  }
+  if (!order.length) return null;
+  const sheet = path.join(dir, `sheet-${tag}.jpg`);
+  const ok = await sh("ffmpeg", ["-y", "-v", "error", "-framerate", "1", "-i", path.join(work, "tile-%02d.jpg"),
+    "-vf", "tile=3x3:padding=6:color=0x202020", "-frames:v", "1", sheet]).then(() => true, () => false);
+  await fs.rm(work, { recursive: true, force: true }).catch(() => {});
+  if (!ok || !(await fs.stat(sheet).then((s) => s.size > 1000, () => false))) return null;
+  return { sheet, order };
+}
+
+const EDITOR = `You are a documentary editor choosing B-ROLL from stock footage.
+
+You are shown a numbered contact sheet (▶ marks a video clip) and ONE line of narration. Stock footage
+never shows the exact historical moment; nobody expects it to. Your question is the one every editor
+asks: would I cut this shot under this line, and would it hold the viewer's attention there?
+
+Score each shot you rank:
+ 9-10  shows the actual subject, place or process the line describes
+ 7-8   strong B-roll: clearly the right subject, material, setting or kind of action — a viewer
+       feels it belongs, even though it is not that specific event
+ 5-6   loosely related or generic; it fills the screen but adds nothing
+ 0-4   wrong subject; wrong era (modern tech, cars or clothing in a period story); a recognisable
+       person as the subject; text, logos, watermarks, charts or diagrams; clip-art or illustration
+
+Prefer a moving clip (▶) over a still when the line describes motion or process.
+Rank your best THREE, best first. If none reaches 7, also suggest two stock-library searches
+(2-4 words, concrete and filmable) that would find better footage for this line.`;
+
+async function choose(scene: Scene, cands: Candidate[], dir: string, videoId: number, tag: string) {
+  const cs = await contactSheet(cands, dir, tag);
+  if (!cs) return null;
+  const v = await askJson({
+    tier: "light",
+    role: "vision",
+    schema: Pick,
+    images: [cs.sheet],
+    system: EDITOR,
+    prompt: `NARRATION: ${scene.narration}\nERA: ${scene.era ?? "any"}\n` +
+      `The sheet has ${cs.order.length} numbered shots. Return JSON: ` +
+      `{ "ranking": [{ "n", "score", "why" }] (best 3), "suggestQueries": [2 searches, only if none reaches 7] }`,
+  }).catch(async (e) => { await incident("scene-select", e, videoId); return null; });
+  await fs.rm(cs.sheet, { force: true }).catch(() => {});
+  if (!v) return null;
+  // Discard numbers that are not on the sheet rather than trusting them.
+  const ranked = v.ranking
+    .filter((r) => r.n >= 1 && r.n <= cs.order.length)
+    .map((r) => ({ c: cs.order[r.n - 1]!, score: r.score, why: r.why }));
+  return { ranked, suggest: v.suggestQueries, shown: cs.order.length };
 }
 
 export async function sceneQa(o: {
@@ -50,62 +133,55 @@ export async function sceneQa(o: {
   attempts?: number;
 }): Promise<{ passed: number; failed: string[]; replaced: number }> {
   if (!providerSupportsVision()) {
-    log("  scene QA skipped (provider cannot see images)");
+    log("  scene selection skipped (provider cannot see images) — keeping the fetched footage");
     return { passed: o.scenes.length, failed: [], replaced: 0 };
   }
-  const maxAttempts = o.attempts ?? 3;
-  let replaced = 0;
   const failed: string[] = [];
+  let replaced = 0;
 
   for (const [i, scene] of o.scenes.entries()) {
-    const lead = o.files[i]?.[0];
-    if (!lead) { failed.push(scene.id); continue; }
+    const wantVideo = scene.motion === "clip";
+    let best: { c: Candidate; score: number; why: string }[] = [];
 
-    let score = 0;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const shot = await preview(o.files[i]![0]!, o.dir, `${scene.id}-${attempt}`);
-      if (!shot) break;
-
-      const v = await askJson({
-        tier: "light",
-        role: "gate",
-        schema: Verdict,
-        images: [shot],
-        system: `You are checking ONE picture against ONE line of narration for a documentary channel.
-Score 0-10 on whether a viewer seeing this picture while hearing this line would feel they match.
-10 = exactly the thing being described. 7 = clearly related and in the right world.
-4 = vaguely thematic. 0 = unrelated, wrong era, a logo, a watermark, a recognisable person, or a chart.
-Score harshly: a picture that is merely "not wrong" is a 5, not a 7.`,
-        prompt: `NARRATION: ${scene.narration}\nSEARCHED FOR: ${scene.imageQuery}\nERA: ${scene.era ?? "any"}\n\nScore the attached picture.`,
-      }).catch(async (e) => { await incident("scene-qa", e, o.videoId); return null; });
-
-      if (!v) break;
-      score = v.score;
-      if (score >= SCENE_BAR) break;
-
-      log(`  scene ${scene.id}: ${score}/10 — ${v.problem.slice(0, 70)}`);
-      if (attempt === maxAttempts) break;
-
-      // Retry with the model's own suggestion first, then the scene's alternatives.
-      const queries = [v.betterQuery, ...(scene.altQueries ?? []), ...(o.fallbacks ?? [])]
-        .filter((q) => q && q !== "none");
-      let swapped = false;
-      for (const q of queries.slice(0, 4)) {
-        const got = await replaceSceneImage(o.cfg, { ...scene, imageQuery: q }, o.files[i]![0]!, o.used, o.videoId, o.fallbacks)
-          .catch(() => null);
-        if (got) { o.credits[i] = got; replaced++; swapped = true; break; }
-      }
-      if (!swapped) break;
+    // Sheet 1: the scene's own searches. Sheet 2 (only if needed): the editor's suggestions plus
+    // the topic's fallbacks.
+    const rounds: string[][] = [[scene.imageQuery, ...(scene.altQueries ?? [])]];
+    for (let r = 0; r < Math.min(2, o.attempts ?? 2) && r < rounds.length; r++) {
+      const cands = await gatherCandidates(rounds[r]!, o.used, { wantVideo, perQuery: 5, max: SHEET_SIZE });
+      if (!cands.length) { log(`  scene ${scene.id}: no candidates for ${rounds[r]!.join(" / ")}`); continue; }
+      const pick = await choose(scene, cands, o.dir, o.videoId, `${scene.id}-${r + 1}`);
+      if (!pick?.ranked.length) continue;
+      if (!best.length || pick.ranked[0]!.score > best[0]!.score) best = pick.ranked;
+      log(`  scene ${scene.id}: best of ${pick.shown} shown → ${best[0]!.score}/10 (${best[0]!.c.kind}) — ${best[0]!.why.slice(0, 70)}`);
+      if (best[0]!.score >= SCENE_BAR) break;
+      if (r === 0) rounds.push([...pick.suggest, ...(o.fallbacks ?? []).slice(0, 2)]);
     }
 
-    if (score >= SCENE_BAR) {
-      log(`  scene ${scene.id}: ${score}/10 ✓`);
+    // Download the lead and up to two supporting cuts that also clear the support bar.
+    const chosen = best.filter((b, k) => k === 0 || b.score >= SUPPORT_BAR);
+    const got: string[] = [];
+    for (const [k, b] of chosen.entries()) {
+      const file = path.join(o.dir, `sel-${String(i).padStart(3, "0")}-${k}.${b.c.kind === "video" ? "mp4" : "jpg"}`);
+      if (await downloadCandidate(b.c, file)) {
+        got.push(file);
+        o.used.add(b.c.key);
+        if (k === 0 || got.length === 1) {
+          o.credits[i] = { source: b.c.source, id: b.c.key, title: b.c.caption || b.c.key, attribution: b.c.credit };
+        }
+      }
+    }
+
+    if (got.length) {
+      o.files[i] = got;
+      replaced++;
+    }
+    const lead = best[0]?.score ?? 0;
+    if (got.length && lead >= SCENE_BAR) {
+      log(`  scene ${scene.id}: ${lead}/10 ✓ (${got.length} shot${got.length > 1 ? "s" : ""})`);
     } else {
       failed.push(scene.id);
-      log(`  scene ${scene.id}: ${score}/10 — kept the best available after ${maxAttempts} attempts`);
+      log(`  scene ${scene.id}: ${lead}/10 — below ${SCENE_BAR}; ${got.length ? "using the best available" : "keeping the originally fetched footage"}`);
     }
   }
-
-  await fs.rm(path.join(o.dir, "preview-tmp"), { recursive: true, force: true }).catch(() => {});
   return { passed: o.scenes.length - failed.length, failed, replaced };
 }

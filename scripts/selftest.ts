@@ -112,7 +112,9 @@ ok(count(render, "pickMusic(o.seed)") >= 1, "#14 music picker is actually called
 
 // #22 role routing: every stage must declare which model does its job, and the split must be sane.
 const stageRole: Record<string, string> = {
-  "topic.ts": "gate", "feasibility.ts": "gate", "scene-qa.ts": "gate",
+  "topic.ts": "gate", "feasibility.ts": "gate",
+  // The footage selector looks at pixels, so it is vision — it was mislabelled "gate" before #55.
+  "scene-qa.ts": "vision",
   "research.ts": "write",
   "verify.ts": "judge", "forecast.ts": "judge",
   // These two look at pixels, so they belong to vision, not judge (#41).
@@ -143,6 +145,14 @@ ok(llm.includes("cerebras") && llm.includes("zai") && llm.includes("nvidia") && 
 ok(llm.includes("trying ${nextName}") || llm.includes("for (const nextName of order"),
   "#39 a failing provider tries the next before Gemini");
 ok(produce.includes("rewriting from scratch"), "#38 the script bar rewrites, not just repairs");
+{
+  const sel = src("src/stages/scene-qa.ts");
+  ok(sel.includes("contactSheet") && sel.includes("gatherCandidates"), "#55 footage is chosen from a sheet of candidates, not judged one at a time");
+  ok(sel.includes("B-ROLL") && !sel.includes("merely \"not wrong\" is a 5"), "#55 the rubric asks for B-roll, not a literal depiction stock cannot provide");
+  ok(!sel.includes("async function preview("), "#56 no preview step that can ENOENT on a clip shorter than its seek");
+  ok(!produce.includes("sc.imageQuery = approved[k % approved.length]"), "#57 a scene's own search is never overwritten round-robin");
+  ok(!src("src/lib/candidates.ts").includes("relevance("), "#55 candidates keep the library's ranking, not caption word-overlap");
+}
 {
   // #51 the failure cap: it must count crashes only. Rejections are the design, not waste.
   // Anchored to the `wasted` variable: an unanchored pattern matched the "shipped this week" query

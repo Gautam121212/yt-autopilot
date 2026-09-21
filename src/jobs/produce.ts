@@ -258,11 +258,18 @@ async function main() {
         }
         const offList = video.script.scenes.filter((sc) => !pool.some((p) => p.n === norm(sc.imageQuery)));
         log(`#${video.id} image searches: ${video.script.scenes.length - offList.length}/${video.script.scenes.length} on the approved list (snapped ${snapped})`);
-        // Anything still off-list gets an approved subject assigned round-robin: the list was
-        // already proven to exist, so this can only improve feasibility.
-        for (const [k, sc] of offList.entries()) {
-          sc.imageQuery = approved[k % approved.length]!;
-          sc.altQueries = [approved[(k + 1) % approved.length]!, approved[(k + 2) % approved.length]!];
+        // Anything off-list KEEPS its own scene-specific search; the nearest approved subjects are
+        // added as BACKUPS. Overwriting the search round-robin (the old behaviour) handed a scene
+        // about a whipping cable an arbitrary subject from the list, and the footage selector was then
+        // asked to find a cable among pictures of something else. Feasibility takes the best of all a
+        // scene's searches, so the backups still guarantee it passes.
+        const byOverlap = (q: string) => [...pool]
+          .map((p) => ({ p, hits: p.n.split(" ").filter((w) => w.length > 3 && norm(q).includes(w)).length }))
+          .sort((a, b) => b.hits - a.hits)
+          .map((x) => x.p.raw);
+        for (const sc of offList) {
+          const backups = byOverlap(sc.imageQuery).filter((a) => a !== sc.imageQuery && !(sc.altQueries ?? []).includes(a));
+          sc.altQueries = [...(sc.altQueries ?? []).slice(0, 2), ...backups].slice(0, 3);
         }
       }
 

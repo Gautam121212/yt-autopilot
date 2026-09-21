@@ -652,3 +652,21 @@ keeps expensive calls for topics worth finishing. So:
 - **Quality over length.** The floor is 750 words (~5 minutes). The writer still aims for 8-10, but
   a tight, good 5-minute script is no longer thrown away for being short.
 - **Upload bar: 7.0.** Below it, nothing reaches YouTube.
+
+## How footage is chosen
+
+The way a human editor does it: lay the options out and pick.
+
+1. For each scene, up to **9 candidates** are gathered from its own search, its backups and — when
+   the scene describes motion — video clips. Only thumbnails are fetched at this point.
+2. They go on a **numbered contact sheet**, and one vision call ranks the best three, asking the
+   question an editor asks: *would I cut this shot under this line?* Stock never shows the exact
+   historical moment, so strong B-roll — the right subject, material, setting or action — scores 7-8.
+   Wrong era, a person as the subject, text, charts or clip-art score 0-4.
+3. Only if nothing reaches 7.5, a **second sheet** from the editor's own suggested searches.
+4. The top three become the scene's three cuts, downloaded at full size. Nothing else is downloaded.
+
+At most two vision calls per scene, each seeing nine options — against up to three calls each seeing
+one, under a rubric stock photography could not satisfy. Pexels searches are capped per run
+(`PEXELS_RUN_BUDGET`, default 110) because other stages share its 200-per-hour limit; past that,
+Pixabay carries the rest. Repeated searches are served from a per-run cache.
