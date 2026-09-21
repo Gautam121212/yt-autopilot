@@ -1,5 +1,5 @@
 import { askJson } from "../lib/llm";
-import { VerifySchema, type Dossier, type Script, type Verification } from "../types";
+import { BLOCKING_CATEGORIES, VerifySchema, type Dossier, type Script, type Verification } from "../types";
 
 export async function verify(script: Script, dossier: Dossier, recentTitles: string[]): Promise<Verification> {
   const v = await askJson({
@@ -15,15 +15,33 @@ CHECKLIST
 - misleading_metadata: title, alt titles, thumbnail text and short title accurately reflect the content.
 - advertiser_friendly: shock or disaster framing, graphic descriptions of death.
 - inauthentic_risk: does it add original explanation (comparisons, mental model, synthesis), or is it a reworded Wikipedia article? Too similar to: ${recentTitles.join(" | ") || "none"}?
-- quality: weak hook, flat middle, missing payoff, repetition, imageQuery values that are abstract, name a living person, or could not exist as a real photograph.
-- tone: this channel is deadpan and funny-because-true. Mark it as a MAJOR quality issue if the narration reads
-  as a neutral documentary: no reacting human voice, no understatement, no sentence that would make someone snort.
-  Count the moments that actually land — fewer than three in a 9-minute script is a failure of the brief.
+- inauthentic_risk: a reworded Wikipedia article with nothing added. Advisory only.
 
-Verdict: "pass" only with no blocker/major issues. "abandon" if the topic can't be done accurately from this dossier.`,
+OUT OF SCOPE — do not raise these at all: tone, humour, pacing, word choice, how funny it is, whether
+it is "too neutral" or "too dramatic". A separate comedy pass writes the voice and a separate forecast
+scores it against a 7.5 bar. A factually accurate, policy-safe script PASSES here even if it is dull.
+
+Verdict: "pass" when there are no blocker/major FACTUAL or POLICY issues. "abandon" ONLY if a claim at the
+heart of the story cannot be supported by the dossier at all.`,
     prompt: `DOSSIER:\n${JSON.stringify(dossier)}\n\nSCRIPT:\n${JSON.stringify(script)}\n\nJSON: { "verdict": "pass"|"revise"|"abandon", "adSuitability": "likely_full"|"likely_limited"|"unsuitable", "issues": [{ "sceneId": string|null, "category": "factual"|"misinformation"|"misleading_metadata"|"advertiser_friendly"|"inauthentic_risk"|"quality", "severity": "blocker"|"major"|"minor", "problem", "fix" }], "summary" }`,
   });
-  const serious = v.issues.some((i) => i.severity !== "minor");
-  if (v.verdict === "pass" && (serious || v.adSuitability === "unsuitable")) v.verdict = "revise";
-  return v;
+  // The verdict is DERIVED from the issues, never taken from the model's say-so. A reviewer that
+  // abandoned a script it called "factually accurate" — over tone — is what this prevents.
+  const blocking = v.issues.filter((i) => BLOCKING_CATEGORIES.has(i.category) && i.severity !== "minor");
+  const advisory = v.issues.filter((i) => !blocking.includes(i));
+  const factualBlocker = blocking.some((i) => i.severity === "blocker" && (i.category === "factual" || i.category === "misinformation"));
+  const verdict: Verification["verdict"] =
+    v.verdict === "abandon" && factualBlocker ? "abandon"
+    : blocking.length || v.adSuitability === "unsuitable" ? "revise"
+    : "pass";
+  // Only blocking issues drive revision: asking the reviser to fix tone as well is what made each
+  // round introduce new problems (10 -> 12 -> 11 issues).
+  return {
+    ...v,
+    verdict,
+    issues: blocking,
+    summary: advisory.length
+      ? `${v.summary} [advisory, not blocking: ${advisory.map((i) => i.problem).join("; ").slice(0, 400)}]`
+      : v.summary,
+  };
 }

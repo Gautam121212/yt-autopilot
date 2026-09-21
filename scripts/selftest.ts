@@ -150,6 +150,16 @@ ok(src("src/stages/verify.ts").includes('role: "judge"') && src("src/stages/fore
   "#41 text-only judging does not consume the vision provider");
 ok(llm.includes("needsSight"), "#41 a call carrying images is never routed to a text-only provider");
 ok(!llm.includes('"llama-3.1-8b-instant"'), "#42 no defaults pointing at retired models");
+{
+  const verifySrc = src("src/stages/verify.ts");
+  ok(verifySrc.includes("BLOCKING_CATEGORIES") && verifySrc.includes("OUT OF SCOPE"),
+    "#47 the fact checker is scoped to facts and policy");
+  ok(!/verdict: v\.verdict/.test(verifySrc) && verifySrc.includes("factualBlocker"),
+    "#47 the verdict is derived from the issues, not taken from the model");
+  // Every category the prompt could plausibly use must parse, or the call retries for nothing.
+  const t = src("src/types.ts");
+  ok(t.includes('"tone"') && t.includes("z.preprocess"), "#48 the verifier schema accepts the categories models use");
+}
 // Exactly one pacing mechanism per provider — two would double every gap and halve throughput.
 ok(count(llm, "lastGemini = Date.now()") === 1 && count(llm, "lastCallAt.set") === 1,
   "#35 one pacer per provider, not two");

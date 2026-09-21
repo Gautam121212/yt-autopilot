@@ -32,6 +32,7 @@ process.env.GEMINI_MODEL_HEAVY = "gemini-test";
 process.env.GEMINI_MODEL_LIGHT = "gemini-test";
 process.env.LLM_ROLE_WRITE = "mistral";
 process.env.LLM_ROLE_GATE = "mistral";
+process.env.LLM_ROLE_JUDGE = "mistral";   // must be set before import: roles are read at load time
 process.env.PROVIDER_MIN_GAP_MS = "0";
 process.env.GEMINI_MIN_GAP_MS = "0";
 for (const k of ["ZAI_API_KEY","GROQ_API_KEY","CEREBRAS_API_KEY","NVIDIA_API_KEY","OPENROUTER_API_KEY","OPENAI_COMPAT_MAX_TOKENS"]) delete process.env[k];
@@ -95,6 +96,40 @@ console.log("\nScenario 6 — an image-bearing call whose role is routed to a te
     .then(() => true, () => false);
   check(r6 && !calls.some((c) => c.host.includes("mistral")), "#41 images never go to a provider that cannot see",
     `went to ${calls.map((c) => c.host.split(".")[1]).join(",")}`);
+}
+
+// ── Scenarios 7-9: the run on 21 Sep — a factually accurate script abandoned over tone. ──
+{
+  const { verify } = await import("../src/stages/verify");
+  const script = { title: "t", scenes: [] } as never;
+  const dossier = { sources: [], keyFacts: [] } as never;
+  const judged = (body: unknown) => () => ({ status: 200, json: { choices: [{ message: { content: JSON.stringify(body) }, finish_reason: "stop" }] } });
+  console.log("\nScenario 7 — the judge files issues under 'tone' (the category the schema used to reject)");
+  calls = []; plan = [judged({ verdict: "revise", adSuitability: "likely_full", summary: "s",
+    issues: [{ sceneId: 3, category: "tone", severity: "MAJOR", problem: "reads neutral", fix: "add irony" }] })];
+  const v7 = await verify(script, dossier, []).then((v) => v.verdict, (e) => "ERROR: " + (e as Error).message.slice(0, 50));
+  // Check the OUTCOME, not just the call count — a count of 1 once hid a call that errored.
+  check(calls.length === 1 && !String(v7).startsWith("ERROR") && calls[0]!.host.includes("mistral"),
+    "#48 a 'tone' issue validates first time, no retry", `${calls.length} call to ${calls[0]?.host.split(".")[1]} -> ${v7}`);
+
+  console.log("\nScenario 8 — the actual verdict: 'factually accurate but tonal misalignment', model says abandon");
+  calls = []; plan = [judged({ verdict: "abandon", adSuitability: "likely_full",
+    summary: "The script is factually accurate but suffers from tonal misalignment",
+    issues: [
+      { sceneId: "sc2", category: "quality", severity: "major", problem: "neutral narration", fix: "understatement" },
+      { sceneId: "sc5", category: "tone", severity: "major", problem: "too dramatic", fix: "deadpan" },
+      { sceneId: null, category: "factual", severity: "minor", problem: "rounding", fix: "use 1,812" },
+    ] })];
+  const v8 = await verify(script, dossier, []);
+  check(v8.verdict === "pass", "#47 a factually accurate script PASSES the fact check", `verdict: ${v8.verdict}`);
+  check(v8.issues.length === 0, "#47 tone issues do not reach the reviser", `${v8.issues.length} blocking`);
+  check(v8.summary.includes("advisory"), "#47 tone notes are kept as advisory, not lost");
+
+  console.log("\nScenario 9 — a genuine factual blocker must still stop the script");
+  calls = []; plan = [judged({ verdict: "abandon", adSuitability: "likely_full", summary: "s",
+    issues: [{ sceneId: "sc4", category: "factual", severity: "blocker", problem: "invented death toll", fix: "remove" }] })];
+  const v9 = await verify(script, dossier, []);
+  check(v9.verdict === "abandon" && v9.issues.length === 1, "#47 real factual blockers still abandon", `verdict: ${v9.verdict}`);
 }
 
 console.log(bad ? `\n❌ ${bad} behaviour(s) wrong.\n` : "\n✅ every replayed failure now behaves correctly.\n");

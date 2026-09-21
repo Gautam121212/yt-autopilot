@@ -112,13 +112,23 @@ export const scriptWords = (s: { scenes: { narration: string }[] }) =>
 export const MIN_WORDS = 1000;
 export type Script = z.infer<typeof ScriptSchema>;
 
+export const VERIFY_CATEGORIES = ["factual", "misinformation", "misleading_metadata", "advertiser_friendly",
+  "inauthentic_risk", "quality", "tone"] as const;
+/** Only these can stop a script. Tone and quality are judged by the comedy pass and the forecast. */
+export const BLOCKING_CATEGORIES = new Set(["factual", "misinformation", "misleading_metadata", "advertiser_friendly"]);
+
 export const VerifySchema = z.object({
   verdict: z.enum(["pass", "revise", "abandon"]),
   adSuitability: z.enum(["likely_full", "likely_limited", "unsuitable"]),
   issues: z.array(z.object({
-    sceneId: z.string().nullable(),
-    category: z.enum(["factual", "misinformation", "misleading_metadata", "advertiser_friendly", "inauthentic_risk", "quality"]),
-    severity: z.enum(["blocker", "major", "minor"]),
+    // Models send ids as "sc3", 3 or null. All fine; normalise rather than reject.
+    sceneId: z.union([z.string(), z.number()]).nullable().transform((x) => (x === null ? null : String(x))),
+    // The prompt once asked for "tone" issues the enum did not contain, so nearly every judge
+    // answer failed validation and was retried. Unknown categories now map to "quality".
+    category: z.preprocess(
+      (c) => (typeof c === "string" && VERIFY_CATEGORIES.includes(c as never) ? c : "quality"),
+      z.enum(VERIFY_CATEGORIES)),
+    severity: z.preprocess((x) => (typeof x === "string" ? x.toLowerCase() : x), z.enum(["blocker", "major", "minor"])),
     problem: z.string(),
     fix: z.string(),
   })),
