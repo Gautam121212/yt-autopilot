@@ -132,6 +132,51 @@ console.log("\nScenario 6 — an image-bearing call whose role is routed to a te
   check(v9.verdict === "abandon" && v9.issues.length === 1, "#47 real factual blockers still abandon", `verdict: ${v9.verdict}`);
 }
 
+// ── Scenarios 10-12: the run on 21 Sep 19:00 — an 11-scene script rejected three times. ──
+{
+  const { ScriptSchema, TARGET_SCENES } = await import("../src/types");
+  const { normaliseSceneCount } = await import("../src/stages/script");
+  const para = (n: number) => Array.from({ length: n }, (_, i) => `Sentence ${i + 1} tells a specific part of the story here.`).join(" ");
+  const sc = (id: string, role: string, sentences: number) => ({
+    id, role, narration: para(sentences), imageQuery: "cattle wagon", altQueries: ["rail yard", "old scales"],
+    motion: "clip", era: "any", cardHeadline: "H", cardSub: "s", claimIds: [],
+  });
+  // Exactly what the per-role table allowed at its minimums: 1+1+1+4+1+1+1+1 = 11 scenes.
+  const eleven = {
+    title: "t", altTitles: ["a", "b", "c"], description: "d", tags: [], thumbnailText: "THEY WEIGHED THE COWS",
+    thumbnailQuery: "q", claims: [],
+    short: { title: "s", scenes: ["cold_open", "escalation", "kicker"].map((r, i) => ({ id: `sh${i}`, role: r, narration: "n",
+      imageQuery: "q", altQueries: ["a", "b"], motion: "clip", era: "any", cardHeadline: "H", cardSub: "s" })) },
+    scenes: [sc("s1", "cold_open", 4), sc("s2", "reaction", 3), sc("s3", "premise", 6),
+      sc("s4", "escalation", 8), sc("s5", "escalation", 8), sc("s6", "escalation", 8), sc("s7", "escalation", 8),
+      sc("s8", "turn", 7), sc("s9", "mechanism", 10), sc("s10", "payoff", 6), sc("s11", "kicker", 4)],
+  };
+
+  console.log("\nScenario 10 — the rejected answer: an 11-scene script");
+  const parsed = ScriptSchema.safeParse(eleven);
+  check(parsed.success, "#50 a complete 11-scene script is accepted, not binned", parsed.success ? "accepted" : parsed.error.issues[0]!.message);
+
+  console.log("\nScenario 11 — it is brought up to 13 for free, and still obeys the beat sheet");
+  const fixed = normaliseSceneCount(eleven as never) as typeof eleven;
+  const beat = ScriptSchema.safeParse(fixed);
+  check(fixed.scenes.length >= TARGET_SCENES, "#50 split to the target", `${eleven.scenes.length} -> ${fixed.scenes.length}`);
+  check(beat.success, "#50 the split script still satisfies every beat-sheet rule");
+  check(fixed.scenes[0]!.role === "cold_open" && fixed.scenes[1]!.role === "reaction" && fixed.scenes.at(-1)!.role === "kicker",
+    "#50 cold_open / reaction / kicker positions untouched");
+  const before = eleven.scenes.map((x) => x.narration).join(" ");
+  const after = fixed.scenes.map((x) => x.narration).join(" ");
+  check(before === after, "#50 not one word of narration added, lost or reordered");
+  const ids = fixed.scenes.map((x) => x.id);
+  check(new Set(ids).size === ids.length, "#50 every scene id stays unique");
+  const split = fixed.scenes.find((x) => x.id.includes("b"));
+  check(!!split && split.imageQuery !== fixed.scenes[fixed.scenes.indexOf(split) - 1]!.imageQuery,
+    "#50 the new half gets a different picture, so the cut is visible");
+
+  console.log("\nScenario 12 — a script already at 13+ is left exactly as it was");
+  const thirteen = { ...eleven, scenes: [...eleven.scenes.slice(0, 7), sc("x1", "escalation", 5), sc("x2", "mechanism", 5), ...eleven.scenes.slice(7)] };
+  check(JSON.stringify(normaliseSceneCount(thirteen as never)) === JSON.stringify(thirteen), "#50 no change when nothing needs fixing");
+}
+
 console.log(bad ? `\n❌ ${bad} behaviour(s) wrong.\n` : "\n✅ every replayed failure now behaves correctly.\n");
 process.exitCode = bad ? 1 : 0;
 export {};

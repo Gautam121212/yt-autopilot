@@ -143,6 +143,19 @@ ok(llm.includes("cerebras") && llm.includes("zai") && llm.includes("nvidia") && 
 ok(llm.includes("trying ${nextName}") || llm.includes("for (const nextName of order"),
   "#39 a failing provider tries the next before Gemini");
 ok(produce.includes("rewriting from scratch"), "#38 the script bar rewrites, not just repairs");
+{
+  // #50 Parse the role table out of the writer's own prompt and add up its MINIMUM scene count.
+  // Two rules that disagreed by construction (a table allowing 11, a schema demanding 13) cost
+  // three heavy calls a run; this asserts the arithmetic between them directly.
+  const prompt = src("src/stages/script.ts");
+  const rows = [...prompt.matchAll(/^\s{2}(cold_open|reaction|premise|escalation|turn|mechanism|payoff|kicker)\s+(\d+)(?:-(\d+))?\s/gm)];
+  const minSum = rows.reduce((n, m) => n + Number(m[2]), 0);
+  const { TARGET_SCENES: target, MIN_SCHEMA_SCENES: floor } = await import("../src/types");
+  ok(rows.length === 8, "#50 the writer's role table lists all eight beats", `${rows.length} rows`);
+  ok(minSum >= target, "#50 the role table's minimum reaches the scene target", `table min ${minSum} >= target ${target}`);
+  ok(floor < target, "#50 the schema accepts salvageable scripts below the target", `schema min ${floor}, target ${target}`);
+  ok(count(prompt, "return normaliseSceneCount(await askJson") >= 6, "#50 every script-producing pass is normalised");
+}
 // #41 only the two stages that look at pixels may claim the vision role.
 ok(src("src/stages/review.ts").includes('role: "vision"') && src("src/stages/image-qa.ts").includes('role: "vision"'),
   "#41 image QA and the final check are routed to vision");

@@ -1,6 +1,6 @@
 import type { ChannelConfig } from "../config";
 import { askJson } from "../lib/llm";
-import { ScriptSchema, type Dossier, type Script, type Topic, type Verification } from "../types";
+import { ScriptSchema, TARGET_SCENES, type Dossier, type Script, type Topic, type Verification } from "../types";
 
 function system(cfg: ChannelConfig, playbook: string) {
   const [minM, maxM] = cfg.targetMinutes;
@@ -27,7 +27,7 @@ THE BEAT SHEET — every video uses exactly this shape. Each scene declares its 
 10. mechanism — the real science or engineering, explained properly. This is why the video exists.
 11. payoff — the promise from the premise, delivered.
 12. kicker (last scene) — the best absurd detail, deliberately held back until now.
-You may repeat escalation and mechanism as needed to fill 14-18 scenes.
+You may repeat escalation and mechanism as needed to fill 13-16 scenes.
 
 LENGTH — writers miss this more than any other rule, so work to a PER-SCENE budget, not a total.
 Write each scene to its own quota and the total takes care of itself:
@@ -36,13 +36,14 @@ Write each scene to its own quota and the total takes care of itself:
   cold_open        1        60-75    (a hook, not an essay)
   reaction         1        45-60    (one beat; the shortest scene in the video)
   premise          1        85-100
-  escalation      4-6       90-110   (the body of the video — these carry the length)
+  escalation      5-7       90-110   (the body of the video — these carry the length)
   turn             1        90-110
-  mechanism       1-2      110-130   (the longest scenes: the real explanation lives here)
+  mechanism       2-3      110-130   (the longest scenes: the real explanation lives here)
   payoff           1        85-100
   kicker           1        60-80    (land it and stop)
 
-13-18 scenes, ${minM * cfg.wordsPerMinute}-${maxM * cfg.wordsPerMinute} words in total.
+That is 13-16 scenes: count them before answering. FEWER THAN 13 SCENES IS REJECTED.
+${minM * cfg.wordsPerMinute}-${maxM * cfg.wordsPerMinute} words in total.
 HARD FLOOR: ${minM * cfg.wordsPerMinute} words total, and no scene under 45 words.
 
 Before answering, count the words in each scene and compare it against its quota above. A 600-word
@@ -89,13 +90,62 @@ const SHAPE = `JSON: { "title", "altTitles": [3], "description" (2-3 short parag
 "thumbnailQuery" (a concrete photo search for the thumbnail), "scenes": [{ "id": "sc01", "role": "cold_open"|"reaction"|"premise"|"escalation"|"turn"|"mechanism"|"payoff"|"kicker", "chapter"?, "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "era": "historical"|"modern"|"any", "cardHeadline", "cardSub", "claimIds" }],
 "claims": [{ "id": "C1", "text", "sourceIds" }], "short": { "title", "scenes": [{ "id": "sh01", "role": "cold_open"|"escalation"|"payoff"|"kicker", "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "era": "historical"|"modern"|"any", "cardHeadline", "cardSub" }] } }`;
 
+/**
+ * Bring a script up to TARGET_SCENES by splitting its longest body scenes at a sentence boundary.
+ *
+ * Deterministic and free. Only escalation and mechanism scenes are split, and the new half is
+ * inserted directly after its parent with the same role — which cannot break any beat-sheet rule
+ * (cold_open first, reaction second, kicker last, minimum counts). The second half gets the next
+ * approved image query, so the cut lands on a new picture rather than the same one twice.
+ */
+export function normaliseSceneCount<T extends Script>(script: T): T {
+  const scenes = [...script.scenes];
+  const words = (t: string) => t.trim().split(/\s+/).filter(Boolean).length;
+  const sentences = (t: string) => t.match(/[^.!?]+[.!?]+(?:["')\]]+)?\s*/g)?.map((x) => x.trim()).filter(Boolean) ?? [t];
+  let splits = 0;
+
+  while (scenes.length < TARGET_SCENES) {
+    // the longest splittable scene that has at least two sentences to divide
+    const candidates = scenes
+      .map((sc, i) => ({ sc, i, w: words(sc.narration), parts: sentences(sc.narration) }))
+      .filter((x) => (x.sc.role === "escalation" || x.sc.role === "mechanism") && x.parts.length >= 2);
+    if (!candidates.length) break;
+    const pick = candidates.sort((a, b) => b.w - a.w)[0]!;
+
+    // cut at the sentence boundary closest to half the words
+    let acc = 0, cut = 1;
+    for (let k = 0; k < pick.parts.length - 1; k++) {
+      acc += words(pick.parts[k]!);
+      if (acc >= pick.w / 2) { cut = k + 1; break; }
+      cut = k + 1;
+    }
+    const first = pick.parts.slice(0, cut).join(" ");
+    const second = pick.parts.slice(cut).join(" ");
+    if (!first || !second) break;
+
+    const alts = pick.sc.altQueries ?? [];
+    const a = { ...pick.sc, narration: first };
+    const b = {
+      ...pick.sc,
+      id: `${pick.sc.id}b${++splits}`,
+      narration: second,
+      imageQuery: alts[0] ?? pick.sc.imageQuery,
+      altQueries: [...alts.slice(1), pick.sc.imageQuery].slice(0, 3),
+    };
+    scenes.splice(pick.i, 1, a, b);
+  }
+
+  if (splits) console.log(`  scene count: split ${splits} long scene(s) to reach ${scenes.length} (target ${TARGET_SCENES})`);
+  return { ...script, scenes };
+}
+
 export async function writeScript(o: {
   cfg: ChannelConfig; playbook: string; structure: { id: string; description: string };
   topic: Topic; dossier: Dossier; recent: { title: string; hook: string }[];
   /** set when an earlier draft was rejected, so the new one avoids the same faults */
   critique?: string;
 }): Promise<Script> {
-  return askJson({
+  return normaliseSceneCount(await askJson({
     tier: "heavy",
     role: "write",
     schema: ScriptSchema,
@@ -115,7 +165,7 @@ DOSSIER:
 ${JSON.stringify(o.dossier)}
 ${o.critique ? `\nWHAT WENT WRONG LAST TIME:\n${o.critique}\n` : ""}
 ${SHAPE}`,
-  });
+  }));
 }
 
 /** Targeted rewrite driven by the final check's issues; everything not mentioned must stay byte-identical. */
@@ -123,7 +173,7 @@ export async function repairScript(o: {
   cfg: ChannelConfig; playbook: string; script: Script; dossier: Dossier;
   issues: { severity: string; area: string; sceneId: string | null; what: string; fix: string }[];
 }): Promise<Script> {
-  return askJson({
+  return normaliseSceneCount(await askJson({
     tier: "heavy",
     role: "judge",
     schema: ScriptSchema,
@@ -147,7 +197,7 @@ CURRENT SCRIPT:
 ${JSON.stringify(o.script)}
 
 Return the complete repaired script. ${SHAPE}`,
-  });
+  }));
 }
 
 /**
@@ -155,7 +205,7 @@ Return the complete repaired script. ${SHAPE}`,
  * dossier, changing nothing else. Cheaper and better than throwing away a script that works.
  */
 export async function stripUnsourced(o: { cfg: ChannelConfig; playbook: string; script: Script; dossier: Dossier; issues: { what: string; fix: string }[] }): Promise<Script> {
-  return askJson({
+  return normaliseSceneCount(await askJson({
     tier: "heavy",
     role: "judge",
     schema: ScriptSchema,
@@ -175,7 +225,7 @@ SCRIPT:
 ${JSON.stringify(o.script)}
 
 Return the complete corrected script. ${SHAPE}`,
-  });
+  }));
 }
 
 /**
@@ -191,7 +241,7 @@ Return the complete corrected script. ${SHAPE}`,
 export async function expandScript(o: { cfg: ChannelConfig; playbook: string; script: Script; dossier: Dossier; words: number }): Promise<Script> {
   const [minM, maxM] = o.cfg.targetMinutes;
   const targetWords = Math.round(((minM + maxM) / 2) * o.cfg.wordsPerMinute);
-  return askJson({
+  return normaliseSceneCount(await askJson({
     tier: "heavy",
     role: "write",
     schema: ScriptSchema,
@@ -220,11 +270,11 @@ SCRIPT:
 ${JSON.stringify(o.script)}
 
 Return the complete lengthened script. ${SHAPE}`,
-  });
+  }));
 }
 
 export async function punchUp(o: { cfg: ChannelConfig; script: Script; dossier: Dossier }): Promise<Script> {
-  return askJson({
+  return normaliseSceneCount(await askJson({
     tier: "heavy",
     role: "write",
     schema: ScriptSchema,
@@ -259,11 +309,11 @@ SCRIPT TO PUNCH UP:
 ${JSON.stringify(o.script)}
 
 Return the complete script with the narration rewritten. ${SHAPE}`,
-  });
+  }));
 }
 
 export async function reviseScript(o: { cfg: ChannelConfig; playbook: string; script: Script; dossier: Dossier; verification: Verification }): Promise<Script> {
-  return askJson({
+  return normaliseSceneCount(await askJson({
     tier: "heavy",
     role: "judge",
     schema: ScriptSchema,
@@ -280,5 +330,5 @@ CURRENT SCRIPT:
 ${JSON.stringify(o.script)}
 
 Return the complete revised script. ${SHAPE}`,
-  });
+  }));
 }

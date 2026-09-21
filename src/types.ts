@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+/** Below this a script is not worth salvaging. */
+export const MIN_SCHEMA_SCENES = 9;
+/** What every script is brought up to before production — by splitting, not by asking again. */
+export const TARGET_SCENES = 13;
+
 export const TopicSchema = z.object({
   chosen: z.object({
     workingTitle: z.string(),
@@ -79,8 +84,9 @@ export const ScriptSchema = z.object({
   tags: z.array(z.string()).max(15),
   thumbnailText: z.string().max(32),
   thumbnailQuery: z.string(),
-  // 13 scenes x 78 words = 1014, so the scene count and the length gate agree by construction.
-  scenes: z.array(SceneSchema).min(13).max(18),
+  // The schema accepts any SALVAGEABLE script. Rejecting a complete 11-scene script over its count
+  // wasted three heavy calls; `normaliseSceneCount` splits long scenes up to 13 for free instead.
+  scenes: z.array(SceneSchema).min(MIN_SCHEMA_SCENES).max(18),
   short: z.object({
     title: z.string().max(90),
     scenes: z.array(z.object({
