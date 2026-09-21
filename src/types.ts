@@ -115,7 +115,9 @@ export const ScriptSchema = z.object({
 /** Total narration words. Length is fixed by an expand pass, not by rejecting the script. */
 export const scriptWords = (s: { scenes: { narration: string }[] }) =>
   s.scenes.reduce((n, sc) => n + WORDS(sc.narration), 0);
-export const MIN_WORDS = 1000;
+/** ~5 minutes. A tight, good 5-minute script beats a padded 8-minute one; the writer still aims
+ *  for 8-10 via the role table, but a shorter script that is GOOD is no longer thrown away. */
+export const MIN_WORDS = 750;
 export type Script = z.infer<typeof ScriptSchema>;
 
 export const VERIFY_CATEGORIES = ["factual", "misinformation", "misleading_metadata", "advertiser_friendly",

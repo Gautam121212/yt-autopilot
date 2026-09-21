@@ -177,6 +177,29 @@ console.log("\nScenario 6 — an image-bearing call whose role is routed to a te
   check(JSON.stringify(normaliseSceneCount(thirteen as never)) === JSON.stringify(thirteen), "#50 no change when nothing needs fixing");
 }
 
+// ── Scenarios 13-15: the run on 22 Sep — production paused by its own rejection count. ──
+{
+  const { topicLessons, scriptLessons, formatLessons } = await import("../src/lib/lessons");
+
+  console.log("\nScenario 13 — the lessons loop must never break topic picking or writing");
+  const saved = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = "postgres://nobody:nothing@127.0.0.1:1/none";
+  const [tl, sl] = await Promise.all([
+    topicLessons().then((x) => x, (e) => `THREW: ${(e as Error).message}`),
+    scriptLessons().then((x) => x, (e) => `THREW: ${(e as Error).message}`),
+  ]);
+  if (saved) process.env.DATABASE_URL = saved; else delete process.env.DATABASE_URL;
+  check(tl === "" && sl === "", "#51 with the database unreachable, lessons are empty rather than an error", `topic="${tl.slice(0, 40)}" script="${sl.slice(0, 40)}"`);
+
+  console.log("\nScenario 14 — a rejection becomes a usable instruction");
+  const text = formatLessons([
+    { stage: "topic.dropped", title: null, reason: '"The Pig War" (bureaucratic_absurdity) averaged 7.1 < 7.5; weakest axes: evidence 5, freshness 6', at: "Sep 21" },
+    { stage: "script.below-bar", title: "The Chocolate River", reason: "forecast 7/10 after repairs (bar 7.5); weakest: clarity", at: "Sep 21" },
+  ]);
+  check(text.includes("evidence 5") && text.includes("weakest: clarity") && text.includes("The Chocolate River"),
+    "#51 the reason, the weakest axis and the title all reach the prompt");
+}
+
 console.log(bad ? `\n❌ ${bad} behaviour(s) wrong.\n` : "\n✅ every replayed failure now behaves correctly.\n");
 process.exitCode = bad ? 1 : 0;
 export {};

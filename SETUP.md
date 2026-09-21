@@ -638,3 +638,17 @@ Sends one real JSON-mode request to Gemini and to every configured provider, rep
 what is rate-limited, and what is misconfigured — and, when a heavy model fails, whether the light
 one works so you can use that instead. Tests what the pipeline actually does, because a key can list
 models happily and still be refused a completion.
+
+## Rejections are the design, not waste
+
+The pipeline runs every two hours and expects most attempts to stop at a cheap gate — that is what
+keeps expensive calls for topics worth finishing. So:
+
+- **Only crashes count against the pause limit** (`maxCrashesPerDay`, default 6 in 24h). A crash
+  means something is broken; a rejection means a gate did its job.
+- **Every rejection teaches the next attempt.** The topic picker is shown the last fortnight's
+  rejected topics and their weakest axes; the writer is shown why recent scripts failed.
+  `npm run why` shows the same list.
+- **Quality over length.** The floor is 750 words (~5 minutes). The writer still aims for 8-10, but
+  a tight, good 5-minute script is no longer thrown away for being short.
+- **Upload bar: 7.0.** Below it, nothing reaches YouTube.

@@ -4,7 +4,7 @@
   "language": "en",
   "audienceTimezone": "America/New_York",
   "targetMinutes": [
-    8,
+    5,
     10
   ],
   "wordsPerMinute": 150,
@@ -17,7 +17,7 @@
   "approval": {
     "mode": "claude",
     "humanReviewFirst": 3,
-    "minScore": 6.5,
+    "minScore": 7,
     "uploadHeldVideos": false,
     "minScriptScore": 7.5
   },
@@ -276,5 +276,6 @@
     "autoApply": false
   },
   "videosPerDay": 1,
-  "productionTimezone": "Asia/Kolkata"
+  "productionTimezone": "Asia/Kolkata",
+  "maxCrashesPerDay": 6
 }

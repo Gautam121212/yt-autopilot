@@ -1,3 +1,4 @@
+import { topicLessons } from "../lib/lessons";
 import type { ChannelConfig, SubNicheT } from "../config";
 import { askJson, providerSupportsWeb } from "../lib/llm";
 import { q } from "../lib/db";
@@ -14,6 +15,8 @@ function weightedPick<T extends { weight: number }>(items: T[]): T {
 const shuffle = <T>(a: T[]) => [...a].sort(() => Math.random() - 0.5);
 
 export async function pickTopic(cfg: ChannelConfig, forcedSubNiche?: string) {
+  // What recently failed and why — so the same weakness is not picked again an hour later.
+  const lessons = await topicLessons();
   const sub: SubNicheT = forcedSubNiche
     ? (cfg.subNiches.find((s) => s.id === forcedSubNiche) ?? (() => { throw new Error(`unknown sub-niche ${forcedSubNiche}`); })())
     : weightedPick(cfg.subNiches);
@@ -51,7 +54,7 @@ no doom or fear-mongering framing; no topic that invites the viewer to self-diag
 psychological, legal or financial advice (a psychology topic must be about documented research, never about "signs you have X");
 no topic centred on a living private individual;
 no copying another creator's title or angle.`,
-    prompt: `Sub-niche: ${sub.label}. Example directions: ${sub.examples.join("; ")}.
+    prompt: `${lessons ? `${lessons}\n\n` : ""}Sub-niche: ${sub.label}. Example directions: ${sub.examples.join("; ")}.
 Narrative structure to be used: ${structure.id} - ${structure.description}
 
 DEMAND DATA - recent videos that outperformed their channel size (ratio = views / subscribers; higher = topic did the work):

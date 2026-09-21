@@ -25,6 +25,8 @@ const Channel = z.object({
   shortsPerWeek: z.number().int().min(0).default(2),
   /** How many finished videos to keep queued so a bad week never means an empty channel. */
   backlogTarget: z.number().int().min(0).default(4),
+  /** Crashes (not rejections) tolerated in 24h before pausing; a crash means something is broken. */
+  maxCrashesPerDay: z.number().int().min(1).default(6),
   /** Successes wanted per day. The cron runs every few hours and stops once this is met. */
   videosPerDay: z.number().int().min(1).default(1),
   /** Whose day. UTC boundaries made "today" roll over at 05:30 IST; this fixes it. */

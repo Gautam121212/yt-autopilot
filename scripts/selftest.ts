@@ -144,6 +144,21 @@ ok(llm.includes("trying ${nextName}") || llm.includes("for (const nextName of or
   "#39 a failing provider tries the next before Gemini");
 ok(produce.includes("rewriting from scratch"), "#38 the script bar rewrites, not just repairs");
 {
+  // #51 the failure cap: it must count crashes only. Rejections are the design, not waste.
+  // Anchored to the `wasted` variable: an unanchored pattern matched the "shipped this week" query
+  // first and reported the wrong thing.
+  const capQuery = /n: wasted \}\] = await q[^"]*"select count\(\*\)::int as n from videos where created_at > now\(\) - interval '([^']+)' and status (= '[a-z]+'|in \([^)]+\))/s.exec(produce);
+  ok(!!capQuery && capQuery[2] === "= 'failed'", "#51 the waste cap counts crashes only, never rejections",
+    capQuery ? `status ${capQuery[2]} over ${capQuery[1]}` : "query not found");
+  ok(produce.includes('incident("topic.dropped"') && produce.includes('incident("topic.unfilmable"'),
+    "#51 topic rejections are recorded, so they can be learned from");
+  ok(src("src/stages/topic.ts").includes("await topicLessons()"), "#51 the topic picker reads recent rejections");
+  ok(src("src/stages/script.ts").includes("await scriptLessons()"), "#51 the writer reads recent rejections");
+  // #52 quality over length, and the upload bar
+  ok(MIN_WORDS === 750, "#52 a good 5-minute script is accepted", `MIN_WORDS ${MIN_WORDS}`);
+  ok(cfg.approval.minScore === 7, "#53 nothing reaches YouTube below 7.0", `bar ${cfg.approval.minScore}`);
+}
+{
   // #50 Parse the role table out of the writer's own prompt and add up its MINIMUM scene count.
   // Two rules that disagreed by construction (a table allowing 11, a schema demanding 13) cost
   // three heavy calls a run; this asserts the arithmetic between them directly.

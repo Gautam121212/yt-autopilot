@@ -118,8 +118,11 @@ async function main() {
     const [{ n: shipped }] = await q<{ n: number }>("select count(*)::int as n from videos where created_at > now() - interval '7 days' and status in ('scheduled','published','uploaded')");
     // The runaway guard should count things that WASTED effort, not videos that were made and then
     // judged. A human rejecting a finished video means the pipeline worked; it must not block the week.
+    // Only CRASHES count as waste. An abandonment is a gate doing its job cheaply — the 2-hourly
+    // retry design depends on them — and counting them paused production for a whole week after a
+    // single day of normal rejections.
     const [{ n: wasted }] = await q<{ n: number }>(
-      "select count(*)::int as n from videos where created_at > now() - interval '7 days' and status in ('failed','abandoned')",
+      "select count(*)::int as n from videos where created_at > now() - interval '24 hours' and status = 'failed'",
     );
     const [{ n: waiting }] = await q<{ n: number }>("select count(*)::int as n from videos where status = 'awaiting_approval'");
     // Today's quota: the cron fires every few hours precisely because topic and script gates fail
@@ -144,9 +147,9 @@ async function main() {
     }
     if (shipped >= cfg.maxVideosPerWeek) log(`week is full; producing for the backlog (${backlog}/${cfg.backlogTarget})`);
     // Guard against burning quota when every attempt keeps failing quality.
-    const wasteCap = cfg.maxVideosPerWeek + cfg.backlogTarget + 4;
+    const wasteCap = cfg.maxCrashesPerDay;
     if (wasted >= wasteCap && !isDryRun() && process.env.FORCE_PRODUCE !== "true") {
-      return log(`${wasted} runs failed or were abandoned this week (cap ${wasteCap}); pausing so quota is not burned. ` +
+      return log(`${wasted} runs CRASHED in the last 24h (cap ${wasteCap}) — something is broken, not just rejected; pausing. ` +
         `Check \`npm run why\`, then re-run with FORCE_PRODUCE=true to override.`);
     }
     if (waiting >= cfg.maxAwaitingApproval) return log(`${waiting} videos awaiting your review; skipping so nothing is wasted`);
@@ -188,6 +191,9 @@ async function main() {
     if (avg < MIN_TOPIC_SCORE) {
       // Nothing has been written yet, so nothing is wasted and no row is created.
       await summary([...scoreLines, "", `❌ dropped: average ${avg.toFixed(1)} is below the ${MIN_TOPIC_SCORE} bar.`]);
+      await incident("topic.dropped", new Error(
+        `"${c.workingTitle}" (${sub.id}) averaged ${avg.toFixed(1)} < ${MIN_TOPIC_SCORE}; weakest axes: ` +
+        Object.entries(sc).sort((a, b) => a[1] - b[1]).slice(0, 2).map(([k, v]) => `${k} ${v}`).join(", ")));
       return log(`dropped "${c.workingTitle}" before research: average ${avg.toFixed(1)} < ${MIN_TOPIC_SCORE}. Next run picks a new topic.`);
     }
 
@@ -199,6 +205,8 @@ async function main() {
       await summary([...scoreLines, "",
         `❌ dropped: only ${Math.round(vis.score * 100)}% of its visual subjects exist in the stock libraries (bar ${Math.round(MIN_TOPIC_VISUAL * 100)}%).`,
         `missing: ${vis.missing.join(", ")}`]);
+      await incident("topic.unfilmable", new Error(
+        `"${c.workingTitle}" (${sub.id}) only ${Math.round(vis.score * 100)}% filmable; no stock footage for: ${vis.missing.join(", ")}`));
       return log(`dropped "${c.workingTitle}" before research: only ${Math.round(vis.score * 100)}% filmable. Next run picks a new topic.`);
     }
     await summary([...scoreLines, "", `✅ proceeding — ${Math.round(vis.score * 100)}% of its visual subjects exist in the stock libraries.`]);

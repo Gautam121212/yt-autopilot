@@ -1,5 +1,6 @@
 import type { ChannelConfig } from "../config";
 import { askJson } from "../lib/llm";
+import { scriptLessons } from "../lib/lessons";
 import { ScriptSchema, TARGET_SCENES, type Dossier, type Script, type Topic, type Verification } from "../types";
 
 function system(cfg: ChannelConfig, playbook: string) {
@@ -145,12 +146,13 @@ export async function writeScript(o: {
   /** set when an earlier draft was rejected, so the new one avoids the same faults */
   critique?: string;
 }): Promise<Script> {
+  const lessons = await scriptLessons();
   return normaliseSceneCount(await askJson({
     tier: "heavy",
     role: "write",
     schema: ScriptSchema,
     system: system(o.cfg, o.playbook),
-    prompt: `Structure: ${o.structure.id} - ${o.structure.description}
+    prompt: `${lessons ? `${lessons}\n\n` : ""}Structure: ${o.structure.id} - ${o.structure.description}
 Working title: ${o.topic.chosen.workingTitle}
 Hook idea: ${o.topic.chosen.hook}
 Angle: ${o.topic.chosen.angle}
