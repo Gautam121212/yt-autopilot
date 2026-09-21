@@ -36,7 +36,8 @@
     "music:make": "tsx --env-file-if-exists=.env scripts/make-music.ts",
     "models:mistral": "tsx --env-file-if-exists=.env scripts/list-mistral-models.ts",
     "providers": "tsx --env-file-if-exists=.env scripts/check-providers.ts",
-    "replay": "tsx scripts/replay.ts"
+    "replay": "tsx scripts/replay.ts",
+    "select:test": "tsx --env-file-if-exists=.env scripts/select-test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

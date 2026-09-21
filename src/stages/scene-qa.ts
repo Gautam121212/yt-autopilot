@@ -24,7 +24,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { ChannelConfig } from "../config";
 import { downloadCandidate, fetchThumb, gatherCandidates, type Candidate } from "../lib/candidates";
-import { askJson, providerSupportsVision } from "../lib/llm";
+import { askJson, isQuota, providerSupportsVision, QuotaError } from "../lib/llm";
 import { incident, log } from "../lib/log";
 import { sh } from "../lib/media";
 import type { ImageCredit } from "./visuals";
@@ -33,6 +33,14 @@ export const SCENE_BAR = Number(process.env.SCENE_BAR ?? 7.5);
 /** A second or third cut in a scene may be a little weaker than its lead shot, but not unrelated. */
 const SUPPORT_BAR = Number(process.env.SCENE_SUPPORT_BAR ?? 6);
 const SHEET_SIZE = 9;
+/**
+ * Vision calls this stage may spend per run. The final check also needs vision, so selection must
+ * never be able to use up the quota the last gate depends on.
+ */
+const VISION_BUDGET = Number(process.env.SCENE_VISION_BUDGET ?? 36);
+let visionSpent = 0;
+let visionExhausted = false;
+export const resetSelectionBudget = () => { visionSpent = 0; visionExhausted = false; };
 
 const Pick = z.object({
   ranking: z.array(z.object({
@@ -102,8 +110,10 @@ Rank your best THREE, best first. If none reaches 7, also suggest two stock-libr
 (2-4 words, concrete and filmable) that would find better footage for this line.`;
 
 async function choose(scene: Scene, cands: Candidate[], dir: string, videoId: number, tag: string, portrait = false) {
+  if (visionExhausted || visionSpent >= VISION_BUDGET) { visionExhausted = true; return null; }
   const cs = await contactSheet(cands, dir, tag, portrait);
   if (!cs) return null;
+  visionSpent++;
   const v = await askJson({
     tier: "light",
     role: "vision",
@@ -113,8 +123,15 @@ async function choose(scene: Scene, cands: Candidate[], dir: string, videoId: nu
     prompt: `NARRATION: ${scene.narration}\nERA: ${scene.era ?? "any"}\n` +
       `The sheet has ${cs.order.length} numbered shots. Return JSON: ` +
       `{ "ranking": [{ "n", "score", "why" }] (best 3), "suggestQueries": [2 searches, only if none reaches 7] }`,
-  }).catch(async (e) => { await incident("scene-select", e, videoId); return null; });
-  await fs.rm(cs.sheet, { force: true }).catch(() => {});
+  }).catch(async (e) => {
+    // Out of vision quota: stop asking for the rest of the run. Every further call would fail the
+    // same way, and each one would count a perfectly good scene as a failure.
+    if (e instanceof QuotaError || isQuota(e)) visionExhausted = true;
+    await incident("scene-select", e, videoId);
+    return null;
+  });
+  // Kept for `npm run select:test`, so a person can see exactly what the editor was shown.
+  if (process.env.KEEP_SHEETS !== "true") await fs.rm(cs.sheet, { force: true }).catch(() => {});
   if (!v) return null;
   // Discard numbers that are not on the sheet rather than trusting them.
   const ranked = v.ranking
@@ -135,16 +152,24 @@ export async function sceneQa(o: {
   attempts?: number;
   /** "portrait" for the Short: landscape stock cropped to 9:16 loses two-thirds of every frame. */
   orientation?: "landscape" | "portrait";
-}): Promise<{ passed: number; failed: string[]; replaced: number }> {
+}): Promise<{ passed: number; failed: string[]; replaced: number; unjudged: string[] }> {
   const orientation = o.orientation ?? "landscape";
+  const unjudged: string[] = [];
   if (!providerSupportsVision()) {
     log("  scene selection skipped (provider cannot see images) — keeping the fetched footage");
-    return { passed: o.scenes.length, failed: [], replaced: 0 };
+    return { passed: o.scenes.length, failed: [], replaced: 0, unjudged: o.scenes.map((s) => s.id) };
   }
   const failed: string[] = [];
   let replaced = 0;
 
   for (const [i, scene] of o.scenes.entries()) {
+    // Vision unavailable: keep what the fetch stage found. Not judging a scene is not the scene
+    // failing — counting it as a failure is what would abandon an otherwise good video.
+    if (visionExhausted || visionSpent >= VISION_BUDGET) {
+      visionExhausted = true;
+      unjudged.push(scene.id);
+      continue;
+    }
     const wantVideo = scene.motion === "clip";
     let best: { c: Candidate; score: number; why: string }[] = [];
 
@@ -194,5 +219,8 @@ export async function sceneQa(o: {
       log(`  scene ${scene.id}: ${lead}/10 — below ${SCENE_BAR}; ${got.length ? "using the best available" : "keeping the originally fetched footage"}`);
     }
   }
-  return { passed: o.scenes.length - failed.length, failed, replaced };
+  if (unjudged.length) {
+    log(`  vision ${visionSpent >= VISION_BUDGET ? `budget (${VISION_BUDGET})` : "quota"} reached — ${unjudged.length} scene(s) keep their fetched footage unjudged: ${unjudged.join(", ")}`);
+  }
+  return { passed: o.scenes.length - failed.length - unjudged.length, failed, replaced, unjudged };
 }

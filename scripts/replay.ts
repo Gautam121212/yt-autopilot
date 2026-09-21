@@ -335,7 +335,64 @@ console.log("\nScenario 6 — an image-bearing call whose role is routed to a te
     "#60 the fetch stage respects the shared budget too", `${granted} granted, then no Pexels request`);
   resetPexelsBudget();
 
+  console.log("\nScenario 22 — Gemini's quota runs out on scene 2 of 4");
+  const { resetSelectionBudget } = await import("../src/stages/scene-qa");
+  resetCandidateState(); resetSelectionBudget(); calls = [];
+  let n22 = 0;
+  const searched22: string[] = [];
+  const realFetch22 = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    const u = new URL(url);
+    if (u.host === "api.pexels.com" || u.host === "pixabay.com") searched22.push(u.searchParams.get("query") ?? u.searchParams.get("q") ?? "");
+    if (u.host.includes("googleapis") && ++n22 >= 2) {
+      calls.push({ host: u.host });
+      return new Response(JSON.stringify({ error: { code: 429, message: "Resource exhausted: quota" } }), { status: 429 });
+    }
+    return realFetch22(url, init);
+  }) as typeof fetch;
+  rankFor = () => ({ ranking: [{ n: 1, score: 8, why: "good" }] });
+  const s22 = await run([scene("q1", "iron beam"), scene("q2", "rivet gun"), scene("q3", "crane hook"), scene("q4", "steel mill")])
+    .then((x) => x, (e) => ({ error: (e as Error).message }) as never);
+  globalThis.fetch = realFetch22;
+  const gemAfter = calls.filter((c) => c.host.includes("googleapis")).length;
+  check(!("error" in s22), "#61 a quota wall mid-selection does not crash the run");
+  if (!("error" in s22)) {
+    check(s22.r.failed.length <= 1 && s22.r.unjudged.length >= 2,
+      "#61 unjudged scenes are NOT counted as failures", `failed ${s22.r.failed.length}, unjudged ${s22.r.unjudged.length}`);
+    // The refused calls all belong to the ONE request that hit the wall (the client's normal 429
+    // backoff). What matters is that the scenes after it spent nothing at all.
+    const later = searched22.filter((q) => /crane hook|steel mill/.test(q));
+    check(later.length === 0, "#61 scenes after the quota wall spend nothing — no searches, no vision",
+      `${later.length} searches for q3/q4; ${gemAfter} retries inside the one failing request`);
+  }
+
+  console.log("\nScenario 23 — the per-run vision budget protects the final check's quota");
+  resetCandidateState(); resetSelectionBudget(); calls = [];
+  process.env.SCENE_VISION_BUDGET = "2";
+  // budget is read at module load, so re-import a fresh copy of the module
+  const fresh = await import(`../src/stages/scene-qa.ts?b=${Date.now()}`) as typeof import("../src/stages/scene-qa");
+  delete process.env.SCENE_VISION_BUDGET;
+  visionCalls = 0;
+  const dir23 = fs.mkdtempSync(path.join(tmp, "budget-"));
+  const sc23 = [scene("b1", "gear wheel"), scene("b2", "pulley"), scene("b3", "lever arm"), scene("b4", "piston")];
+  const r23 = await fresh.sceneQa({ cfg: {} as never, dir: dir23, videoId: 1, used: new Set(), scenes: sc23,
+    files: sc23.map(() => [path.join(dir23, "o.jpg")]), credits: sc23.map(() => ({ source: "x", id: "x", title: "x" })) });
+  check(visionCalls === 2 && r23.unjudged.length === 2, "#61 selection stops at its vision budget",
+    `${visionCalls} vision calls, ${r23.unjudged.length} unjudged`);
+
   fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+// ── Scenario 24: the preflight must fail safe, never crash the run it is protecting. ──
+{
+  console.log("\nScenario 24 — YouTube credentials missing");
+  const { checkUploadAuth } = await import("../src/lib/youtube");
+  const saved = { a: process.env.YT_CLIENT_ID, b: process.env.YT_CLIENT_SECRET, c: process.env.YT_REFRESH_TOKEN };
+  delete process.env.YT_CLIENT_ID; delete process.env.YT_CLIENT_SECRET; delete process.env.YT_REFRESH_TOKEN;
+  const r = await checkUploadAuth().then((x) => x, (e) => ({ ok: false, reason: `THREW ${(e as Error).message}` }));
+  Object.assign(process.env, Object.fromEntries(Object.entries({ YT_CLIENT_ID: saved.a, YT_CLIENT_SECRET: saved.b, YT_REFRESH_TOKEN: saved.c }).filter(([, v]) => v)));
+  check(!r.ok && !("reason" in r && String(r.reason).startsWith("THREW")), "#62 missing credentials are reported, not thrown",
+    "reason" in r ? String(r.reason).slice(0, 70) : "");
 }
 
 console.log(bad ? `\n❌ ${bad} behaviour(s) wrong.\n` : "\n✅ every replayed failure now behaves correctly.\n");

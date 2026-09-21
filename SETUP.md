@@ -670,3 +670,24 @@ At most two vision calls per scene, each seeing nine options — against up to t
 one, under a rubric stock photography could not satisfy. Pexels searches are capped per run
 (`PEXELS_RUN_BUDGET`, default 110) because other stages share its 200-per-hour limit; past that,
 Pixabay carries the rest. Repeated searches are served from a per-run cache.
+
+## Before the first full run: test footage selection for real
+
+```bash
+npm run select:test
+```
+
+Runs the real selector on three scenes that the old one scored 0-4/10, using real stock and real
+Gemini. It saves every contact sheet (`sheet-*.jpg`, what the editor saw) and every chosen shot
+(`sel-*`, what it picked) into `./select-test/`. Open them. If two of three clear the bar, the full
+pipeline will find usable footage; if not, the printed reasons say whether the searches or the bar
+is at fault. About 3-6 vision calls.
+
+## Failure modes that no longer waste a run
+
+- **Dead YouTube token**: checked before the first model call. The run stops, spending nothing,
+  and tells you to run `npm run auth:youtube`.
+- **Vision quota runs out mid-selection**: selection stops calling Gemini; unjudged scenes keep
+  their fetched footage and do not count as failures. If over half are unjudged, the video is
+  paused — research and script kept — and resumed by a later run (with a 3-hour cooldown).
+- **Selection cannot starve the final check**: it has its own budget (`SCENE_VISION_BUDGET`, 36).

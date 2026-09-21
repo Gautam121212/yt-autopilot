@@ -9,6 +9,7 @@ import path from "node:path";
 import { isDryRun, loadChannel, loadPlaybook, WORK, type ChannelConfig } from "../config";
 import { closeDb, q, updateVideo } from "../lib/db";
 import { createIssue } from "../lib/github";
+import { checkUploadAuth } from "../lib/youtube";
 import { isQuota, usage } from "../lib/llm";
 import { incident, log } from "../lib/log";
 import { withTimeout } from "../lib/time";
@@ -107,6 +108,20 @@ async function main() {
   const cfg = loadChannel();
   const playbook = loadPlaybook();
   log("starting: checking the queue");
+
+  // PREFLIGHT. A dead upload credential is the most expensive failure there is: every stage runs,
+  // the render finishes, and the video still cannot be published. Check it first, for free.
+  if (!isDryRun() && process.env.SKIP_AUTH_PREFLIGHT !== "true") {
+    const a = await checkUploadAuth();
+    if (!a.ok) {
+      await incident("preflight.youtube", new Error(a.reason));
+      log(`STOPPED before spending anything: ${a.reason}.`);
+      log("Fix: run `npm run auth:youtube` on your Mac, then `npm run github` to push the new token.");
+      process.exitCode = 1;
+      return;
+    }
+    log("preflight: YouTube upload credential works");
+  }
 
   let [v] = await q<VideoRow>(
     "select * from videos where status in ('planned','researched','scripted','verified','uploaded') and attempts < $1 order by id limit 1",
@@ -349,6 +364,14 @@ async function main() {
     }
 
     if (stage === "verified") {
+      // Paused recently for lack of vision quota? Retrying every hour would redo the forecast and
+      // the footage fetch only to pause again; Gemini's quota resets once a day.
+      const [recentPause] = await q<{ n: number }>(
+        `select count(*)::int as n from incidents where video_id = $1 and stage = 'scene-select.deferred'
+           and created_at > now() - interval '3 hours'`, [video.id]).catch(() => [{ n: 0 }]);
+      if ((recentPause?.n ?? 0) > 0 && process.env.FORCE_PRODUCE !== "true") {
+        return log(`#${video.id} waiting for vision quota (paused under 3h ago); nothing spent this run.`);
+      }
       let script = video.script!;
 
       // Predict the ceiling before spending CPU. Repair once; abandon a topic that cannot carry a video.
@@ -462,7 +485,16 @@ async function main() {
       // Per-scene gate: every scene must clear SCENE_BAR before the next one is judged.
       log(`#${video.id} scene-by-scene visual check (bar ${SCENE_BAR}/10)`);
       const qa = await sceneQa({ cfg, dir, videoId: video.id, used, scenes: script.scenes, files: long.files, credits: long.credits, fallbacks });
-      log(`#${video.id} scenes passed: ${qa.passed}/${script.scenes.length} · replaced ${qa.replaced} image(s)${qa.failed.length ? ` · still weak: ${qa.failed.join(", ")}` : ""}`);
+      log(`#${video.id} scenes passed: ${qa.passed}/${script.scenes.length} · replaced ${qa.replaced} image(s)` +
+        `${qa.failed.length ? ` · still weak: ${qa.failed.join(", ")}` : ""}${qa.unjudged.length ? ` · unjudged: ${qa.unjudged.length}` : ""}`);
+      // Vision ran out before most scenes were judged. Rendering now would build a video from blind
+      // picks and then hold it at the final check, which needs vision too. Keep everything done so
+      // far and let the next run — two hours later, quota restored — resume from this stage.
+      if (qa.unjudged.length > script.scenes.length / 2) {
+        await incident("scene-select.deferred", new Error(`${qa.unjudged.length}/${script.scenes.length} scenes unjudged: vision quota or budget reached`), video.id);
+        return log(`#${video.id} paused before rendering: vision unavailable for ${qa.unjudged.length} scenes. ` +
+          `The script and research are kept; the next run resumes from footage selection.`);
+      }
       if (qa.failed.length > Math.ceil(script.scenes.length * 0.25)) {
         // A quarter of the video looking wrong is not worth rendering, voicing or uploading.
         await updateVideo(video.id, { status: "abandoned" });

@@ -157,6 +157,15 @@ ok(produce.includes("rewriting from scratch"), "#38 the script bar rewrites, not
     "#59 the final check judges footage by the same B-roll standard as the selector");
   ok(!review.includes("NASA"), "#59 the final check no longer tells the reviewer the footage is NASA's");
   ok(produce.includes('orientation: "portrait"'), "#59 the Short's footage is chosen in portrait");
+  // #62 preflight: the upload credential is checked BEFORE the first model call.
+  const preAt = produce.indexOf("checkUploadAuth()");
+  const topicAt = produce.indexOf('log("picking a topic');
+  ok(preAt > 0 && preAt < topicAt, "#62 the YouTube credential is checked before any credit is spent");
+  // #61 vision exhaustion defers the video instead of abandoning it, and does not burn attempts.
+  ok(produce.includes("scene-select.deferred") && produce.includes("qa.unjudged.length > script.scenes.length / 2"),
+    "#61 a video short of vision quota is paused and resumed, not abandoned");
+  ok(produce.includes("waiting for vision quota"), "#61 a paused video is not retried every hour");
+  ok(src("package.json").includes("select:test"), "#63 a real-API selection test exists");
 }
 {
   // #51 the failure cap: it must count crashes only. Rejections are the design, not waste.
