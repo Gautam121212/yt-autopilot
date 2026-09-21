@@ -470,7 +470,7 @@ async function main() {
         return log(`#${video.id} abandoned: ${qa.failed.length} scenes could not reach ${SCENE_BAR}/10. Next run starts a new topic.`);
       }
       if (shortAssets) {
-        const sq = await sceneQa({ cfg, dir, videoId: video.id, used, scenes: script.short.scenes, files: shortAssets[0].files, credits: shortAssets[0].credits, fallbacks });
+        const sq = await sceneQa({ cfg, dir, videoId: video.id, used, scenes: script.short.scenes, files: shortAssets[0].files, credits: shortAssets[0].credits, fallbacks, orientation: "portrait" });
         log(`#${video.id} short scenes passed: ${sq.passed}/${script.short.scenes.length}`);
       }
 

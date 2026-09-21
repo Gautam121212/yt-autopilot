@@ -152,6 +152,11 @@ ok(produce.includes("rewriting from scratch"), "#38 the script bar rewrites, not
   ok(!sel.includes("async function preview("), "#56 no preview step that can ENOENT on a clip shorter than its seek");
   ok(!produce.includes("sc.imageQuery = approved[k % approved.length]"), "#57 a scene's own search is never overwritten round-robin");
   ok(!src("src/lib/candidates.ts").includes("relevance("), "#55 candidates keep the library's ranking, not caption word-overlap");
+  const review = src("src/stages/review.ts");
+  ok(!review.includes("any image does not depict what its narration says") && review.includes("B-roll"),
+    "#59 the final check judges footage by the same B-roll standard as the selector");
+  ok(!review.includes("NASA"), "#59 the final check no longer tells the reviewer the footage is NASA's");
+  ok(produce.includes('orientation: "portrait"'), "#59 the Short's footage is chosen in portrait");
 }
 {
   // #51 the failure cap: it must count crashes only. Rejections are the design, not waste.

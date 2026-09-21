@@ -53,7 +53,8 @@ async function font(): Promise<string | null> {
 }
 
 /** Numbered 3x3 grid of thumbnails. Returns the sheet and which candidate sits at each number. */
-async function contactSheet(cands: Candidate[], dir: string, tag: string): Promise<{ sheet: string; order: Candidate[] } | null> {
+async function contactSheet(cands: Candidate[], dir: string, tag: string, portrait = false): Promise<{ sheet: string; order: Candidate[] } | null> {
+  const [tw, th] = portrait ? [216, 384] : [384, 216];
   const work = path.join(dir, `sheet-${tag}`);
   await fs.mkdir(work, { recursive: true });
   const f = await font();
@@ -65,7 +66,8 @@ async function contactSheet(cands: Candidate[], dir: string, tag: string): Promi
     const tile = path.join(work, `tile-${String(n).padStart(2, "0")}.jpg`);
     const label = f ? `,drawtext=fontfile='${f}':text='${n}${c.kind === "video" ? " ▶" : ""}':x=10:y=8:fontsize=40:fontcolor=white:box=1:boxcolor=black@0.75:boxborderw=8` : "";
     const ok = await sh("ffmpeg", ["-y", "-v", "error", "-i", raw, "-vf",
-      `scale=384:216:force_original_aspect_ratio=decrease,pad=384:216:(ow-iw)/2:(oh-ih)/2${label}`,
+      // Crop to the frame the viewer will actually see, so the editor judges that and not the original.
+      `scale=${tw}:${th}:force_original_aspect_ratio=increase,crop=${tw}:${th}${label}`,
       "-frames:v", "1", tile]).then(() => true, () => false);
     // A clean exit does not prove a file was written (that is what caused the ENOENT in the 21 Sep
     // run), so check the file itself.
@@ -99,8 +101,8 @@ Prefer a moving clip (▶) over a still when the line describes motion or proces
 Rank your best THREE, best first. If none reaches 7, also suggest two stock-library searches
 (2-4 words, concrete and filmable) that would find better footage for this line.`;
 
-async function choose(scene: Scene, cands: Candidate[], dir: string, videoId: number, tag: string) {
-  const cs = await contactSheet(cands, dir, tag);
+async function choose(scene: Scene, cands: Candidate[], dir: string, videoId: number, tag: string, portrait = false) {
+  const cs = await contactSheet(cands, dir, tag, portrait);
   if (!cs) return null;
   const v = await askJson({
     tier: "light",
@@ -131,7 +133,10 @@ export async function sceneQa(o: {
   credits: ImageCredit[];
   fallbacks?: string[];
   attempts?: number;
+  /** "portrait" for the Short: landscape stock cropped to 9:16 loses two-thirds of every frame. */
+  orientation?: "landscape" | "portrait";
 }): Promise<{ passed: number; failed: string[]; replaced: number }> {
+  const orientation = o.orientation ?? "landscape";
   if (!providerSupportsVision()) {
     log("  scene selection skipped (provider cannot see images) — keeping the fetched footage");
     return { passed: o.scenes.length, failed: [], replaced: 0 };
@@ -147,9 +152,15 @@ export async function sceneQa(o: {
     // the topic's fallbacks.
     const rounds: string[][] = [[scene.imageQuery, ...(scene.altQueries ?? [])]];
     for (let r = 0; r < Math.min(2, o.attempts ?? 2) && r < rounds.length; r++) {
-      const cands = await gatherCandidates(rounds[r]!, o.used, { wantVideo, perQuery: 5, max: SHEET_SIZE });
+      let cands = await gatherCandidates(rounds[r]!, o.used, { wantVideo, perQuery: 5, max: SHEET_SIZE, orientation });
+      // Vertical stock is much thinner than horizontal. Top up with landscape rather than show a
+      // near-empty sheet; the render crops it, and the editor can still prefer the vertical ones.
+      if (orientation === "portrait" && cands.length < 5) {
+        const more = await gatherCandidates(rounds[r]!, o.used, { wantVideo, perQuery: 5, max: SHEET_SIZE - cands.length });
+        cands = [...cands, ...more.filter((m) => !cands.some((c) => c.key === m.key))];
+      }
       if (!cands.length) { log(`  scene ${scene.id}: no candidates for ${rounds[r]!.join(" / ")}`); continue; }
-      const pick = await choose(scene, cands, o.dir, o.videoId, `${scene.id}-${r + 1}`);
+      const pick = await choose(scene, cands, o.dir, o.videoId, `${scene.id}-${r + 1}`, orientation === "portrait");
       if (!pick?.ranked.length) continue;
       if (!best.length || pick.ranked[0]!.score > best[0]!.score) best = pick.ranked;
       log(`  scene ${scene.id}: best of ${pick.shown} shown → ${best[0]!.score}/10 (${best[0]!.c.kind}) — ${best[0]!.why.slice(0, 70)}`);

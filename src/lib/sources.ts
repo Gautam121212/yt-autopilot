@@ -1,5 +1,6 @@
 /** Free data sources: Wikipedia (research), NASA Image Library (visuals), YouTube search (demand signals). */
 import fs from "node:fs/promises";
+import { takePexels } from "./budget";
 import { fetchOk, hfetch, withRetry } from "./http";
 import { isPlayable } from "./media";
 import { withTimeout } from "./time";
@@ -184,7 +185,7 @@ const LIFESTYLE = /\b(man|woman|men|women|person|people|boy|girl|guy|lady|model|
 const pexelsKey = () => process.env.PEXELS_API_KEY ?? "";
 
 export async function pexelsImage(query: string, used: Set<string>, file: string): Promise<ImageHit | null> {
-  if (!pexelsKey()) return null;
+  if (!takePexels()) return null;
   const terms = words(query);
   const r = await hfetch(`https://api.pexels.com/v1/search?per_page=30&orientation=landscape&size=large&query=${encodeURIComponent(query)}`,
     { headers: { Authorization: pexelsKey() } }).catch(() => null);
@@ -214,7 +215,7 @@ export async function pexelsImage(query: string, used: Set<string>, file: string
 
 /** Short landscape clip for scenes that benefit from motion. Returns an .mp4 path in `file`. */
 export async function pexelsVideo(query: string, used: Set<string>, file: string): Promise<ImageHit | null> {
-  if (!pexelsKey()) return null;
+  if (!takePexels()) return null;
   const r = await hfetch(`https://api.pexels.com/videos/search?per_page=20&orientation=landscape&size=medium&query=${encodeURIComponent(query)}`,
     { headers: { Authorization: pexelsKey() } }).catch(() => null);
   if (!r?.ok) return null;
@@ -347,7 +348,7 @@ export async function probeQuery(query: string, era: "historical" | "modern" | "
   // 100% and the scene probe say 0% for the same words: stock has "wooden wheel" and "old ledger",
   // and era only decides whether we ALSO ask an archive with a period hint.
   {
-    if (pexelsKey()) {
+    if (takePexels()) {
       const r = await hfetch(`https://api.pexels.com/v1/search?per_page=15&orientation=landscape&query=${encodeURIComponent(query)}`,
         { headers: { Authorization: pexelsKey() } })
         .then((x) => x.json() as Promise<{ photos?: { width: number; alt?: string }[] }>).catch(() => null);

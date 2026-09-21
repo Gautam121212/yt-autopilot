@@ -10,6 +10,7 @@
  * few that are actually chosen.
  */
 import fs from "node:fs/promises";
+import { resetPexelsBudget, takePexels } from "./budget";
 import { hfetch } from "./http";
 import { isPlayable } from "./media";
 import { MIN_IMG_W, MIN_VID_W } from "./sources";
@@ -32,29 +33,29 @@ const PORTRAIT = /\b(portrait|selfie|posing|model|headshot|smiling|face)\b/i;
 const pexelsKey = () => process.env.PEXELS_API_KEY ?? "";
 const pixKey = () => process.env.PIXABAY_API_KEY ?? "";
 
-/**
- * Pexels allows 200 requests an hour and other stages use it too. Past this many calls in one run,
- * stop asking Pexels and let Pixabay (100 requests per minute) carry the rest.
- */
-const PEXELS_RUN_BUDGET = Number(process.env.PEXELS_RUN_BUDGET ?? 110);
+/** One budget shared with every other stage that calls Pexels (see lib/budget.ts). */
 let pexelsCalls = 0;
-const pexelsOk = () => !!pexelsKey() && pexelsCalls < PEXELS_RUN_BUDGET;
+const pexelsOk = () => takePexels();
 
 /** The same search is often needed by several scenes; ask each library once per run. */
 const cache = new Map<string, Candidate[]>();
 
-async function pexelsPhotos(query: string, n: number): Promise<Candidate[]> {
+export type Orientation = "landscape" | "portrait";
+
+async function pexelsPhotos(query: string, n: number, orient: Orientation): Promise<Candidate[]> {
   if (!pexelsOk()) return [];
-  pexelsCalls++;
-  const r = await hfetch(`https://api.pexels.com/v1/search?per_page=${n}&orientation=landscape&query=${encodeURIComponent(query)}`,
+  pexelsCalls++; // this module's share, for diagnostics
+  const r = await hfetch(`https://api.pexels.com/v1/search?per_page=${n}&orientation=${orient}&query=${encodeURIComponent(query)}`,
     { headers: { Authorization: pexelsKey() } }, 20_000).catch(() => null);
   if (!r?.ok) return [];
   const { photos = [] } = (await r.json().catch(() => ({}))) as {
     photos?: { id: number; width: number; alt?: string; photographer?: string; url?: string;
       src: { medium?: string; large?: string; large2x?: string; original?: string } }[];
   };
+  // A vertical photo is narrower than it is tall, so the width floor applies to its short side.
+  const minW = orient === "portrait" ? Math.round(MIN_IMG_W * 0.56) : MIN_IMG_W;
   return photos
-    .filter((p) => p.width >= MIN_IMG_W && !PORTRAIT.test(p.alt ?? "") && (p.src.medium || p.src.large))
+    .filter((p) => p.width >= minW && !PORTRAIT.test(p.alt ?? "") && (p.src.medium || p.src.large))
     .map((p) => ({
       key: `pexels:${p.id}`, source: "pexels" as const, kind: "photo" as const, query,
       thumb: p.src.medium ?? p.src.large!, full: p.src.large2x ?? p.src.large ?? p.src.original!,
@@ -62,10 +63,10 @@ async function pexelsPhotos(query: string, n: number): Promise<Candidate[]> {
     }));
 }
 
-async function pexelsVideos(query: string, n: number): Promise<Candidate[]> {
+async function pexelsVideos(query: string, n: number, orient: Orientation): Promise<Candidate[]> {
   if (!pexelsOk()) return [];
-  pexelsCalls++;
-  const r = await hfetch(`https://api.pexels.com/videos/search?per_page=${n}&orientation=landscape&query=${encodeURIComponent(query)}`,
+  pexelsCalls++; // this module's share, for diagnostics
+  const r = await hfetch(`https://api.pexels.com/videos/search?per_page=${n}&orientation=${orient}&query=${encodeURIComponent(query)}`,
     { headers: { Authorization: pexelsKey() } }, 20_000).catch(() => null);
   if (!r?.ok) return [];
   const { videos = [] } = (await r.json().catch(() => ({}))) as {
@@ -75,7 +76,8 @@ async function pexelsVideos(query: string, n: number): Promise<Candidate[]> {
   const out: Candidate[] = [];
   for (const v of videos) {
     if (v.duration < 4 || v.duration > 60 || !v.image) continue;
-    const f = v.video_files.filter((x) => x.file_type === "video/mp4" && x.width >= MIN_VID_W && x.width <= 2560)
+    const minVW = orient === "portrait" ? Math.round(MIN_VID_W * 0.56) : MIN_VID_W;
+    const f = v.video_files.filter((x) => x.file_type === "video/mp4" && x.width >= minVW && x.width <= 2560)
       .sort((a, b) => b.width - a.width)[0];
     if (!f) continue;
     out.push({
@@ -87,16 +89,17 @@ async function pexelsVideos(query: string, n: number): Promise<Candidate[]> {
   return out;
 }
 
-async function pixabayPhotos(query: string, n: number): Promise<Candidate[]> {
+async function pixabayPhotos(query: string, n: number, orient: Orientation): Promise<Candidate[]> {
   if (!pixKey()) return [];
   const r = await hfetch(`https://pixabay.com/api/?key=${pixKey()}&q=${encodeURIComponent(query)}` +
-    `&image_type=photo&orientation=horizontal&per_page=${Math.max(3, n)}&safesearch=true`, {}, 20_000).catch(() => null);
+    `&image_type=photo&orientation=${orient === "portrait" ? "vertical" : "horizontal"}&per_page=${Math.max(3, n)}&safesearch=true`, {}, 20_000).catch(() => null);
   if (!r?.ok) return [];
   const { hits = [] } = (await r.json().catch(() => ({}))) as {
     hits?: { id: number; imageWidth: number; tags?: string; webformatURL?: string; largeImageURL?: string; fullHDURL?: string }[];
   };
+  const minW = orient === "portrait" ? Math.round(MIN_IMG_W * 0.56) : MIN_IMG_W;
   return hits
-    .filter((h) => h.imageWidth >= MIN_IMG_W && !PORTRAIT.test(h.tags ?? "") && h.webformatURL)
+    .filter((h) => h.imageWidth >= minW && !PORTRAIT.test(h.tags ?? "") && h.webformatURL)
     .map((h) => ({
       key: `px:${h.id}`, source: "pixabay" as const, kind: "photo" as const, query,
       thumb: h.webformatURL!, full: h.fullHDURL ?? h.largeImageURL ?? h.webformatURL!, caption: h.tags ?? "",
@@ -108,16 +111,17 @@ async function pixabayPhotos(query: string, n: number): Promise<Candidate[]> {
  * query dominates the sheet. Videos are included when the scene describes motion.
  */
 export async function gatherCandidates(queries: string[], used: Set<string>,
-  o: { wantVideo: boolean; perQuery?: number; max?: number }): Promise<Candidate[]> {
+  o: { wantVideo: boolean; perQuery?: number; max?: number; orientation?: Orientation }): Promise<Candidate[]> {
+  const orient = o.orientation ?? "landscape";
   const per = o.perQuery ?? 5;
   const lists: Candidate[][] = [];
   for (const q of [...new Set(queries.map((x) => x.trim()).filter(Boolean))].slice(0, 4)) {
-    const ck = `${q}|${o.wantVideo}`;
+    const ck = `${q}|${o.wantVideo}|${orient}`;
     if (!cache.has(ck)) {
       const [a, b, c] = await Promise.all([
-        pexelsPhotos(q, per),
-        pixabayPhotos(q, per),
-        o.wantVideo ? pexelsVideos(q, Math.ceil(per / 2)) : Promise.resolve([]),
+        pexelsPhotos(q, per, orient),
+        pixabayPhotos(q, per, orient),
+        o.wantVideo ? pexelsVideos(q, Math.ceil(per / 2), orient) : Promise.resolve([]),
       ]);
       // videos first when motion is wanted: a moving shot beats a still for that scene
       cache.set(ck, [...c, ...a, ...b]);
@@ -166,4 +170,4 @@ export async function fetchThumb(c: Candidate, file: string): Promise<boolean> {
 
 /** For tests and for `npm run why`. */
 export const candidateStats = () => ({ pexelsCalls, cachedSearches: cache.size });
-export const resetCandidateState = () => { pexelsCalls = 0; cache.clear(); };
+export const resetCandidateState = () => { pexelsCalls = 0; cache.clear(); resetPexelsBudget(); };

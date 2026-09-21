@@ -59,7 +59,7 @@ export async function finalReview(o: {
     `# Description\n${o.description}`,
     `# Short title\n${o.script.short.title}`,
     `# Standards review already done\n${o.verification.summary}`,
-    `# Narration by scene (with the NASA image actually used)\n${o.script.scenes.map((s, i) => `[${s.id}] image: "${o.credits[i]?.title ?? "?"}"\n${s.narration}`).join("\n\n")}`,
+    `# Narration by scene (with the stock footage actually used)\n${o.script.scenes.map((s, i) => `[${s.id}] image: "${o.credits[i]?.title ?? "?"}"\n${s.narration}`).join("\n\n")}`,
     `# Short narration\n${o.script.short.scenes.map((s) => s.narration).join(" ")}`,
   ].join("\n\n");
   await fs.writeFile(path.join(o.dir, "review-pack.md"), pack);
@@ -79,7 +79,11 @@ You are not grading effort. Score how it would land on a stranger scrolling YouT
 HOLD (blocker) if ANY of these is true:
 - a factual claim, number or title is unsupported or overstated;
 - any frame shows a logo, insignia, wordmark or branded livery; an identifiable person; a watermark or embedded caption bar;
-- any image does not depict what its narration says;
+- any image is UNRELATED to its narration — a different subject entirely, the wrong era (modern cars, phones
+  or clothing in a period story), or something that contradicts the line. This is documentary B-roll from
+  stock libraries: a shot of the right subject, material, setting or kind of action is CORRECT and expected.
+  Never hold because a shot is not the literal historical event — stock cannot show that, and every
+  documentary on television uses B-roll the same way;
 - the thumbnail text is unreadable, cut off, or promises something the video doesn't deliver;
 - the thumbnail text is a DESCRIPTION rather than a reaction or a punchline ("The History of X" is a hold;
   "HE DRANK IT ON PURPOSE" is right for this channel);
@@ -97,7 +101,9 @@ a video that scrapes the bar should feel like it scraped it.
 SCORING (be harsh; the bar should feel earned):
 - 10 = you would send this to a friend. 8 = you would watch it to the end. 6 = you would click away at the midpoint.
 - 5 or below for anything that is competent but forgettable.
-Score visualsMatch on whether each image earns its place, not on whether it is pretty.
+Score visualsMatch as a documentary editor would: 8+ when every shot is the right subject or setting for its
+line, 6-7 when a few are merely generic, below 5 only when shots are unrelated or wrong-era. Not on prettiness,
+and not on whether a shot is the literal event.
 
 You may propose a better title or description intro, only if it is BOTH more accurate and more compelling.
 

@@ -305,6 +305,36 @@ console.log("\nScenario 6 — an image-bearing call whose role is routed to a te
   check(calls.filter((c) => c.host === "api.pexels.com").length <= 3, "#55 a repeated search is served from the run cache",
     `${calls.filter((c) => c.host === "api.pexels.com").length} Pexels searches for 2 identical scenes`);
 
+  console.log("\nScenario 20 — the Short gets vertical footage, judged as the viewer will see it");
+  resetCandidateState(); calls = [];
+  const seenOrient: string[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    const u = new URL(url);
+    if (u.host === "api.pexels.com" || u.host === "pixabay.com") seenOrient.push(u.searchParams.get("orientation") ?? "?");
+    return realFetch(url, init);
+  }) as typeof fetch;
+  rankFor = () => ({ ranking: [{ n: 1, score: 8, why: "good vertical" }] });
+  const dir20 = fs.mkdtempSync(path.join(tmp, "short-"));
+  const files20 = [[path.join(dir20, "orig.jpg")]];
+  await sceneQa({ cfg: {} as never, dir: dir20, videoId: 1, used: new Set(), scenes: [scene("sh01", "steel cable")],
+    files: files20, credits: [{ source: "x", id: "x", title: "x" }], orientation: "portrait" });
+  globalThis.fetch = realFetch;
+  check(seenOrient.includes("portrait") && seenOrient.includes("vertical"), "#59 Pexels asked for portrait, Pixabay for vertical",
+    [...new Set(seenOrient)].join(", "));
+
+  console.log("\nScenario 21 — Pexels is shared: once the run budget is spent, no stage can call it");
+  const { takePexels, resetPexelsBudget } = await import("../src/lib/budget");
+  resetPexelsBudget();
+  let granted = 0;
+  for (let k = 0; k < 400; k++) if (takePexels()) granted++;
+  calls = [];
+  const { pexelsImage } = await import("../src/lib/sources");
+  const after = await pexelsImage("anything", new Set(), path.join(tmp, "x.jpg"));
+  check(granted === Number(process.env.PEXELS_RUN_BUDGET ?? 150) && after === null && !calls.some((c) => c.host === "api.pexels.com"),
+    "#60 the fetch stage respects the shared budget too", `${granted} granted, then no Pexels request`);
+  resetPexelsBudget();
+
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
