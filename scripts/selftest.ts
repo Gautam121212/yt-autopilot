@@ -171,6 +171,28 @@ ok(produce.includes("rewriting from scratch"), "#38 the script bar rewrites, not
   ok(vis.includes("POOL_BUDGET_MS") && /withBudget\(\s*mapLimit\(poolQueries/.test(vis), "#64 the pool has its own time limit");
   ok(/withTimeout\(Promise\.all\(\[\s*sceneImages/.test(produce), "#64 the whole footage + voice phase has a hard ceiling");
   ok(!produce.includes("images (NASA)"), "#65 no stale NASA text in the run log");
+  // #66 bitrate ceiling on every x264 encode
+  const rend = src("src/stages/render.ts");
+  ok(count(rend, '"libx264"') === count(rend, '"-maxrate", MAXRATE'), "#66 every video encode has the bitrate ceiling",
+    `${count(rend, '"-maxrate", MAXRATE')}/${count(rend, '"libx264"')} encodes capped`);
+  // #67 chapters come from the beat sheet and obey YouTube's rules
+  const pub = src("src/stages/publish.ts");
+  ok(pub.includes("export function buildChapters") && !pub.includes('chapters.unshift("0:00 Intro")'),
+    "#67 chapters are built from the beat sheet, never a lone '0:00 Intro'");
+  // #68 no prompt may describe the deleted text cards or NASA footage
+  const prompts = ["src/stages/forecast.ts", "src/stages/review.ts", "src/stages/script.ts", "src/types.ts"].map(src).join("\n");
+  ok(!/typographic card|designed card|shown as a designed/.test(prompts), "#68 no prompt describes the deleted text cards");
+  ok(!/Pexels and NASA|against Wikimedia Commons/.test(prompts), "#68 no prompt claims NASA or Commons-only footage");
+  // #69 the ENOENT class: ffmpeg outputs are checked on disk before use
+  ok(src("src/stages/thumbnail.ts").includes("fs.stat(out)"), "#69 thumbnail frames are checked on disk, not by exit code");
+  {
+    // Anchored to the style string itself — an unanchored pattern matched a comment quoting the old value.
+    const mv = Number(/Alignment=2,MarginV=(\d+)/.exec(rend)?.[1] ?? 0);
+    ok(mv >= 70 && mv <= 110, "#71 Short captions sit above YouTube's bottom UI overlay", `MarginV ${mv}/288 (~${Math.round((mv / 288) * 100)}% up)`);
+  }
+  // #70 research-backed writer changes
+  const w = src("src/stages/script.ts");
+  ok(w.includes("roadmap") && w.includes("LOOP"), "#70 the writer adds a payoff roadmap and loops the Short");
 }
 {
   // #51 the failure cap: it must count crashes only. Rejections are the design, not waste.

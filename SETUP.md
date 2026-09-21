@@ -691,3 +691,15 @@ is at fault. About 3-6 vision calls.
   their fetched footage and do not count as failures. If over half are unjudged, the video is
   paused — research and script kept — and resumed by a later run (with a 3-hour cooldown).
 - **Selection cannot starve the final check**: it has its own budget (`SCENE_VISION_BUDGET`, 36).
+
+## Production dry run (no API keys, nothing uploaded)
+
+```bash
+npm run dryrun
+```
+
+Runs the real render engine on real synthesized speech and generated footage, then measures the
+output: resolution, picture/speech sync, shot pace, bitrate, loudness, fast-start, render speed,
+caption timing, and chapters against YouTube's rules. Frame sheets are saved in `./dryrun/` so you
+can look at the result. About 3 minutes. Last measured: long video one shot every 5.9 s, Short every
+3.2 s, -14.8 LUFS, 11.0 Mbps on worst-case noise, 2.0x real-time render.

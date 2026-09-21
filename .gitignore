@@ -5,3 +5,4 @@ downloads/
 node_modules/
 work/
 select-test/
+dryrun/

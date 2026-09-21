@@ -53,13 +53,12 @@ The reviewer who will actually rate it scores like this: 10 = would send to a fr
 claim, a weak or generic first 20 seconds, encyclopedia-flavoured writing, advice or self-diagnosis framing,
 a title that overpromises, or scenes that cannot be illustrated with a real archive photograph.
 
-Illustratability is MEASURED, not guessed: ${Math.round(o.feasible * 100)}% of this script's scenes returned a
-genuinely matching picture when searched against Wikimedia Commons. Production additionally searches Openverse,
-Pexels and NASA, so true coverage is typically higher than this figure — treat it as a floor, not a ceiling. The rest will be rendered as designed
-typographic cards built from each scene's own cardHeadline/cardSub — relevant by construction, never a wrong
-photograph. So score visualsMatch on the MIX: a video that is mostly real photographs with a few cards reads as
-deliberate; one that is more than half cards reads as a slideshow of text and cannot exceed 6.
-Judge the cardHeadline values too: a card carrying a concrete figure works, a card repeating an abstraction does not.
+Illustratability is MEASURED, not guessed: ${Math.round(o.feasible * 100)}% of this script's scenes returned usable
+footage when their searches were run against the stock libraries (Pexels, Pixabay) and archives. In production an
+editor then chooses each scene's shots from a contact sheet of up to nine real candidates, preferring moving clips
+for motion. There are NO text cards: every scene is real footage. Stock never shows the exact historical moment, so
+judge visualsMatch as documentary B-roll: the right subject, material, setting or action is a match; only
+unrelated or wrong-era footage is a miss.
 
 verdict: "proceed" if likely >= the channel's publish bar; "repair" if the listed fixes would plausibly get it there; "abandon" if the
 topic itself cannot carry a good video (thin sourcing, nothing surprising, nothing to show).${

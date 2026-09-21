@@ -22,7 +22,10 @@ THE VOICE — this is the whole channel
 THE BEAT SHEET — every video uses exactly this shape. Each scene declares its "role":
 1. cold_open — a person doing something indefensible, or a number that cannot be right. No context yet.
 2. reaction — one deadpan beat acknowledging what just happened. Short.
-3. premise — what this video is actually about, in the viewer's language. The promise.
+3. premise — what this video is actually about, in the viewer's language. The promise. END it with a
+   one-sentence roadmap that makes the payoff a debt the video owes the viewer, e.g. "and the reason it
+   worked is stranger than the cable itself." Viewers who clear the first minute watch far longer; a
+   concrete promise is what carries them past it. Never list sections ("first we'll cover…").
 4-8. escalation (at least 3) — each one raises the stakes or the absurdity, each ending on something unresolved.
 9. turn — the moment it goes wrong, or stops being funny and becomes interesting.
 10. mechanism — the real science or engineering, explained properly. This is why the video exists.
@@ -88,8 +91,11 @@ ${playbook}`;
 }
 
 const SHAPE = `JSON: { "title", "altTitles": [3], "description" (2-3 short paragraphs, no links), "tags": [<=15], "thumbnailText" (2-4 words),
-"thumbnailQuery" (a concrete photo search for the thumbnail), "scenes": [{ "id": "sc01", "role": "cold_open"|"reaction"|"premise"|"escalation"|"turn"|"mechanism"|"payoff"|"kicker", "chapter"?, "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "era": "historical"|"modern"|"any", "cardHeadline", "cardSub", "claimIds" }],
-"claims": [{ "id": "C1", "text", "sourceIds" }], "short": { "title", "scenes": [{ "id": "sh01", "role": "cold_open"|"escalation"|"payoff"|"kicker", "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "era": "historical"|"modern"|"any", "cardHeadline", "cardSub" }] } }`;
+"thumbnailQuery" (a concrete photo search for the thumbnail), "scenes": [{ "id": "sc01", "role": "cold_open"|"reaction"|"premise"|"escalation"|"turn"|"mechanism"|"payoff"|"kicker", "chapter"? (only on scenes that start a new beat; a title that pulls the viewer forward, e.g. "The window was not consulted" — never "Part 2" or "Step 3"), "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "era": "historical"|"modern"|"any", "cardHeadline", "cardSub", "claimIds" }],
+"claims": [{ "id": "C1", "text", "sourceIds" }],
+"short" (a LOOP: its kicker must lead straight back into its cold_open line, so the replay feels like
+one continuous thought — loops are rewatched, and completion is what YouTube rewards on Shorts; the first
+2 seconds must be an action or a striking fact, never a title): { "title", "scenes": [{ "id": "sh01", "role": "cold_open"|"escalation"|"payoff"|"kicker", "narration", "imageQuery", "altQueries": [2-3], "motion": "still"|"clip", "era": "historical"|"modern"|"any", "cardHeadline", "cardSub" }] } }`;
 
 /**
  * Bring a script up to TARGET_SCENES by splitting its longest body scenes at a sentence boundary.

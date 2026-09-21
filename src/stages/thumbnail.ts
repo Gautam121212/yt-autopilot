@@ -78,7 +78,9 @@ export async function bestFrameFrom(videoPath: string, dir: string): Promise<str
       "-y", "-ss", String(Math.round(total * at)), "-t", "12", "-i", videoPath,
       "-vf", "thumbnail=90", "-frames:v", "1", "-q:v", "2", out,
     ]).then(() => true, () => false);
-    if (ok) candidates.push(out);
+    // A clean exit does not prove a frame was written (a window past the end writes nothing): check
+    // the file, or a thumbnail gets built from a path that does not exist — the #56 failure class.
+    if (ok && (await fs.stat(out).then((st) => st.size > 1000, () => false))) candidates.push(out);
   }
   if (!candidates.length) return null;
 

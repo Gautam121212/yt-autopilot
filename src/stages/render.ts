@@ -73,11 +73,19 @@ function planShots(audio: SceneAudio, target: number): { start: number; dur: num
   }
   return shots.filter((sh) => sh.dur > 0.4);
 }
-/** Mixed archives look mismatched; one grade pulls Commons, Pexels, NASA and Openverse together. */
+/** Mixed archives look mismatched; one grade pulls Pexels, Pixabay, Commons and Openverse footage together. */
 const GRADE = "eq=contrast=1.06:saturation=0.92:gamma=0.98,unsharp=5:5:0.4";
 
 /** Music sits well below the voice; the sidechain ducking does the rest. */
 const MUSIC_GAIN = Number(process.env.MUSIC_GAIN ?? 0.10);
+/**
+ * Bitrate ceiling. Each shot is encoded as its own short clip, and x264 starts every encode with its
+ * VBV buffer ~90% full, so a 24 Mbit buffer let each 6-second clip burst ~3.6 Mbps past the cap —
+ * a dry run measured 13.6 Mbps against a 12 Mbps ceiling. A one-second buffer bounds that burst.
+ * YouTube re-encodes to ~8 Mbps for 1080p30, so a 10 Mbps upload loses nothing visible.
+ */
+const MAXRATE = process.env.VIDEO_MAXRATE ?? "10M";
+const BUFSIZE = process.env.VIDEO_BUFSIZE ?? "10M";
 
 const FONTS = [
   "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -125,7 +133,10 @@ async function shotClip(
   const aChain = `[1:a]aresample=48000,apad,atrim=0:${dur.toFixed(3)},${aIn}${aOut}asetpts=N/SR/TB[a]`;
   const encode = [
     "-map", "[v]", "-map", "[a]", "-t", dur.toFixed(3),
-    "-c:v", "libx264", "-preset", "superfast", "-crf", "18", "-r", String(FPS),
+    // CRF 18 keeps quality; the VBV ceiling stops motion over detailed stills spiking past what
+    // YouTube uses (it re-encodes everything; ~8 Mbps is its 1080p30 guide). Without it a dry run
+    // produced 21 Mbps — about 1.6 GB for a 10-minute video.
+    "-c:v", "libx264", "-preset", "superfast", "-crf", "18", "-maxrate", MAXRATE, "-bufsize", BUFSIZE, "-r", String(FPS),
     "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", out,
   ];
 
@@ -298,12 +309,16 @@ export async function renderVideo(o: {
 
   if (o.burnCaptions) {
     const burned = path.join(o.dir, `${name}-cc.mp4`);
+    // Shorts safe zone: YouTube overlays the channel name, title and music line on roughly the bottom
+    // quarter, so MarginV=34 (~12% up) put the second caption line under the UI on a phone. 80 of 288
+    // (~28% up) sits the captions just above it — the same band the big Shorts channels use.
     // ASS coordinates, not pixels: MarginV is measured in a 288-tall script space, so 240 put the
-    // captions at the TOP of the frame in production. 34 sits them just above YouTube's UI.
+    // captions at the TOP of the frame in production.
     const style = "FontName=DejaVu Sans,Fontsize=15,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000," +
-      "Outline=4,Shadow=1,Alignment=2,MarginV=34,MarginL=24,MarginR=24";
+      "Outline=4,Shadow=1,Alignment=2,MarginV=80,MarginL=24,MarginR=24";
     const ok = await sh("ffmpeg", ["-y", "-i", final, "-vf", `subtitles=${srt}:force_style='${style}'`,
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "copy", "-movflags", "+faststart", burned])
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-maxrate", MAXRATE, "-bufsize", BUFSIZE,
+      "-c:a", "copy", "-movflags", "+faststart", burned])
       .then(() => true, (e) => { console.warn(`captions not burned in (${String(e).slice(0, 120)})`); return false; });
     if (ok) return { videoPath: burned, srtPath: srt, timings };
   }

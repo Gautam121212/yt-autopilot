@@ -69,7 +69,7 @@ export const SceneSchema = z.object({
   altQueries: z.array(z.string()).min(2).max(3).describe("two or three DIFFERENT concrete objects that could illustrate the same line"),
   motion: z.enum(["still", "clip"]).describe("'clip' for scenes describing movement, process or scale; 'still' otherwise"),
   era: z.enum(["historical", "modern", "any"]).describe("'historical' for anything before ~1950 — forces period artwork and blocks modern stock photos"),
-  cardHeadline: z.string().max(40).describe("2-5 words, ideally the scene's key figure ('800 MILES', '2 HOURS'); shown as a designed card when no honest photo exists"),
+  cardHeadline: z.string().max(40).describe("2-5 words, ideally the scene's key figure ('800 MILES', '2 HOURS'); burned in small over the footage as a figure caption"),
   cardSub: z.string().max(90).describe("one short clause explaining the headline"),
   claimIds: z.array(z.string()).default([]),
 });

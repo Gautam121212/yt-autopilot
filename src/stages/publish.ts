@@ -6,14 +6,56 @@ import type { Dossier, Scene, SceneTiming, Script } from "../types";
 
 const CREDIT = "Narration voice is AI-generated. Imagery is public-domain or freely licensed; see credits above.";
 
+/**
+ * YouTube chapters, built from the beat sheet — which every script has by construction — rather than
+ * from an optional per-scene field the writer rarely set (most videos got a lone "0:00 Intro", which
+ * YouTube ignores). Chapters measurably lift average view duration on videos over five minutes.
+ *
+ * YouTube's rules, all enforced here: first chapter at 0:00, at least three, each at least 10 s long.
+ * If they cannot all be met, returns [] and the description has no chapter section at all — one
+ * short chapter disables every chapter on the video.
+ *
+ * Titles: the writer's own chapter title if it set one, else the scene's on-screen caption, else the
+ * opening words of the scene. Never "Part 2" or "Step 3": the moment one topic ends and another is
+ * announced is exactly when viewers leave, so titles should pull forward, not signpost.
+ */
+export function buildChapters(scenes: Scene[], timings: SceneTiming[]): string[] {
+  const BREAK_AT = new Set(["cold_open", "escalation", "turn", "mechanism", "payoff"]);
+  const MIN_GAP = 10;
+  const title = (sc: Scene): string => {
+    const raw = (sc.chapter || sc.cardHeadline || sc.narration.split(/[.!?]/)[0] || "").trim();
+    const words = raw.replace(/\s+/g, " ").split(" ").slice(0, 7).join(" ");
+    return words.length > 60 ? `${words.slice(0, 57)}…` : words;
+  };
+  const points: { at: number; title: string }[] = [];
+  let lastRole = "";
+  for (const [i, sc] of scenes.entries()) {
+    const role = (sc as { role?: string }).role ?? "";
+    const t = timings[i]?.start;
+    // A chapter starts where the ROLE changes (so consecutive escalations, or a scene split in two,
+    // stay one chapter), and never within 10 s of the previous one.
+    if (t === undefined || !BREAK_AT.has(role) || role === lastRole) { lastRole = role || lastRole; continue; }
+    lastRole = role;
+    const at = points.length ? t : 0;
+    if (points.length && at - points.at(-1)!.at < MIN_GAP) continue;
+    const name = title(sc);
+    if (!name || points.some((p) => p.title === name)) continue;
+    points.push({ at, title: name });
+  }
+  // the last chapter must also run at least 10 s before the video ends
+  const end = timings.at(-1)?.end ?? 0;
+  while (points.length > 1 && end - points.at(-1)!.at < MIN_GAP) points.pop();
+  if (points.length < 3 || points[0]!.at !== 0) return [];
+  return points.map((p) => `${ts(p.at)} ${p.title}`);
+}
+
 export function buildDescription(script: Script, scenes: Scene[], timings: SceneTiming[], dossier: Dossier, credits: { source: string; attribution?: string }[] = []): string {
-  const chapters = scenes
-    .map((s, i) => (s.chapter ? `${ts(timings[i]!.start)} ${s.chapter}` : null))
-    .filter(Boolean);
-  if (!chapters[0]?.startsWith("0:00")) chapters.unshift("0:00 Intro");
+  const chapters = buildChapters(scenes, timings);
   const sources = dossier.sources.map((s) => `- ${s.title}: ${s.url}`);
   const footer = `\n\n${CREDIT}`;
-  let desc = `${script.description}\n\nChapters\n${chapters.join("\n")}\n\nSources\n`;
+  // No section at all rather than an invalid one: YouTube ignores chapters unless every rule holds,
+  // and a lone "0:00 Intro" line just looks unfinished.
+  let desc = `${script.description}\n\n${chapters.length ? `Chapters\n${chapters.join("\n")}\n\n` : ""}Sources\n`;
   for (const s of sources) if ((desc + s + footer).length < 4400) desc += s + "\n";
 
   // CC-BY / CC-BY-SA images must be credited; NASA imagery must not imply endorsement.

@@ -1,4 +1,4 @@
-/** Free data sources: Wikipedia (research), NASA Image Library (visuals), YouTube search (demand signals). */
+/** Free data sources: Wikipedia (research), Pexels/Pixabay/Commons/Openverse (footage), YouTube search (demand signals). */
 import fs from "node:fs/promises";
 import { takePexels } from "./budget";
 import { fetchOk, hfetch, withRetry } from "./http";
