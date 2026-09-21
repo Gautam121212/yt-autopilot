@@ -263,6 +263,21 @@ async function anthropic(model: string, system: string, prompt: string, maxToken
 
 // ---------------- openai-compatible (Groq, OpenRouter, Cerebras, Mistral, DeepSeek, ...) ----------------
 /**
+ * How much a provider will actually write in one answer. Measured, not guessed: a full script in
+ * JSON runs 5-8k tokens, so anything under ~12k truncates it.
+ */
+function outputCapFor(base: string): number {
+  if (process.env.OPENAI_COMPAT_MAX_TOKENS && base === (process.env.OPENAI_COMPAT_BASE_URL ?? "").replace(/\/$/, "")) {
+    return Number(process.env.OPENAI_COMPAT_MAX_TOKENS); // legacy single-provider override
+  }
+  if (/mistral\.ai/.test(base)) return Number(process.env.MISTRAL_MAX_TOKENS ?? 32000);
+  if (/bigmodel\.cn/.test(base)) return Number(process.env.ZAI_MAX_TOKENS ?? 32000);
+  if (/groq\.com/.test(base)) return Number(process.env.GROQ_MAX_TOKENS ?? 8000);   // per-minute limit
+  if (/openrouter\.ai/.test(base)) return Number(process.env.OPENROUTER_MAX_TOKENS ?? 16000);
+  return 16000;
+}
+
+/**
  * Per-endpoint pacing. Mistral's limits page caps most models at 1.00 requests/second; exceeding it
  * returns 429, and a run that fires several calls in a burst limits itself out of its own quota.
  */
@@ -280,9 +295,9 @@ async function openaiCompatible(
 ): Promise<string> {
   const base = (baseUrl ?? process.env.OPENAI_COMPAT_BASE_URL ?? "").replace(/\/$/, "");
   await paceFor(base);
-  // Some free tiers cap output tokens per minute (Groq's is 1000), and reject the request outright
-  // if max_tokens is larger than that — so keep the ask small and configurable.
-  const cap = Number(process.env.OPENAI_COMPAT_MAX_TOKENS ?? 4096);
+  // Output ceilings are per PROVIDER. A single global 4096 (added for Groq's per-minute limit)
+  // silently truncated every Mistral script mid-JSON — a 13-scene script in JSON is well past it.
+  const cap = outputCapFor(base);
   maxTokens = Math.min(maxTokens, cap);
   if (!base) throw new Error("Set OPENAI_COMPAT_BASE_URL (e.g. https://api.groq.com/openai/v1)");
   const content: unknown[] = [];
@@ -312,14 +327,27 @@ async function openaiCompatible(
     }
     throw e;
   });
-  const j = (await res.json()) as { choices?: { message?: { content?: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number } };
+  const j = (await res.json()) as {
+    choices?: { message?: { content?: string }; finish_reason?: string }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
   usage.calls++;
   usage.inputTokens += j.usage?.prompt_tokens ?? 0;
   usage.outputTokens += j.usage?.completion_tokens ?? 0;
   const text = j.choices?.[0]?.message?.content;
   if (!text) throw new Error(`${model} returned no content: ${JSON.stringify(j).slice(0, 300)}`);
+  // A cut-off answer is not a bad answer — it is an answer that ran out of room. Say so plainly,
+  // or it surfaces as a baffling JSON parse error and the call silently moves to another provider.
+  if (j.choices?.[0]?.finish_reason === "length") {
+    throw new TruncatedError(
+      `${model} was cut off at max_tokens=${maxTokens} (${j.usage?.completion_tokens ?? "?"} tokens written). ` +
+      `Raise the provider's cap (e.g. MISTRAL_MAX_TOKENS) — the answer did not fit.`);
+  }
   return text;
 }
+
+/** An answer that stopped because it ran out of output room. */
+export class TruncatedError extends Error {}
 
 // ---------------- gemini (free key) ----------------
 let lastGemini = 0;
@@ -448,14 +476,40 @@ export async function askJson<T>(o: {
           const out = await openaiCompatible(m, o.system, body, Math.min(budget, o.maxTokens ?? 16000),
             o.images, timeoutFor(o.tier), named.baseUrl, named.key);
           try { raw = extractJson(out); } catch (e) { raw = undefined; lastErr = (e as Error).message; }
+          const lastChance = attempt === 3 && o.role !== "write";
+          if (raw === undefined && lastChance) {
+            console.warn(`    [llm] ${namedName} still returning unparseable JSON — last attempt goes to ${PROVIDER}`);
+          } else if (raw === undefined) {
+            // Unparseable JSON from the routed provider. Previously this fell straight through to
+            // Gemini in the same attempt, silently — which is how every run ended at Gemini's cap.
+            console.warn(`    [llm] ${namedName} returned JSON that would not parse — retrying ${namedName}`);
+            feedback = `\n\nYour previous answer was not valid JSON (${lastErr.slice(0, 120)}). ` +
+              `Return ONE complete JSON object and nothing else.`;
+            continue;
+          }
           if (raw !== undefined) {
             const first = o.schema.safeParse(raw);
             if (first.success) return first.data;
             lastErr = first.error.message.slice(0, 1500);
             feedback = `\n\nYour previous answer was rejected by the validator:\n${lastErr}\nFix every listed problem.`;
-            continue;
+            if (!lastChance) {
+              console.warn(`    [llm] ${namedName} answer failed validation — retrying with the errors`);
+              continue;
+            }
+            console.warn(`    [llm] ${namedName} failed validation 3 times — last attempt goes to ${PROVIDER}`);
           }
         } catch (err) {
+          // Cut off mid-answer: the provider works, the answer just did not fit. Ask the SAME
+          // provider again, more concisely — moving to another provider fixes nothing, and moving
+          // to Gemini (8192-token ceiling) would be strictly worse.
+          if (err instanceof TruncatedError && attempt < 3) {
+            console.warn(`    [llm] ${namedName} ran out of room — retrying it more concisely`);
+            lastErr = err.message;
+            feedback = `\n\nYour previous answer was cut off before it finished. Keep every scene and every ` +
+              `required field, but make descriptive fields (captions, alt queries, claims) terse so the ` +
+              `whole object fits. Narration must NOT be shortened.`;
+            continue;
+          }
           // A routed provider failing is not fatal: fall through to the default path below.
           const msg = (err as Error).message;
           const hint = /\b403\b/.test(msg)
@@ -479,6 +533,13 @@ export async function askJson<T>(o: {
             } catch (e2) {
               console.warn(`    [llm] ${nextName} failed: ${(e2 as Error).message.slice(0, 100)}`);
             }
+          }
+          // A writing call must not fall back to Gemini: its 8192-token output ceiling cannot hold
+          // a full script, so the attempt only burns scarce quota and fails the same way. Better to
+          // stop cleanly and let the next scheduled run try again.
+          if (o.role === "write") {
+            throw new Error(`every configured writing provider failed (${lastErr.slice(0, 160)}). ` +
+              `Not falling back to Gemini: its output cap cannot hold a full script.`);
           }
           console.warn(`    [llm] all configured providers failed; using ${PROVIDER}`);
         }

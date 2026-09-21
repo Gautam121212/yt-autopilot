@@ -32,10 +32,11 @@
     "voice:sample": "tsx --env-file-if-exists=.env scripts/voice-sample.ts",
     "audit": "tsx --env-file-if-exists=.env scripts/audit.ts",
     "selftest": "tsx --env-file-if-exists=.env scripts/selftest.ts",
-    "verify": "npm run audit && npm run selftest",
+    "verify": "npm run audit && npm run selftest && npm run replay",
     "music:make": "tsx --env-file-if-exists=.env scripts/make-music.ts",
     "models:mistral": "tsx --env-file-if-exists=.env scripts/list-mistral-models.ts",
-    "providers": "tsx --env-file-if-exists=.env scripts/check-providers.ts"
+    "providers": "tsx --env-file-if-exists=.env scripts/check-providers.ts",
+    "replay": "tsx scripts/replay.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

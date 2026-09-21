@@ -71,6 +71,7 @@ jobs:
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          MISTRAL_MAX_TOKENS: "32000"      # a full script in JSON runs 5-8k tokens; 4096 truncated it
           GEMINI_OUTPUT_CAP: "8192"        # Flash's real output ceiling, thinking included
           GEMINI_THINKING_BUDGET: "1536"   # leaves ~6.6k tokens for the answer itself
           LLM_TIMEOUT_LIGHT_MS: "150000"   # classification-sized calls fail fast

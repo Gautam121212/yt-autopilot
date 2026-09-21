@@ -61,6 +61,10 @@ return, which is how several of these appeared twice.
 | 33 | A run could rate-limit itself mid-production | no pacing between calls to the same endpoint | `paceFor()` enforces a minimum gap per endpoint |
 | 35 | Prober tested only models this plan cannot call | it ranked by name ("medium" > "ministral"), so it never reached the working models and stopped after 10 | ranks by the throughput the limits page grants; probes every listed model |
 | 38 | Script bar repaired twice to the same 7/10 | repairing a structurally-fine draft cannot lift it; only a different draft can | attempt 2 rewrites from scratch with the critique |
+| 43 | **Every run died at "Gemini hit max tokens"** | a global 4,096 output cap (added for Groq) truncated every Mistral script mid-JSON | per-provider caps (Mistral 32k); `replay` scenario 1 |
+| 44 | Mistral's truncated answer silently went to Gemini | unparseable JSON skipped the retry and fell through to Gemini in the same attempt, with no log | unparseable answers retry the routed provider; `replay` scenario 2 |
+| 45 | Truncation looked like a mystery parse error | `finish_reason` was never read | `TruncatedError` on `finish_reason: length`, retried on the same provider; `replay` scenario 3 |
+| 46 | A failing writer burned Gemini quota for nothing | writing calls fell back to Gemini, whose 8192 cap cannot hold a script | writing never falls back to Gemini; gates still may; `replay` scenarios 4-5 |
 | 41 | Gemini's scarce quota spent on text-only judging | one "judge" role covered both reading scripts and looking at pixels | split into `judge` (text, Mistral) and `vision` (Gemini only) |
 | 42 | Provider defaults pointed at dead or paid models | copied from documentation rather than tested | every default now matches what `npm run providers` actually returned |
 | 40 | A broken key was only discovered mid-run | nothing tested providers end to end | `npm run providers` sends a real JSON request to each; guard keeps it in sync with the client |
@@ -71,9 +75,18 @@ return, which is how several of these appeared twice.
 | — | *(nearly #35)* A second Gemini pacer | `grep paceFor` missed the existing `lastGemini` timer, which uses a different mechanism | guard asserts exactly one pacer per provider; read the function, not the search result |
 | 30 | Mistral 429 on every model | free tier needs phone verification before it serves anything; prober also fired 10 requests in 6s | prober paced to ~1 req/1.8s and explains a universal 429 |
 
+## Why `replay` exists
+
+Bugs #43-#46 all passed every string-based guard. `grep` confirmed the fallback chain existed, the
+routing was wired, the caps were set. None of it asked what actually *happens* when Mistral returns
+a truncated answer — and that was the only question that mattered. `npm run replay` feeds the real
+client a scripted network and asserts behaviour: which provider was called, how many times, with
+what budget. It caught one bug in my own fix for #45 before it shipped.
+
 ## Adding a bug
 
 1. Add a row: what broke, what caused it, which guard catches it.
-2. Add the guard to `scripts/selftest.ts` (behaviour/shape) or `scripts/audit.ts` (wiring/order).
+2. Add the guard to `scripts/replay.ts` if it is about what HAPPENS (preferred — replay the real
+   failure), `scripts/selftest.ts` for shapes and invariants, `scripts/audit.ts` for wiring and order.
 3. Confirm the guard FAILS against the old code, then passes against the fix. A guard never seen red
    proves nothing.
