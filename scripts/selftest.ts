@@ -166,6 +166,11 @@ ok(produce.includes("rewriting from scratch"), "#38 the script bar rewrites, not
     "#61 a video short of vision quota is paused and resumed, not abandoned");
   ok(produce.includes("waiting for vision quota"), "#61 a paused video is not retried every hour");
   ok(src("package.json").includes("select:test"), "#63 a real-API selection test exists");
+  const vis = src("src/stages/visuals.ts");
+  ok(vis.indexOf("const phaseStart = Date.now()") < vis.indexOf("await fetchPool("), "#64 the phase clock starts before the pool, so the pool counts against it");
+  ok(vis.includes("POOL_BUDGET_MS") && /withBudget\(\s*mapLimit\(poolQueries/.test(vis), "#64 the pool has its own time limit");
+  ok(/withTimeout\(Promise\.all\(\[\s*sceneImages/.test(produce), "#64 the whole footage + voice phase has a hard ceiling");
+  ok(!produce.includes("images (NASA)"), "#65 no stale NASA text in the run log");
 }
 {
   // #51 the failure cap: it must count crashes only. Rejections are the design, not waste.

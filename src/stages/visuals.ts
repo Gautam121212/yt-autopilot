@@ -22,6 +22,12 @@ async function bigEnough(file: string, minW: number): Promise<boolean> {
 const SCENE_BUDGET_MS = Number(process.env.SCENE_BUDGET_MS ?? 90_000);
 /** Whole-phase ceiling. Past this, remaining scenes take pooled footage immediately. */
 const PHASE_BUDGET_MS = Number(process.env.PHASE_BUDGET_MS ?? 20 * 60_000);
+/**
+ * The spare-footage pool is a safety net, not a stage. It ran BEFORE the phase clock started and
+ * had no limit of its own, so ten queries x four sources x retries and 60-second downloads could
+ * add up to 30-40 minutes before the first scene was even looked at (run of 21 Sep, #12).
+ */
+const POOL_BUDGET_MS = Number(process.env.POOL_BUDGET_MS ?? 3 * 60_000);
 
 function withBudget<T>(p: Promise<T>, ms: number, fallback: () => Promise<T>): Promise<T> {
   let timer: NodeJS.Timeout;
@@ -102,20 +108,10 @@ export async function sceneImages(
     sourceNamesFor(era).map((n) => [n, FINDERS[n]!]);
   const sourcesFor = (era?: string) => sourceNamesFor(era).map((n) => FINDERS[n]!);
 
-  // Fetch a small pool of on-topic real footage up front. A scene that misses or stalls takes from
-  // this pool, so a slow network produces a real picture rather than a text slide.
-  const poolDir = path.join(dir, "pool");
-  await fs.mkdir(poolDir, { recursive: true });
-  const pool: { file: string; credit: ImageCredit }[] = [];
-  const poolQueries = [...(fallbacks ?? []), ...cfg.fallbackImageQueries].filter((q, i, a) => a.indexOf(q) === i).slice(0, 10);
-  await mapLimit(poolQueries, 4, async (q, i) => {
-    const f = path.join(poolDir, `p${i}.jpg`);
-    for (const find of cfg.imageSources.map((n) => FINDERS[n]!).filter(Boolean)) {
-      const hit = await find(q, used, f).catch(() => null);
-      if (hit) { pool.push({ file: f, credit: { source: hit.source, id: hit.id, title: hit.title, attribution: hit.attribution } }); return; }
-    }
-  });
-  log(`  footage pool: ${pool.length} spare images ready`);
+  // The phase clock starts HERE, so the pool counts against the phase budget like everything else.
+  const phaseStart = Date.now();
+
+  const pool = await fetchPool(cfg, used, path.join(dir, "pool"), fallbacks);
   let poolAt = 0;
   const fromPool = () => (pool.length ? pool[poolAt++ % pool.length]! : null);
 
@@ -124,7 +120,6 @@ export async function sceneImages(
 
   let done = 0;
   let generated = 0;
-  const phaseStart = Date.now();
   const results = await mapLimit(scenes, 6, async (s, i) => {
     // Phase budget spent: stop searching and dress the rest from the pool.
     if (Date.now() - phaseStart > PHASE_BUDGET_MS) {
@@ -249,4 +244,36 @@ export async function sceneImages(
     }
     return { files: [...extra.map((e) => e.file), ...files], credit: { source: best.source, id: best.id, title: best.title, attribution: best.attribution } };
   }
+}
+
+/**
+ * A small pool of on-topic real footage fetched up front. A scene that misses or stalls takes from
+ * it, so a slow network produces a real picture rather than an empty frame. Exported for testing:
+ * its time limit is what the 21 Sep run (#12) was missing.
+ */
+export async function fetchPool(cfg: ChannelConfig, used: Set<string>, poolDir: string, fallbacks?: string[]):
+  Promise<{ file: string; credit: ImageCredit }[]> {
+  const t0 = Date.now();
+  // Bounded: whatever has arrived when the pool budget expires is what the pool contains.
+  await fs.mkdir(poolDir, { recursive: true });
+  const pool: { file: string; credit: ImageCredit }[] = [];
+  const poolQueries = [...(fallbacks ?? []), ...cfg.fallbackImageQueries].filter((q, i, a) => a.indexOf(q) === i).slice(0, 6);
+  log(`  footage pool: fetching up to ${poolQueries.length} spares (limit ${Math.round(POOL_BUDGET_MS / 1000)}s)`);
+  let poolClosed = false;
+  await withBudget(
+    mapLimit(poolQueries, 4, async (q, i) => {
+      const f = path.join(poolDir, `p${i}.jpg`);
+      // Stock libraries only: archive downloads are the slow ones, and the pool is a safety net.
+      for (const n of cfg.imageSources.filter((x) => x === "pexels" || x === "pixabay")) {
+        if (poolClosed) return;
+        const hit = await FINDERS[n]!(q, used, f).catch(() => null);
+        if (hit && !poolClosed) { pool.push({ file: f, credit: { source: hit.source, id: hit.id, title: hit.title, attribution: hit.attribution } }); return; }
+      }
+    }).then(() => undefined),
+    POOL_BUDGET_MS,
+    async () => { poolClosed = true; log("  footage pool: time limit reached — continuing with what arrived"); },
+  );
+  poolClosed = true;
+  log(`  footage pool: ${pool.length} spare images ready (${Math.round((Date.now() - t0) / 1000)}s)`);
+  return pool;
 }

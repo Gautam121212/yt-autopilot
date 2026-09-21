@@ -383,6 +383,35 @@ console.log("\nScenario 6 — an image-bearing call whose role is routed to a te
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+// ── Scenario 25: the run of 21 Sep 20:44 — stuck 38 minutes in the footage pool. ──
+{
+  console.log("\nScenario 25 — every stock search answers slowly, as on 21 Sep");
+  process.env.POOL_BUDGET_MS = "1500";
+  process.env.PEXELS_API_KEY = "test"; process.env.PIXABAY_API_KEY = "test";
+  const { resetPexelsBudget } = await import("../src/lib/budget");
+  resetPexelsBudget();
+  const { fetchPool } = await import(`../src/stages/visuals.ts?pool=${Date.now()}`) as typeof import("../src/stages/visuals");
+  const { loadChannel } = await import("../src/config");
+  const saved = globalThis.fetch;
+  let slowCalls = 0;
+  globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+    slowCalls++;
+    // 20 s per call, the way retries and slow downloads added up on the real run; honours abort.
+    return new Promise<Response>((res, rej) => {
+      const t = setTimeout(() => res(new Response(JSON.stringify({ photos: [], hits: [] }), { status: 200 })), 20_000);
+      init?.signal?.addEventListener("abort", () => { clearTimeout(t); rej(new Error("aborted")); });
+    });
+  }) as typeof fetch;
+  const t0 = Date.now();
+  const fs = await import("node:fs");
+  const pool = await fetchPool(loadChannel(), new Set(), fs.mkdtempSync("/tmp/replay-pool-"), ["steam valve", "rusty gear"]);
+  const took = Date.now() - t0;
+  globalThis.fetch = saved;
+  delete process.env.POOL_BUDGET_MS;
+  check(took < 4_000, "#64 the pool stops at its limit instead of running for 38 minutes", `${(took / 1000).toFixed(1)}s with every search taking 20s`);
+  check(Array.isArray(pool), "#64 the phase continues with whatever arrived", `${pool.length} spare(s)`);
+}
+
 // ── Scenario 24: the preflight must fail safe, never crash the run it is protecting. ──
 {
   console.log("\nScenario 24 — YouTube credentials missing");

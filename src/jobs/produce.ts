@@ -470,11 +470,15 @@ async function main() {
       const fallbacks = topicFallbacks(video.topic.chosen.subject, cfg);
 
       // Network-bound image downloads run while the CPU-bound voice model works.
-      log(`#${video.id} images (NASA) + voice (${cfg.voice.provider}) in parallel`);
-      const [long, audio] = await Promise.all([
+      log(`#${video.id} footage + voice (${cfg.voice.provider}) in parallel`);
+      // Hard ceiling on the whole footage + voice phase. Each step inside has its own limit, but the
+      // 21 Sep run showed limits that each hold can still sum to 40 minutes; this one cannot be
+      // exceeded by any future change inside the phase.
+      const PHASE_CEILING_MS = Number(process.env.PHASE_BUDGET_MS ?? 20 * 60_000) + 5 * 60_000;
+      const [long, audio] = await withTimeout(Promise.all([
         sceneImages(cfg, script.scenes, path.join(dir, "images"), video.id, used, fallbacks, { w: 1920, h: 1080 }),
         synthesize(cfg, script.scenes, path.join(dir, "audio")),
-      ]);
+      ]), PHASE_CEILING_MS, "footage + voice phase");
       const shortAssets = cfg.makeShorts
         ? await Promise.all([
           sceneImages(cfg, script.short.scenes, path.join(dir, "short-images"), video.id, used, fallbacks, { w: 1080, h: 1920 }),
