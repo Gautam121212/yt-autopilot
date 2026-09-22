@@ -21,7 +21,8 @@ on:
         type: boolean
         default: false
 concurrency: { group: produce, cancel-in-progress: false }
-permissions: { contents: read, issues: write }
+# actions: read lets a run download the render an earlier run saved when the final check was unavailable.
+permissions: { contents: read, issues: write, actions: read }
 jobs:
   produce:
     runs-on: ubuntu-latest
@@ -103,6 +104,16 @@ jobs:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Save a finished render awaiting its final check
+        # Written by produce only when Gemini was unavailable at the final check; the next run
+        # downloads this by run id and resumes there, instead of re-rendering.
+        if: always() && hashFiles('work/pending/**') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pending-render-${{ github.run_id }}
+          path: work/pending/
+          retention-days: 14
+          compression-level: 0
       - name: Debug artifacts (scripts, captions, thumbnail)
         if: always()
         uses: actions/upload-artifact@v4

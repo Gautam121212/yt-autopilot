@@ -713,3 +713,22 @@ Gemini's free models are regularly overloaded at the same moment. The pipeline n
   it on a later run after a 3-hour cooldown;
 - switches off, for the rest of the run, any backup provider whose key is refused;
 - never sends pictures to a backup model that cannot see them.
+
+## Who does what, and what happens when Gemini is down
+
+| Stage | Provider |
+|---|---|
+| topic scoring, research, script, expand, comedy, fact check, forecast, repairs | **Mistral** |
+| footage selection (contact sheets) and the final check | **Gemini** — the only free provider here that can see |
+
+When Gemini is unavailable:
+- **during footage selection** — scenes are marked unjudged; if over half are, the video pauses with its
+  script kept and resumes from footage selection on a later run;
+- **at the final check** — the finished render is saved as a workflow artifact (`pending-render-<run>`,
+  kept 14 days) and the video waits at `rendered`. The next run downloads it and resumes at the final
+  check: nothing is re-rendered, and no repair runs on a video nobody could judge. Still down? It saves
+  again under the new run, so the artifact never expires while waiting. If it somehow has, the kept
+  script is re-rendered rather than lost.
+
+Both pauses wait 3 hours before retrying, and a waiting video holds the queue so no second video is
+started that would also need Gemini to review it.

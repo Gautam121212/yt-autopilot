@@ -211,6 +211,30 @@ ok(produce.includes("rewriting from scratch"), "#38 the script bar rewrites, not
   const ty = src("src/types.ts");
   ok(!ty.includes(".length(3)") && !ty.includes("z.array(z.string()).max(15)") && ty.includes("enumish("),
     "#75 formatting mistakes are normalised, not rejected");
+  // #77 Gemini unavailable at the final check: save the render, resume there — never reject, never re-render
+  const firstDefer = produce.indexOf("await savePendingRender({");
+  const repairLoop = produce.indexOf('while (review.decision === "hold"');
+  ok(firstDefer > 0 && firstDefer < repairLoop, "#77 an unavailable final check saves the render BEFORE the repair loop can run");
+  ok(/if \(reviewUnavailable\) break;/.test(produce) && count(produce, "await savePendingRender({") >= 3,
+    "#77 Gemini failing mid-repair, or again on resume, also saves rather than rejects");
+  ok(count(produce, "await finishAfterReview({") === 2 && count(produce, "const worthUploading") === 1,
+    "#77 one shared post-review path for normal and resumed videos (no duplicated upload gate)");
+  ok(produce.indexOf('if (stage === "rendered")') < produce.indexOf('if (stage === "verified")'),
+    "#77 a saved render is resumed before anything else in the queue");
+  ok(/status in \('planned','researched','scripted','verified','rendered','uploaded'\)/.test(produce),
+    "#77 the queue picks up videos waiting at the final check");
+  ok(produce.includes("the saved render is no longer available") && produce.includes('status: (stage = "verified")'),
+    "#77 an expired render falls back to re-rendering the kept script, never to losing it");
+  {
+    const wf = src(".github/workflows/produce.yml");
+    const produceAt = wf.indexOf("npm run produce");
+    const saveAt = wf.indexOf("name: Save a finished render awaiting its final check");
+    ok(saveAt > produceAt && /hashFiles\('work\/pending\/\*\*'\)/.test(wf) && /path: work\/pending\//.test(wf),
+      "#77 the workflow uploads work/pending/ right after produce");
+    ok(/actions: read/.test(wf), "#77 the workflow may download the artifact a previous run saved");
+    ok(src("src/config.ts").includes('WORK = path.join(ROOT, "work")') && produce.includes('path.join(WORK, "pending"'),
+      "#77 the code writes to exactly the folder the workflow uploads");
+  }
 }
 {
   // #51 the failure cap: it must count crashes only. Rejections are the design, not waste.

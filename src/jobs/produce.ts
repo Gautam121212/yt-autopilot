@@ -5,6 +5,8 @@
  * Media files live only on the runner; a failure in media redoes media from "verified".
  */
 import fs from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { sh } from "../lib/media";
 import path from "node:path";
 import { isDryRun, loadChannel, loadPlaybook, WORK, type ChannelConfig } from "../config";
 import { closeDb, q, updateVideo } from "../lib/db";
@@ -25,9 +27,9 @@ import { makeThumbnail, safeThumbnailText } from "../stages/thumbnail";
 import { pickTopic } from "../stages/topic";
 import { verify } from "../stages/verify";
 import { sceneQa, SCENE_BAR } from "../stages/scene-qa";
-import { replaceSceneImage, sceneImages, topicFallbacks } from "../stages/visuals";
+import { replaceSceneImage, sceneImages, topicFallbacks, type ImageCredit } from "../stages/visuals";
 import { synthesize } from "../stages/voice";
-import { MIN_WORDS, scriptWords, type Dossier, type Script, type Topic, type Verification } from "../types";
+import { MIN_WORDS, scriptWords, type Dossier, type SceneTiming, type Script, type Topic, type Verification } from "../types";
 
 const MAX_ATTEMPTS = 3;
 const MAX_REVISIONS = 2;
@@ -55,6 +57,8 @@ type VideoRow = {
   topic: Topic; dossier: Dossier | null; script: Script | null; verification: Verification | null; repairs: number;
   youtube_id: string | null; short_youtube_id: string | null; assets: { review?: Review } | null; predicted_score: string | null;
   usage: Record<string, number>;
+  /** written after rendering; needed to resume a saved render at the final check */
+  scene_timings: SceneTiming[] | null;
 };
 
 async function recentForVariety() {
@@ -124,7 +128,7 @@ async function main() {
   }
 
   let [v] = await q<VideoRow>(
-    "select * from videos where status in ('planned','researched','scripted','verified','uploaded') and attempts < $1 order by id limit 1",
+    "select * from videos where status in ('planned','researched','scripted','verified','rendered','uploaded') and attempts < $1 order by id limit 1",
     [MAX_ATTEMPTS],
   );
 
@@ -234,6 +238,97 @@ async function main() {
   const video = v!;
   const structure = cfg.structures.find((s) => s.id === video.structure) ?? cfg.structures[0]!;
   let stage = video.status;
+
+  type Pending = { runId: string; artifact: string; description: string; shortCredits: ImageCredit[]; predicted: number | string; hasShort: boolean };
+  const pendingDir = path.join(WORK, "pending", String(video.id));
+
+  /**
+   * Keeps a finished render across runs. GitHub runners are wiped after every run, so the files are
+   * copied to work/pending/, which the workflow uploads as an artifact; the next run downloads it
+   * by the run id stored here and continues from the final check.
+   */
+  const savePendingRender = async (p: {
+    reason: string; videoPath: string; srtPath: string; thumbPath: string; shortOut?: { videoPath: string; srtPath: string };
+    timings: SceneTiming[]; allCredits: ImageCredit[]; shortCredits: ImageCredit[]; description: string; predicted: number | string;
+  }) => {
+    await fs.rm(pendingDir, { recursive: true, force: true });
+    await fs.mkdir(pendingDir, { recursive: true });
+    await fs.copyFile(p.videoPath, path.join(pendingDir, "video.mp4"));
+    await fs.copyFile(p.srtPath, path.join(pendingDir, "captions.srt"));
+    await fs.copyFile(p.thumbPath, path.join(pendingDir, "thumbnail.jpg")).catch(() => {});
+    if (p.shortOut) {
+      await fs.copyFile(p.shortOut.videoPath, path.join(pendingDir, "short.mp4"));
+      await fs.copyFile(p.shortOut.srtPath, path.join(pendingDir, "short.srt"));
+    }
+    const runId = process.env.GITHUB_RUN_ID ?? "local";
+    const pending: Pending = { runId, artifact: `pending-render-${runId}`, description: p.description,
+      shortCredits: p.shortCredits, predicted: p.predicted, hasShort: !!p.shortOut };
+    await updateVideo(video.id, { status: (stage = "rendered"), scene_timings: p.timings,
+      assets: { images: p.allCredits, pending } });
+    await incident("final-check.deferred", new Error(`final check unavailable, render saved: ${p.reason}`), video.id);
+    log(`#${video.id} paused at the final check: Gemini unavailable. The finished render is saved and the next ` +
+      `run resumes from the final check — nothing is re-rendered.`);
+  };
+
+  /**
+   * Everything after the final check: title/description improvements, the upload gate, the upload,
+   * the Short. ONE copy, called by both the normal path and the resume-after-deferral path, so the
+   * two can never drift apart (patch-on-patch duplication is registry pattern #1).
+   */
+  const finishAfterReview = async (p: {
+    script: NonNullable<typeof video.script>; review: Review; description: string; timings: SceneTiming[];
+    allCredits: ImageCredit[]; shortCredits: ImageCredit[]; predicted: number | string; repairs: number;
+    videoPath: string; srtPath: string; thumbPath: string; shortOut?: { videoPath: string; srtPath: string };
+  }): Promise<"uploaded" | "stopped"> => {
+    const { script, review, timings, allCredits, repairs, thumbPath, shortOut } = p;
+    let description = p.description;
+    if (review.improvedTitle) script.title = review.improvedTitle;
+    if (review.improvedDescriptionIntro) {
+      script.description = review.improvedDescriptionIntro;
+      description = buildDescription(script, script.scenes, timings, video.dossier!, allCredits);
+    }
+    allCredits.push(...p.shortCredits);
+    await updateVideo(video.id, { script, title: script.title, scene_timings: timings, assets: { images: allCredits, review } });
+    video.assets = { review };
+    await updateVideo(video.id, { actual_score: review.overall });
+    log(`#${video.id} final check: ${review.decision} (${review.overall}/10; predicted ${p.predicted})`);
+
+    if (isDryRun()) {
+      await updateVideo(video.id, { status: "dry_run_complete" });
+      log(`#${video.id} DRY RUN complete (${repairs} repair round(s)) -> ${p.videoPath}`);
+      return "stopped" as const;
+    }
+
+    // FINAL GATE: nothing reaches YouTube unless it is worth uploading. A held video is kept
+    // locally, its reasons are recorded for the learning loop, and the day moves on.
+    const worthUploading = review.decision !== "hold" || review.overall >= cfg.approval.minScore || cfg.approval.uploadHeldVideos;
+    if (!worthUploading) {
+      const notes = [
+        `**${script.title}** — held at ${review.overall}/10 (bar ${cfg.approval.minScore}).`,
+        review.noteForOwner ?? "",
+        ...review.issues.map((i) => `- [${i.severity}/${i.area}] ${i.what}${i.fix ? ` → ${i.fix}` : ""}`),
+      ].filter(Boolean).join("\n");
+      await updateVideo(video.id, { status: "rejected", actual_score: review.overall, review });
+      await incident("final-check.not-uploaded", new Error(notes.slice(0, 1500)), video.id);
+      await createIssue(`Not uploaded: ${script.title}`.slice(0, 90),
+        `${notes}\n\nThe file is in this run's artifacts if you want to watch it. Nothing was uploaded to YouTube.\nThese notes feed the weekly learning cycle.`,
+        ["learning"]).catch(() => 0);
+      log(`#${video.id} NOT uploaded (${review.overall}/10 < ${cfg.approval.minScore}). Reasons recorded for the learning loop.`);
+      return "stopped" as const;
+    }
+
+    const youtubeId = video.youtube_id ?? await upload(cfg, { videoPath: p.videoPath, thumbPath, srtPath: p.srtPath, title: script.title, description, tags: script.tags });
+    await updateVideo(video.id, { youtube_id: youtubeId });
+    video.youtube_id = youtubeId;
+    if (shortOut && !video.short_youtube_id) {
+      video.short_youtube_id = await upload(cfg, { videoPath: shortOut.videoPath, srtPath: shortOut.srtPath, title: script.short.title, description: buildShortDescription(youtubeId, video.dossier!), tags: script.tags.slice(0, 5) });
+      await updateVideo(video.id, { short_youtube_id: video.short_youtube_id });
+    }
+    await updateVideo(video.id, { status: "uploaded" });
+    log(`#${video.id} uploaded (private): long ${youtubeId}${video.short_youtube_id ? `, short ${video.short_youtube_id}` : ""}`);
+    return "uploaded" as const;
+  };
+
 
   try {
     if (stage === "planned") {
@@ -361,6 +456,50 @@ async function main() {
         return log(`#${video.id} abandoned after review: ${verification.summary}`);
       }
       await updateVideo(video.id, { script: video.script, title: video.script!.title, verification, status: (stage = "verified") });
+    }
+
+    if (stage === "rendered") {
+      const saved = video.assets as { images?: ImageCredit[]; pending?: Pending } | null;
+      const pend = saved?.pending;
+      // Gemini was unavailable under 3 hours ago; asking again now would almost certainly fail.
+      const [recentDefer] = await q<{ n: number }>(
+        `select count(*)::int as n from incidents where video_id = $1 and stage = 'final-check.deferred'
+           and created_at > now() - interval '3 hours'`, [video.id]).catch(() => [{ n: 0 }]);
+      if ((recentDefer?.n ?? 0) > 0 && process.env.FORCE_PRODUCE !== "true") {
+        return log(`#${video.id} render saved, waiting for Gemini (paused under 3h ago); nothing spent this run.`);
+      }
+      const restored = path.join(WORK, String(video.id), "restored");
+      await fs.rm(restored, { recursive: true, force: true });
+      const got = pend && pend.runId !== "local" && await sh("gh", ["run", "download", pend.runId, "-n", pend.artifact,
+        "-D", restored, "-R", process.env.GITHUB_REPOSITORY ?? ""]).then(() => true, () => false);
+      const dirR = path.join(restored, String(video.id));
+      // The artifact holds <id>/file; tolerate either layout rather than guess.
+      const file = (n: string) => path.join(existsSync(path.join(dirR, n)) ? dirR : restored, n);
+      const vp = file("video.mp4");
+      if (!got || !(await fs.stat(vp).then((x) => x.size > 100_000, () => false))) {
+        // Artifact expired or missing: the script is still good, so render it again rather than lose it.
+        await updateVideo(video.id, { status: (stage = "verified") });
+        return log(`#${video.id} the saved render is no longer available; its script is kept and will be re-rendered next run.`);
+      }
+      log(`#${video.id} resuming at the final check with the render saved by run ${pend!.runId}`);
+      const shortOut = pend!.hasShort ? { videoPath: file("short.mp4"), srtPath: file("short.srt") } : undefined;
+      const thumbPath = file("thumbnail.jpg");
+      let unavailable: string | null = null;
+      const review = await finalReview({ dir: restored, script: video.script!, verification: video.verification!,
+        description: pend!.description, videoPath: vp, shortPath: shortOut?.videoPath, credits: saved?.images ?? [] })
+        .catch((e) => { unavailable = (e as Error).message.slice(0, 200); return unreviewed(unavailable); });
+      if (unavailable) {
+        // Still down: save again under THIS run, so the artifact never ages out while we wait.
+        await savePendingRender({ reason: unavailable, videoPath: vp, srtPath: file("captions.srt"), thumbPath, shortOut,
+          timings: video.scene_timings ?? [], allCredits: saved?.images ?? [], shortCredits: pend!.shortCredits,
+          description: pend!.description, predicted: pend!.predicted });
+        return;
+      }
+      const outcome = await finishAfterReview({ script: video.script!, review, description: pend!.description,
+        timings: video.scene_timings ?? [], allCredits: saved?.images ?? [], shortCredits: pend!.shortCredits,
+        predicted: pend!.predicted, repairs: video.repairs ?? 0, videoPath: vp, srtPath: file("captions.srt"), thumbPath, shortOut });
+      if (outcome !== "uploaded") return;
+      stage = "uploaded";
     }
 
     if (stage === "verified") {
@@ -535,12 +674,23 @@ async function main() {
       let description = buildDescription(script, script.scenes, timings, video.dossier!, allCredits);
 
       log(`#${video.id} final check`);
+      let reviewUnavailable: string | null = null;
       let review = await finalReview({ dir, script, verification: video.verification!, description, videoPath, shortPath: shortOut?.videoPath, credits: long.credits })
         .catch(async (e) => {
-          // 35 minutes of rendering must not be lost because the reviewer was unavailable.
-          await incident("final-check.unavailable", e, video.id);
-          return unreviewed((e as Error).message.slice(0, 160));
+          reviewUnavailable = (e as Error).message.slice(0, 200);
+          return unreviewed(reviewUnavailable);
         });
+
+      // Gemini unavailable at the final check: SAVE the finished render and resume at this exact point
+      // next run. Before, the video was marked "hold" at 0/10, the repair loop re-rendered a video no
+      // one could judge, and the upload gate then rejected it — 20+ minutes of rendering thrown away.
+      if (reviewUnavailable && !isDryRun()) {
+        await savePendingRender({
+          reason: reviewUnavailable, videoPath, srtPath, thumbPath, shortOut,
+          timings, allCredits, shortCredits: shortAssets?.[0].credits ?? [], description, predicted: fc.likely,
+        });
+        return;
+      }
 
       // Repair rather than discard: a held video is fixed and re-checked before anyone is asked to look at it.
       let repairs = video.repairs ?? 0;
@@ -597,54 +747,27 @@ async function main() {
           dir, used, stillFallback, rendered.videoPath).catch(() => thumbPath);
         description = buildDescription(script, script.scenes, rendered.timings, video.dossier!, allCredits);
         review = await finalReview({ dir, script, verification: video.verification!, description, videoPath: rendered.videoPath, shortPath: shortOut?.videoPath, credits: long.credits })
-          .catch(async (e) => { await incident("final-check.unavailable", e, video.id); return unreviewed((e as Error).message.slice(0, 160)); });
+          .catch(async (e) => { reviewUnavailable = (e as Error).message.slice(0, 200); return unreviewed(reviewUnavailable); });
+        // Gemini went down DURING a repair: keep the repaired render and resume at the check, rather
+        // than letting "could not judge" fall through to the reject path.
+        if (reviewUnavailable) break;
         await updateVideo(video.id, { script, title: script.title, repairs, actual_score: review.overall, scene_timings: rendered.timings, assets: { images: allCredits, review, forecast: fc } });
         log(`#${video.id} after repair ${repairs}: ${review.decision} (${review.overall}/10)${audioChanged ? " [re-voiced]" : ""}`);
         thumbPath = newThumb;
         if (review.decision === "publish") break;
       }
-      if (review.improvedTitle) script.title = review.improvedTitle;
-      if (review.improvedDescriptionIntro) {
-        script.description = review.improvedDescriptionIntro;
-        description = buildDescription(script, script.scenes, timings, video.dossier!, allCredits);
+      if (reviewUnavailable && !isDryRun()) {
+        await savePendingRender({
+          reason: reviewUnavailable, videoPath: rendered.videoPath, srtPath: rendered.srtPath, thumbPath, shortOut,
+          timings: rendered.timings, allCredits, shortCredits: shortAssets?.[0].credits ?? [], description, predicted: fc.likely,
+        });
+        return;
       }
-      allCredits.push(...(shortAssets?.[0].credits ?? []));
-      await updateVideo(video.id, { script, title: script.title, scene_timings: timings, assets: { images: allCredits, review } });
-      video.assets = { review };
-      await updateVideo(video.id, { actual_score: review.overall });
-      log(`#${video.id} final check: ${review.decision} (${review.overall}/10; predicted ${fc.likely})`);
-
-      if (isDryRun()) {
-        await updateVideo(video.id, { status: "dry_run_complete" });
-        return log(`#${video.id} DRY RUN complete (${repairs} repair round(s)) -> ${rendered.videoPath}`);
-      }
-
-      // FINAL GATE: nothing reaches YouTube unless it is worth uploading. A held video is kept
-      // locally, its reasons are recorded for the learning loop, and the day moves on.
-      const worthUploading = review.decision !== "hold" || review.overall >= cfg.approval.minScore || cfg.approval.uploadHeldVideos;
-      if (!worthUploading) {
-        const notes = [
-          `**${script.title}** — held at ${review.overall}/10 (bar ${cfg.approval.minScore}).`,
-          review.noteForOwner ?? "",
-          ...review.issues.map((i) => `- [${i.severity}/${i.area}] ${i.what}${i.fix ? ` → ${i.fix}` : ""}`),
-        ].filter(Boolean).join("\n");
-        await updateVideo(video.id, { status: "rejected", actual_score: review.overall, review });
-        await incident("final-check.not-uploaded", new Error(notes.slice(0, 1500)), video.id);
-        await createIssue(`Not uploaded: ${script.title}`.slice(0, 90),
-          `${notes}\n\nThe file is in this run's artifacts if you want to watch it. Nothing was uploaded to YouTube.\nThese notes feed the weekly learning cycle.`,
-          ["learning"]).catch(() => 0);
-        return log(`#${video.id} NOT uploaded (${review.overall}/10 < ${cfg.approval.minScore}). Reasons recorded for the learning loop.`);
-      }
-
-      const youtubeId = video.youtube_id ?? await upload(cfg, { videoPath: rendered.videoPath, thumbPath, srtPath: rendered.srtPath, title: script.title, description, tags: script.tags });
-      await updateVideo(video.id, { youtube_id: youtubeId });
-      video.youtube_id = youtubeId;
-      if (shortOut && !video.short_youtube_id) {
-        video.short_youtube_id = await upload(cfg, { videoPath: shortOut.videoPath, srtPath: shortOut.srtPath, title: script.short.title, description: buildShortDescription(youtubeId, video.dossier!), tags: script.tags.slice(0, 5) });
-        await updateVideo(video.id, { short_youtube_id: video.short_youtube_id });
-      }
-      await updateVideo(video.id, { status: (stage = "uploaded") });
-      log(`#${video.id} uploaded (private): long ${youtubeId}${video.short_youtube_id ? `, short ${video.short_youtube_id}` : ""}`);
+      const outcome = await finishAfterReview({ script, review, description, timings, allCredits,
+        shortCredits: shortAssets?.[0].credits ?? [], predicted: fc.likely, repairs,
+        videoPath: rendered.videoPath, srtPath: rendered.srtPath, thumbPath, shortOut });
+      if (outcome !== "uploaded") return;
+      stage = "uploaded";
     }
 
     if (stage === "uploaded") await handoff(cfg, video);
