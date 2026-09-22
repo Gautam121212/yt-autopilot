@@ -380,7 +380,95 @@ console.log("\nScenario 6 — an image-bearing call whose role is routed to a te
   check(visionCalls === 2 && r23.unjudged.length === 2, "#61 selection stops at its vision budget",
     `${visionCalls} vision calls, ${r23.unjudged.length} unjudged`);
 
+  // ── Scenario 26: the run of 22 Sep 06:35 — every Gemini model overloaded, backup key refused. ──
+  console.log("\nScenario 26 — Gemini overloaded on every model, backup provider returns 401 (22 Sep)");
+  const { resetDeadProviders, isQuota: isQ } = await import("../src/lib/llm");
+  resetCandidateState(); resetSelectionBudget(); resetDeadProviders(); calls = [];
+  process.env.GEMINI_BUSY_WAIT1_MS = "20"; process.env.GEMINI_BUSY_WAIT2_MS = "20";
+  process.env.OPENAI_COMPAT_BASE_URL = "https://compat.test/v1"; process.env.OPENAI_COMPAT_API_KEY = "dead";
+  process.env.OPENAI_COMPAT_MODEL_HEAVY = "m"; process.env.OPENAI_COMPAT_MODEL_LIGHT = "m"; process.env.OPENAI_COMPAT_VISION = "true";
+  const hits26 = { gemini: 0, compat: 0 };
+  const realFetch26 = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    const u = new URL(url);
+    if (u.host.includes("googleapis")) {
+      hits26.gemini++;
+      return new Response(JSON.stringify({ error: { code: 503, message: "The model is overloaded. Please try again later.", status: "UNAVAILABLE" } }), { status: 503 });
+    }
+    if (u.host === "compat.test") {
+      hits26.compat++;
+      return new Response(JSON.stringify({ error: { message: "User not found.", code: 401 } }), { status: 401 });
+    }
+    return realFetch26(url, init);
+  }) as typeof fetch;
+  const sc26 = ["sc01", "sc02", "sc03", "sc04", "sc05", "sc06"].map((id) => scene(id, `${id} steel bridge`));
+  const r26 = await run(sc26).then((x) => x, (e) => ({ error: (e as Error).message }) as never);
+  globalThis.fetch = realFetch26;
+  for (const k of ["OPENAI_COMPAT_BASE_URL", "OPENAI_COMPAT_API_KEY", "OPENAI_COMPAT_MODEL_HEAVY", "OPENAI_COMPAT_MODEL_LIGHT", "OPENAI_COMPAT_VISION", "GEMINI_BUSY_WAIT1_MS", "GEMINI_BUSY_WAIT2_MS"]) delete process.env[k];
+  check(!("error" in r26), "#72 an outage does not crash the selection");
+  if (!("error" in r26)) {
+    check(r26.r.failed.length === 0, "#72 NOT ONE scene is counted as failed during an outage", `failed ${r26.r.failed.length}, unjudged ${r26.r.unjudged.length}`);
+    check(r26.r.unjudged.length === sc26.length, "#72 every scene is unjudged, so the video is paused and resumed, not abandoned", `${r26.r.unjudged.length}/${sc26.length} unjudged`);
+    check(hits26.compat === 1, "#73 a refused key is called once, then disabled for the run", `${hits26.compat} call(s) to the dead provider`);
+    check(hits26.gemini >= 3, "#72 overloaded Gemini is waited out and retried before giving up", `${hits26.gemini} Gemini attempts`);
+  }
+
+  console.log("\nScenario 27 — images must never reach a model that cannot see them");
+  resetCandidateState(); resetSelectionBudget(); resetDeadProviders();
+  process.env.OPENAI_COMPAT_BASE_URL = "https://compat.test/v1"; process.env.OPENAI_COMPAT_API_KEY = "k";
+  process.env.OPENAI_COMPAT_MODEL_HEAVY = "m"; process.env.OPENAI_COMPAT_MODEL_LIGHT = "m";
+  process.env.GEMINI_BUSY_WAIT1_MS = "10"; process.env.GEMINI_BUSY_WAIT2_MS = "10";
+  let blindCalls = 0;
+  const realFetch27 = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    const u = new URL(url);
+    if (u.host.includes("googleapis")) return new Response(JSON.stringify({ error: { code: 503, message: "overloaded", status: "UNAVAILABLE" } }), { status: 503 });
+    if (u.host === "compat.test") { blindCalls++; return new Response(JSON.stringify({ choices: [{ message: { content: '{"ranking":[{"n":1,"score":9,"why":"invented"}]}' }, finish_reason: "stop" }] }), { status: 200 }); }
+    return realFetch27(url, init);
+  }) as typeof fetch;
+  const r27 = await run([scene("v1", "granite quarry")]);
+  globalThis.fetch = realFetch27;
+  for (const k of ["OPENAI_COMPAT_BASE_URL", "OPENAI_COMPAT_API_KEY", "OPENAI_COMPAT_MODEL_HEAVY", "OPENAI_COMPAT_MODEL_LIGHT", "GEMINI_BUSY_WAIT1_MS", "GEMINI_BUSY_WAIT2_MS"]) delete process.env[k];
+  check(blindCalls === 0 && r27.r.passed === 0, "#73 a text-only model is never asked to rank pictures", `${blindCalls} blind call(s); no invented 9/10 accepted`);
+
   fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+// ── Scenario 28: outages must never become lessons; real rejections must. ──
+{
+  console.log("\nScenario 28 — the learning loop keeps content lessons and drops outages");
+  const { INFRA } = await import("../src/lib/lessons");
+  const re = new RegExp(INFRA, "i");
+  const outage = ["POST x/chat/completions -> 401: User not found", "13/13 scenes below 7.5 — Every model is overloaded", "Resource exhausted: quota", "The operation was aborted due to timeout"];
+  const content = ['"The Pig War" averaged 7.1 < 7.5; weakest axes: evidence 5', "forecast 7/10 after repairs; weakest: clarity", "only 40% filmable; no stock footage for: 1888 ledger"];
+  check(outage.every((m) => re.test(m)), "#74 outage messages are excluded from lessons", `${outage.filter((m) => re.test(m)).length}/${outage.length} excluded`);
+  check(content.every((m) => !re.test(m)), "#74 real content lessons still reach the writer and picker", `${content.filter((m) => !re.test(m)).length}/${content.length} kept`);
+}
+
+// ── Scenario 29: a sloppy but complete script must be normalised, not thrown away. ──
+{
+  console.log("\nScenario 29 — a model answer with the formatting mistakes that cost heavy calls");
+  const { ScriptSchema } = await import("../src/types");
+  const sc = (id: string, role: string, extra: Record<string, unknown> = {}) => ({ id, role,
+    narration: "Word ".repeat(80).trim() + ".", imageQuery: "steel cable", altQueries: ["rope"], motion: "Video", era: "Ancient",
+    cardHeadline: "THREE HUNDRED AND FORTY METRES PER SECOND OF CABLE", cardSub: "x", claimIds: [], ...extra });
+  const sloppy = {
+    title: "t", altTitles: ["a", "b", "c", "d"], description: "d", tags: Array.from({ length: 22 }, (_, i) => `tag${i}`),
+    thumbnailText: "HE CRACKED THE SOUND BARRIER WITH A ROPE", thumbnailQuery: "q", claims: [],
+    short: { title: "s", scenes: [sc("s1", "Cold Open"), sc("s2", "premise"), sc("s3", "kicker")] },
+    scenes: [sc("a", "cold open"), sc("b", "reaction"), sc("c", "premise"), sc("d", "Escalation"), sc("e", "escalation"),
+      sc("f", "escalation"), sc("g", "twist"), sc("h", "mechanism"), sc("i", "payoff"), sc("j", "kicker")],
+  };
+  const r = ScriptSchema.safeParse(sloppy);
+  check(r.success, "#75 formatting mistakes are normalised instead of rejected", r.success ? "parsed" : r.error.issues.slice(0, 2).map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
+  if (r.success) {
+    const d = r.data;
+    check(d.altTitles.length === 3 && d.tags.length === 15, "#75 4 titles -> 3, 22 tags -> 15", `${d.altTitles.length} titles, ${d.tags.length} tags`);
+    check(d.scenes[0]!.role === "cold_open" && d.scenes[6]!.role === "turn" && d.scenes[0]!.motion === "clip" && d.scenes[0]!.era === "historical",
+      "#75 'cold open' / 'twist' / 'Video' / 'Ancient' mapped to real values", `${d.scenes[0]!.role}, ${d.scenes[6]!.role}, ${d.scenes[0]!.motion}, ${d.scenes[0]!.era}`);
+    check(d.scenes[0]!.cardHeadline.length <= 40 && !/\s$/.test(d.scenes[0]!.cardHeadline), "#75 long captions cut at a word boundary", `"${d.scenes[0]!.cardHeadline}"`);
+    check(d.scenes[0]!.altQueries.length >= 2 && d.short.scenes[1]!.role === "escalation", "#75 one alt query padded; unknown Short role mapped", `${d.scenes[0]!.altQueries.length} queries, short role ${d.short.scenes[1]!.role}`);
+  }
 }
 
 // ── Scenario 25: the run of 21 Sep 20:44 — stuck 38 minutes in the footage pool. ──

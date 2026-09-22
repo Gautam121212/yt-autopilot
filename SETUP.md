@@ -703,3 +703,13 @@ output: resolution, picture/speech sync, shot pace, bitrate, loudness, fast-star
 caption timing, and chapters against YouTube's rules. Frame sheets are saved in `./dryrun/` so you
 can look at the result. About 3 minutes. Last measured: long video one shot every 5.9 s, Short every
 3.2 s, -14.8 LUFS, 11.0 Mbps on worst-case noise, 2.0x real-time render.
+
+## When Gemini is overloaded
+
+Gemini's free models are regularly overloaded at the same moment. The pipeline now:
+- waits out an overload (20 s, then 45 s) before giving up — quota errors are passed on at once;
+- counts a scene it could not judge as **unjudged**, never failed;
+- pauses the video (script and research kept) when over half its scenes are unjudged, and resumes
+  it on a later run after a 3-hour cooldown;
+- switches off, for the rest of the run, any backup provider whose key is refused;
+- never sends pictures to a backup model that cannot see them.

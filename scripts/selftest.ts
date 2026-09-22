@@ -193,6 +193,24 @@ ok(produce.includes("rewriting from scratch"), "#38 the script bar rewrites, not
   // #70 research-backed writer changes
   const w = src("src/stages/script.ts");
   ok(w.includes("roadmap") && w.includes("LOOP"), "#70 the writer adds a payoff roadmap and loops the Short");
+  // #72 a judgement that ERRORS is unjudged, never failed
+  const selSrc = src("src/stages/scene-qa.ts");
+  ok(selSrc.includes('"error" in pick') && selSrc.includes("could not be judged"), "#72 an outage marks scenes unjudged, not failed");
+  // #73 refused keys are switched off; pictures never go to a blind model; the true cause is reported
+  ok(llm.includes("deadProviders.add") && llm.includes("isAuthError"), "#73 a refused key is disabled for the rest of the run");
+  ok(llm.includes("(o.images?.length ?? 0) > 0 && !seesImages) throw e"), "#73 images never reach a model that cannot see");
+  ok(llm.includes("Fallbacks also failed"), "#73 a failed fallback reports the original capacity error, not its own 401");
+  ok(llm.includes("await gemini(model, system, prompt, maxTokens, images, timeoutMs, thinkBudget)"),
+    "#73 Gemini actually receives its timeout and thinking budget");
+  ok(llm.includes("isOverload") && llm.includes("GEMINI_BUSY_WAIT1_MS"), "#73 overloads are waited out; quota is not");
+  // #74 the lesson loop
+  const les = src("src/lib/lessons.ts");
+  ok(les.includes("i.message !~*") && /TOPIC_STAGES = \[[^\]]*scene-qa\.abandoned/.test(les) && !/SCRIPT_STAGES = \[[^\]]*scene-qa/.test(les),
+    "#74 footage failures teach topic choice, outages teach nothing");
+  // #75 normalise, don't reject
+  const ty = src("src/types.ts");
+  ok(!ty.includes(".length(3)") && !ty.includes("z.array(z.string()).max(15)") && ty.includes("enumish("),
+    "#75 formatting mistakes are normalised, not rejected");
 }
 {
   // #51 the failure cap: it must count crashes only. Rejections are the design, not waste.

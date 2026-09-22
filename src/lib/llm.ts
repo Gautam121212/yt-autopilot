@@ -137,6 +137,11 @@ export type CallOpts = {
 /** claude-code can search the live web; the Gemini free path cannot (grounding + JSON output conflict). */
 export class QuotaError extends Error {}
 
+/** A key that was refused (401/403) will be refused again; stop calling it for this run. */
+const deadProviders = new Set<string>();
+export const resetDeadProviders = () => deadProviders.clear();
+const isAuthError = (m: string) => /\b40[13]\b|authenticat|user not found|invalid api key|unauthori[sz]ed/i.test(m);
+
 /**
  * A chain of OpenAI-compatible fallbacks, tried in order when Gemini is out of quota.
  *
@@ -385,7 +390,10 @@ async function gemini(model: string, system: string, prompt: string, maxTokens: 
         ...(supportsThinking(model) ? { thinkingConfig: { thinkingBudget: thinkBudget } } : {}),
       },
     }),
-  }, timeoutMs), `gemini ${model}`, 5).catch((e: Error) => {
+    // Two tries here, not five: the outer loop in geminiWithFallback now owns the patience (it waits
+    // out overloads across ALL models). Five nested exponential retries per model per round stacked
+    // to ~5.5 minutes per vision call during an outage.
+  }, timeoutMs), `gemini ${model}`, Number(process.env.GEMINI_TRIES ?? 2)).catch((e: Error) => {
     // Listing a model does not mean you may call it; Google closes older ones to new keys.
     if (/\b404\b/.test(e.message)) throw new Error(`Gemini model "${model}" is not callable by this key. Run \`npm run models\` to pick one that is.\n${e.message.slice(0, 200)}`);
     throw e;
@@ -403,23 +411,44 @@ async function gemini(model: string, system: string, prompt: string, maxTokens: 
 const geminiDown = new Set<string>(); // models that returned 503/429 during this run
 
 /** GEMINI_MODEL_* may list several models, newest first: "gemini-3.8-flash,gemini-3.6-flash". */
+/** Transient: the model is overloaded right now. Waiting fixes it. */
+const isOverload = (m: string) => /\b503\b|UNAVAILABLE|overload|high demand|try again later/i.test(m);
+/** Daily/minute quota. Waiting minutes does not fix a daily quota; moving on does. */
+const isQuotaMsg = (m: string) => /\b429\b|RESOURCE_EXHAUSTED|quota|rate/i.test(m);
+
 async function geminiWithFallback(spec: string, system: string, prompt: string, maxTokens: number, images?: string[], timeoutMs = LLM_TIMEOUT_HEAVY, thinkBudget?: number): Promise<string> {
   const chain = spec.split(",").map((m) => m.trim()).filter(Boolean);
-  const order = [...chain.filter((m) => !geminiDown.has(m)), ...chain.filter((m) => geminiDown.has(m))];
+  // Every model busy at the same moment is a GLOBAL overload, which passes in seconds to minutes.
+  // Moving straight to a backup provider (the old behaviour) turned a 30-second wait into a lost scene.
+  const waits = [0, Number(process.env.GEMINI_BUSY_WAIT1_MS ?? 20_000), Number(process.env.GEMINI_BUSY_WAIT2_MS ?? 45_000)];
   let last: Error | undefined;
-  for (const model of order) {
-    try {
-      const out = await gemini(model, system, prompt, maxTokens, images);
-      geminiDown.delete(model);
-      return out;
-    } catch (e) {
-      last = e as Error;
-      if (!/(\b503\b|\b429\b|UNAVAILABLE|overload|high demand|rate)/i.test(last.message)) throw last;
-      geminiDown.add(model);
-      console.warn(`${model} is busy; trying the next model listed in GEMINI_MODEL_* ...`);
+  for (const [round, wait] of waits.entries()) {
+    if (wait) {
+      console.warn(`    [llm] every Gemini model is overloaded; waiting ${Math.round(wait / 1000)}s before retrying (${round}/${waits.length - 1})`);
+      await new Promise((r) => setTimeout(r, wait));
     }
+    const order = [...chain.filter((m) => !geminiDown.has(m)), ...chain.filter((m) => geminiDown.has(m))];
+    let allOverloaded = true;
+    for (const model of order) {
+      try {
+        // timeout and thinking budget MUST be passed through: an earlier edit targeted a variable
+        // name that did not exist, so for weeks neither reached Gemini at all (bug #73).
+        const out = await gemini(model, system, prompt, maxTokens, images, timeoutMs, thinkBudget);
+        geminiDown.delete(model);
+        return out;
+      } catch (e) {
+        last = e as Error;
+        const m = last.message;
+        if (!isOverload(m) && !isQuotaMsg(m)) throw last;
+        if (!isOverload(m)) allOverloaded = false;
+        geminiDown.add(model);
+        console.warn(`${model} is ${isOverload(m) ? "overloaded" : "out of quota"}; trying the next model listed in GEMINI_MODEL_* ...`);
+      }
+    }
+    // Quota is not transient: waiting minutes will not help, so hand over to the fallbacks now.
+    if (!allOverloaded) break;
   }
-  throw new QuotaError(`Every model in "${spec}" is rate-limited or out of daily quota.\nThe Gemini free tier resets at midnight Pacific. Add a backup provider to keep going (see SETUP.md "Backup provider").\n${last?.message.slice(0, 300)}`);
+  throw new QuotaError(`Every model in "${spec}" is overloaded or out of quota.\nThe Gemini free tier resets at midnight Pacific. Add a backup provider to keep going (see SETUP.md "Backup provider").\n${last?.message.slice(0, 300)}`);
 }
 
 export function extractJson(text: string): unknown {
@@ -467,8 +496,9 @@ export async function askJson<T>(o: {
       const order = routed && routed !== "gemini" && !needsSight
         ? [routed, ...Object.keys(NAMED).filter((n) => n !== routed)]
         : [];
-      const named = order.map((n) => NAMED[n]).find((x) => x?.key);
-      const namedName = order.find((n) => NAMED[n]?.key) ?? routed;
+      const live = order.filter((n) => NAMED[n]?.key && !deadProviders.has(n));
+      const named = live.length ? NAMED[live[0]!] : undefined;
+      const namedName = live[0] ?? routed;
       if (named?.key) {
         const m = o.tier === "heavy" ? named.heavy : named.light;
         console.log(`    [llm] ${o.role} -> ${namedName} (${m})`);
@@ -493,7 +523,8 @@ export async function askJson<T>(o: {
             lastErr = first.error.message.slice(0, 1500);
             feedback = `\n\nYour previous answer was rejected by the validator:\n${lastErr}\nFix every listed problem.`;
             if (!lastChance) {
-              console.warn(`    [llm] ${namedName} answer failed validation — retrying with the errors`);
+              const what = first.error.issues.slice(0, 2).map((i) => `${i.path.join(".") || "root"}: ${i.message}`).join("; ");
+              console.warn(`    [llm] ${namedName} answer failed validation (${what.slice(0, 140)}) — retrying with the errors`);
               continue;
             }
             console.warn(`    [llm] ${namedName} failed validation 3 times — last attempt goes to ${PROVIDER}`);
@@ -512,6 +543,10 @@ export async function askJson<T>(o: {
           }
           // A routed provider failing is not fatal: fall through to the default path below.
           const msg = (err as Error).message;
+          if (isAuthError(msg)) {
+            deadProviders.add(namedName);
+            console.warn(`    [llm] ${namedName} DISABLED for the rest of this run — its key was refused.`);
+          }
           const hint = /\b403\b/.test(msg)
             ? ` — 403 usually means this key cannot use "${m}". Run \`npm run models:mistral\` to pick one it can.`
             : /\b401\b/.test(msg) ? " — 401: the key is wrong or not activated."
@@ -520,7 +555,7 @@ export async function askJson<T>(o: {
           // Try every other configured provider before giving the call to Gemini.
           for (const nextName of order.filter((n) => n !== namedName)) {
             const next = NAMED[nextName];
-            if (!next?.key) continue;
+            if (!next?.key || deadProviders.has(nextName)) continue;
             const nm = o.tier === "heavy" ? next.heavy : next.light;
             try {
               console.warn(`    [llm] trying ${nextName} (${nm})`);
@@ -558,12 +593,15 @@ export async function askJson<T>(o: {
               return geminiWithFallback(model, o.system, body, budget, o.images, timeoutFor(o.tier), 0);
             }
             if (!isQuota(e)) throw e;
-            const chain = fallbackChain();
+            const chain = fallbackChain().filter((fb) => !deadProviders.has(fb.name));
             if (!chain.length) throw e;
+            // A call carrying images must never go to a model that cannot see them: the images
+            // were silently dropped and a blind model "ranked" a contact sheet it never saw.
+            const seesImages = process.env.OPENAI_COMPAT_VISION === "true";
+            if ((o.images?.length ?? 0) > 0 && !seesImages) throw e;
             // Walk the whole chain: each provider has its own free-tier limit, so one being
             // exhausted says nothing about the next.
-            const seesImages = process.env.OPENAI_COMPAT_VISION === "true";
-            let last: unknown = e;
+            const failures: string[] = [];
             for (const fb of chain) {
               const model = o.tier === "heavy" ? fb.heavy : fb.light;
               try {
@@ -571,11 +609,20 @@ export async function askJson<T>(o: {
                 return await openaiCompatible(model, o.system, body, Math.min(budget, o.maxTokens ?? 16000),
                   seesImages ? o.images : undefined, timeoutFor(o.tier), fb.baseUrl, fb.apiKey);
               } catch (err) {
-                last = err;
-                console.warn(`    [llm] ${fb.name} failed: ${(err as Error).message.slice(0, 90)}`);
+                const m = (err as Error).message;
+                failures.push(`${fb.name}: ${m.slice(0, 80)}`);
+                if (isAuthError(m)) {
+                  deadProviders.add(fb.name);
+                  console.warn(`    [llm] ${fb.name} DISABLED for the rest of this run — its key was refused (${m.slice(0, 60)}). ` +
+                    `Fix or remove it in .env, then npm run github.`);
+                } else {
+                  console.warn(`    [llm] ${fb.name} failed: ${m.slice(0, 90)}`);
+                }
               }
             }
-            throw last;
+            // Report the ORIGINAL cause. Rethrowing the last fallback's 401 made callers treat a
+            // capacity problem (Gemini overloaded) as a bad answer, and abandon good work.
+            throw new QuotaError(`${(e as Error).message}\nFallbacks also failed: ${failures.join("; ")}`);
           });
       try { raw = extractJson(text); } catch (e) { raw = undefined; lastErr = (e as Error).message; }
     }

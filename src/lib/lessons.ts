@@ -12,10 +12,18 @@ import { q } from "./db";
 
 export type Lesson = { stage: string; title: string | null; reason: string; at: string };
 
-/** Stages whose rejections carry a lesson about TOPICS. */
-const TOPIC_STAGES = ["topic.dropped", "topic.unfilmable", "feasibility.abandoned"];
+/** Stages whose rejections carry a lesson about TOPICS. Footage judged and found wanting is a topic
+ *  problem — its visuals are thin on stock — not a script problem, so scene-qa lives here (#74). */
+const TOPIC_STAGES = ["topic.dropped", "topic.unfilmable", "feasibility.abandoned", "scene-qa.abandoned"];
 /** Stages whose rejections carry a lesson about SCRIPTS. */
-const SCRIPT_STAGES = ["script.too-short", "script.below-bar", "verify.abandoned", "scene-qa.abandoned", "final-check.not-uploaded"];
+const SCRIPT_STAGES = ["script.too-short", "script.below-bar", "verify.abandoned", "final-check.not-uploaded"];
+
+/**
+ * An outage teaches nothing about content. On 22 Sep a Gemini overload was recorded as "13 scenes
+ * below 7.5" and fed to the writer as if its script had failed — polluting the loop with noise
+ * while real lessons were crowded out. Anything that reads as infrastructure is excluded.
+ */
+export const INFRA = "(401|403|429|503|quota|overload|busy|unavailable|timeout|timed out|ECONN|fetch failed|user not found|abort)";
 
 async function recent(stages: string[], limit: number): Promise<Lesson[]> {
   return q<Lesson>(
@@ -23,6 +31,7 @@ async function recent(stages: string[], limit: number): Promise<Lesson[]> {
        from incidents i
        left join videos v on v.id = i.video_id
       where i.stage = any($1) and i.created_at > now() - interval '14 days'
+        and i.message !~* '${INFRA}'
       order by i.id desc
       limit $2`,
     [stages, limit],

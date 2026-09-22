@@ -127,12 +127,12 @@ async function choose(scene: Scene, cands: Candidate[], dir: string, videoId: nu
     // Out of vision quota: stop asking for the rest of the run. Every further call would fail the
     // same way, and each one would count a perfectly good scene as a failure.
     if (e instanceof QuotaError || isQuota(e)) visionExhausted = true;
-    await incident("scene-select", e, videoId);
-    return null;
+    await incident("scene-select.error", e, videoId);
+    return { error: (e as Error).message ?? String(e) } as const;
   });
   // Kept for `npm run select:test`, so a person can see exactly what the editor was shown.
   if (process.env.KEEP_SHEETS !== "true") await fs.rm(cs.sheet, { force: true }).catch(() => {});
-  if (!v) return null;
+  if ("error" in v) return v;
   // Discard numbers that are not on the sheet rather than trusting them.
   const ranked = v.ranking
     .filter((r) => r.n >= 1 && r.n <= cs.order.length)
@@ -155,6 +155,7 @@ export async function sceneQa(o: {
 }): Promise<{ passed: number; failed: string[]; replaced: number; unjudged: string[] }> {
   const orientation = o.orientation ?? "landscape";
   const unjudged: string[] = [];
+  let consecutiveErrors = 0;
   if (!providerSupportsVision()) {
     log("  scene selection skipped (provider cannot see images) — keeping the fetched footage");
     return { passed: o.scenes.length, failed: [], replaced: 0, unjudged: o.scenes.map((s) => s.id) };
@@ -172,6 +173,7 @@ export async function sceneQa(o: {
     }
     const wantVideo = scene.motion === "clip";
     let best: { c: Candidate; score: number; why: string }[] = [];
+    let judgeErrors = 0;
 
     // Sheet 1: the scene's own searches. Sheet 2 (only if needed): the editor's suggestions plus
     // the topic's fallbacks.
@@ -186,11 +188,25 @@ export async function sceneQa(o: {
       }
       if (!cands.length) { log(`  scene ${scene.id}: no candidates for ${rounds[r]!.join(" / ")}`); continue; }
       const pick = await choose(scene, cands, o.dir, o.videoId, `${scene.id}-${r + 1}`, orientation === "portrait");
+      if (pick && "error" in pick) {
+        // COULD NOT JUDGE is not the same as JUDGED BAD. Treating an outage as thirteen bad scenes
+        // abandoned a good script on 22 Sep (#72). Two errors in a row means vision is down: stop.
+        judgeErrors++;
+        if (++consecutiveErrors >= 2) visionExhausted = true;
+        break;
+      }
+      consecutiveErrors = 0;
       if (!pick?.ranked.length) continue;
       if (!best.length || pick.ranked[0]!.score > best[0]!.score) best = pick.ranked;
       log(`  scene ${scene.id}: best of ${pick.shown} shown → ${best[0]!.score}/10 (${best[0]!.c.kind}) — ${best[0]!.why.slice(0, 70)}`);
       if (best[0]!.score >= SCENE_BAR) break;
       if (r === 0) rounds.push([...pick.suggest, ...(o.fallbacks ?? []).slice(0, 2)]);
+    }
+
+    if (!best.length && judgeErrors) {
+      unjudged.push(scene.id);
+      log(`  scene ${scene.id}: could not be judged (vision unavailable) — keeping its fetched footage, not counted as a failure`);
+      continue;
     }
 
     // Download the lead and up to two supporting cuts that also clear the support bar.

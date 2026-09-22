@@ -1,6 +1,30 @@
 import { z } from "zod";
 
 /** Below this a script is not worth salvaging. */
+// ── Normalise, don't reject (#11, #48, #50, #75) ─────────────────────────────────────────────
+// Every constraint below used to throw away a complete, good script over formatting: 4 alternative
+// titles instead of 3, 18 tags instead of 15, a caption a few characters long, "Clip" instead of
+// "clip". Each rejection cost a heavy call and usually a retry. Anything code can fix, code fixes.
+
+/** Cut at a word boundary, so a caption never ends mid-word. */
+const fit = (max: number) => z.string().transform((x) => {
+  const t = x.trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const sp = cut.lastIndexOf(" ");
+  return (sp > max * 0.5 ? cut.slice(0, sp) : cut).trim();
+});
+/** Lowercase, trim, spaces/hyphens to underscores, then map onto an allowed value. */
+const enumish = <T extends readonly [string, ...string[]]>(allowed: T, aliases: Record<string, T[number]>, fallback: T[number]) =>
+  z.preprocess((v) => {
+    const k = String(v ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+    return (allowed as readonly string[]).includes(k) ? k : aliases[k] ?? fallback;
+  }, z.enum(allowed));
+const MOTION = enumish(["still", "clip"] as const, { video: "clip", moving: "clip", motion: "clip", footage: "clip", photo: "still", image: "still", picture: "still", static: "still" }, "still");
+const ERA = enumish(["historical", "modern", "any"] as const, { ancient: "historical", old: "historical", past: "historical", period: "historical", vintage: "historical", present: "modern", contemporary: "modern", current: "modern", timeless: "any", none: "any" }, "any");
+/** 1+ queries accepted; brought to 2-3 (a duplicate is harmless, searches are deduplicated). */
+const QUERIES = z.array(z.string()).min(1).transform((a) => (a.length >= 2 ? a : [...a, a[0]!]).slice(0, 3));
+
 export const MIN_SCHEMA_SCENES = 9;
 /** What every script is brought up to before production — by splitting, not by asking again. */
 export const TARGET_SCENES = 13;
@@ -62,15 +86,15 @@ export const SCENE_ROLES = ["cold_open", "reaction", "premise", "escalation", "t
 
 export const SceneSchema = z.object({
   id: z.string(),
-  role: z.enum(SCENE_ROLES).describe("its job in the beat sheet"),
+  role: enumish(SCENE_ROLES, { hook: "cold_open", opening: "cold_open", intro: "cold_open", setup: "premise", reveal: "turn", twist: "turn", explanation: "mechanism", science: "mechanism", resolution: "payoff", ending: "kicker", outro: "kicker", punchline: "kicker" }, "escalation").describe("its job in the beat sheet"),
   chapter: z.string().optional().describe("set only on scenes that start a new chapter"),
   narration: z.string(),
   imageQuery: z.string().describe("2-5 word photo-archive search naming ONE concrete object"),
-  altQueries: z.array(z.string()).min(2).max(3).describe("two or three DIFFERENT concrete objects that could illustrate the same line"),
-  motion: z.enum(["still", "clip"]).describe("'clip' for scenes describing movement, process or scale; 'still' otherwise"),
-  era: z.enum(["historical", "modern", "any"]).describe("'historical' for anything before ~1950 — forces period artwork and blocks modern stock photos"),
-  cardHeadline: z.string().max(40).describe("2-5 words, ideally the scene's key figure ('800 MILES', '2 HOURS'); burned in small over the footage as a figure caption"),
-  cardSub: z.string().max(90).describe("one short clause explaining the headline"),
+  altQueries: QUERIES.describe("two or three DIFFERENT concrete objects that could illustrate the same line"),
+  motion: MOTION.describe("'clip' for scenes describing movement, process or scale; 'still' otherwise"),
+  era: ERA.describe("'historical' for anything before ~1950 — forces period artwork and blocks modern stock photos"),
+  cardHeadline: fit(40).describe("2-5 words, ideally the scene's key figure ('800 MILES', '2 HOURS'); burned in small over the footage as a figure caption"),
+  cardSub: fit(90).describe("one short clause explaining the headline"),
   claimIds: z.array(z.string()).default([]),
 });
 export type Scene = z.infer<typeof SceneSchema>;
@@ -78,26 +102,27 @@ export type Scene = z.infer<typeof SceneSchema>;
 const WORDS = (t: string) => t.trim().split(/\s+/).filter(Boolean).length;
 
 export const ScriptSchema = z.object({
-  title: z.string().max(100),
-  altTitles: z.array(z.string().max(100)).length(3),
-  description: z.string().max(2500),
-  tags: z.array(z.string()).max(15),
-  thumbnailText: z.string().max(32),
+  title: fit(100),
+  // any number accepted; YouTube needs one title, the rest are A/B candidates — exactly 3 is kept
+  altTitles: z.array(fit(100)).min(1).transform((a) => [...a, ...a, ...a].slice(0, 3)),
+  description: fit(2500),
+  tags: z.array(z.string()).transform((a) => a.slice(0, 15)),
+  thumbnailText: fit(32),
   thumbnailQuery: z.string(),
   // The schema accepts any SALVAGEABLE script. Rejecting a complete 11-scene script over its count
   // wasted three heavy calls; `normaliseSceneCount` splits long scenes up to 13 for free instead.
   scenes: z.array(SceneSchema).min(MIN_SCHEMA_SCENES).max(18),
   short: z.object({
-    title: z.string().max(90),
+    title: fit(90),
     scenes: z.array(z.object({
       id: z.string(),
-      role: z.enum(["cold_open", "escalation", "payoff", "kicker"]),
+      role: enumish(["cold_open", "escalation", "payoff", "kicker"] as const, { hook: "cold_open", premise: "escalation", reaction: "escalation", turn: "escalation", mechanism: "escalation", punchline: "kicker", ending: "kicker" }, "escalation"),
       narration: z.string(), imageQuery: z.string(),
-      altQueries: z.array(z.string()).min(2).max(3),
-      motion: z.enum(["still", "clip"]),
-      era: z.enum(["historical", "modern", "any"]),
-      cardHeadline: z.string().max(40),
-      cardSub: z.string().max(90),
+      altQueries: QUERIES,
+      motion: MOTION,
+      era: ERA,
+      cardHeadline: fit(40),
+      cardSub: fit(90),
     })).min(3).max(8),
   }),
   claims: z.array(z.object({ id: z.string(), text: z.string(), sourceIds: z.array(z.string()).min(1) })),
