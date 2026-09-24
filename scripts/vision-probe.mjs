@@ -30,8 +30,22 @@ async function listModels(base, key) {
     const r = await fetch(`${base.replace(/\/$/, "")}/models`, { headers: headersFor(base, key), signal: AbortSignal.timeout(20000) });
     if (!r.ok) return { err: `${r.status}: ${(await r.text()).slice(0, 80)}` };
     const j = await r.json();
-    return { ids: (j.data ?? j.models ?? []).map((m) => m.id ?? m.model ?? m.name).filter(Boolean) };
+    const rows = j.data ?? j.models ?? [];
+    return { ids: rows.map((m) => m.id ?? m.model ?? m.name).filter(Boolean), rows };
   } catch (e) { return { err: e.message.slice(0, 70) }; }
+}
+
+/** OpenRouter model objects carry pricing + input modalities: pick genuinely-free vision models. */
+function openrouterFreeVision(rows) {
+  return (rows ?? [])
+    .filter((m) => {
+      const price = m.pricing ?? {};
+      const free = (Number(price.prompt) || 0) === 0 && (Number(price.completion) || 0) === 0;
+      const mods = m.architecture?.input_modalities ?? m.architecture?.modality?.split?.("+") ?? [];
+      const sees = Array.isArray(mods) ? mods.some((x) => /image/i.test(x)) : /image/i.test(String(mods));
+      return free && sees && /:free$/.test(m.id ?? "");
+    })
+    .map((m) => m.id);
 }
 
 function headersFor(base, key) {
@@ -63,16 +77,33 @@ let changed = false, anyWorking = false;
 for (const p of PROVIDERS) {
   if (!p.key) { console.log(`\n${p.name}: no key in .env, skipping`); continue; }
   console.log(`\n${p.name}: asking what your key can serve...`);
-  const { ids, err } = await listModels(p.base, p.key);
+  if (p.name === "openrouter") {
+    const auth = await fetch("https://openrouter.ai/api/v1/auth/key", { headers: headersFor(p.base, p.key) }).catch(() => null);
+    if (auth && auth.status === 401) {
+      console.log("  ❌ the key itself is refused (401). Causes, in order of likelihood:");
+      console.log("     1. the key was made in a DIFFERENT OpenRouter account than the one you're logged into — regenerate at openrouter.ai/keys");
+      console.log("     2. the key is expired — OpenRouter returns \"User not found\" for expired keys");
+      console.log("     3. free models need training enabled — turn ON \"Model Training\" at openrouter.ai/settings/privacy");
+      console.log("     Test directly: curl -H \"Authorization: Bearer $OPENROUTER_API_KEY\" https://openrouter.ai/api/v1/auth/key");
+      continue;
+    }
+    if (auth && auth.ok) console.log("  key is valid ✓ (so a per-model 401 below means that model needs training enabled or credits)");
+  }
+  const { ids, err, rows } = await listModels(p.base, p.key);
   if (err) { console.log(`  couldn't list models (${err}) — falling back to a fixed guess list`); }
+  if (p.name === "openrouter" && rows) {
+    const live = openrouterFreeVision(rows);
+    if (live.length) { console.log(`  ${live.length} free vision model(s) live right now: ${live.slice(0, 4).join(", ")}${live.length > 4 ? " …" : ""}`); }
+  }
   // candidates: models the provider lists whose id looks multimodal, plus a few known ids as backup
   const guesses = p.name === "groq"
     ? ["qwen/qwen3.8-27b", "meta-llama/llama-4-scout-17b-16e-instruct", "meta-llama/llama-4-maverick-17b-128e-instruct"]
     : p.name === "openrouter"
-    ? ["qwen/qwen2.5-vl-72b-instruct:free", "qwen/qwen2.5-vl-32b-instruct:free", "meta-llama/llama-3.2-11b-vision-instruct:free", "google/gemma-3-27b-it:free"]
+    ? ["meta-llama/llama-3.2-11b-vision-instruct:free", "google/gemma-3-4b-it:free", "google/gemma-3-12b-it:free", "google/gemma-3-27b-it:free", "qwen/qwen2.5-vl-32b-instruct:free"]
     : [];
+  const liveFree = p.name === "openrouter" ? openrouterFreeVision(rows) : [];
   const listed = (ids ?? []).filter(p.hint);
-  const candidates = [...new Set([...listed, ...guesses])];
+  const candidates = [...new Set([...liveFree, ...listed, ...guesses])];
   if (!candidates.length) { console.log(`  no vision-looking models found for ${p.name}.`); continue; }
 
   let found = null;

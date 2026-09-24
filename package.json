@@ -39,7 +39,8 @@
     "replay": "tsx scripts/replay.ts",
     "select:test": "tsx --env-file-if-exists=.env scripts/select-test.ts",
     "dryrun": "tsx scripts/dryrun.ts",
-    "vision:probe": "tsx --env-file-if-exists=.env scripts/vision-probe.mjs"
+    "vision:probe": "tsx --env-file-if-exists=.env scripts/vision-probe.mjs",
+    "openrouter:test": "node scripts/openrouter-test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

@@ -90,7 +90,7 @@ const NAMED: Record<string, { baseUrl: string; key: string; heavy: string; light
     // confirms which your key serves. This is the second free vision provider after Groq.
     heavy: process.env.OPENROUTER_MODEL_HEAVY || "z-ai/glm-4.5-air:free",
     light: process.env.OPENROUTER_MODEL_LIGHT || "z-ai/glm-4.5-air:free",
-    vision: process.env.OPENROUTER_MODEL_VISION || "qwen/qwen2.5-vl-72b-instruct:free",
+    vision: process.env.OPENROUTER_MODEL_VISION || "google/gemma-3-4b-it:free",
   },
 };
 
