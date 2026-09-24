@@ -75,15 +75,6 @@ const NAMED: Record<string, { baseUrl: string; key: string; heavy: string; light
     heavy: process.env.CEREBRAS_MODEL_HEAVY || "gpt-oss-120b",
     light: process.env.CEREBRAS_MODEL_LIGHT || "gpt-oss-120b",
   },
-  zai: {
-    // GLM-4.7-Flash: 200K context, 128K output, but ONE concurrent request and frequently
-    // congested (error 1305 "model too busy"). Good when it answers; never rely on it alone.
-    baseUrl: process.env.ZAI_BASE_URL || "https://open.bigmodel.cn/api/paas/v4",
-    key: process.env.ZAI_API_KEY || "",
-    heavy: process.env.ZAI_MODEL_HEAVY || "glm-4.7-flash",
-    light: process.env.ZAI_MODEL_LIGHT || "glm-4.5-flash",
-    vision: process.env.ZAI_MODEL_VISION || "glm-4v-flash",
-  },
   nvidia: {
     // NOTE: the llama-3.x endpoints now return 410 Gone. Set NVIDIA_MODEL_* to a model that is
     // still live at build.nvidia.com before enabling this.
@@ -332,7 +323,12 @@ async function openaiCompatible(
   content.push({ type: "text", text: prompt });
   const res = await withRetry(() => fetchOk(`${base}/chat/completions`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey ?? env("OPENAI_COMPAT_API_KEY")}`, "Content-Type": "application/json" },
+    headers: {
+      Authorization: `Bearer ${apiKey ?? env("OPENAI_COMPAT_API_KEY")}`,
+      "Content-Type": "application/json",
+      // OpenRouter attributes usage via these; some keys are refused (401) without them.
+      ...(/openrouter\.ai/.test(base) ? { "HTTP-Referer": "https://github.com/yt-autopilot", "X-Title": "yt-autopilot" } : {}),
+    },
     body: JSON.stringify({
       model,
       messages: [{ role: "system", content: system }, { role: "user", content: images?.length ? content : prompt }],

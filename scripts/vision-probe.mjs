@@ -21,26 +21,31 @@ const PROVIDERS = [
   { name: "groq", base: "https://api.groq.com/openai/v1", key: process.env.GROQ_API_KEY, envVar: "GROQ_MODEL_VISION",
     // words that mark a likely vision model in an id, newest-looking first
     hint: (id) => /vision|scout|maverick|llama-4|qwen3\.?[0-9]|3\.8|vl|multimodal/i.test(id) },
-  { name: "zai", base: "https://open.bigmodel.cn/api/paas/v4", key: process.env.ZAI_API_KEY, envVar: "ZAI_MODEL_VISION",
-    hint: (id) => /v(?:ision)?\b|4v|4\.5v|glm-4v|vl/i.test(id) },
   { name: "openrouter", base: "https://openrouter.ai/api/v1", key: process.env.OPENROUTER_API_KEY, envVar: "OPENROUTER_MODEL_VISION",
     hint: (id) => /:free/.test(id) && /vl|vision|gemma-3|llama-3\.2-11b|qwen2?\.5-vl|scout|maverick|nemotron.*vl/i.test(id) },
 ];
 
 async function listModels(base, key) {
   try {
-    const r = await fetch(`${base.replace(/\/$/, "")}/models`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(20000) });
+    const r = await fetch(`${base.replace(/\/$/, "")}/models`, { headers: headersFor(base, key), signal: AbortSignal.timeout(20000) });
     if (!r.ok) return { err: `${r.status}: ${(await r.text()).slice(0, 80)}` };
     const j = await r.json();
     return { ids: (j.data ?? j.models ?? []).map((m) => m.id ?? m.model ?? m.name).filter(Boolean) };
   } catch (e) { return { err: e.message.slice(0, 70) }; }
 }
 
+function headersFor(base, key) {
+  const h = { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+  // OpenRouter attributes usage to an app via these; some keys 401 without them.
+  if (/openrouter\.ai/.test(base)) { h["HTTP-Referer"] = "https://github.com/yt-autopilot"; h["X-Title"] = "yt-autopilot"; }
+  return h;
+}
+
 async function takesImage(base, key, model) {
   try {
     const r = await fetch(`${base.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      headers: headersFor(base, key),
       body: JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: [
         { type: "text", text: 'reply {"ok":true}' },
         { type: "image_url", image_url: { url: `data:image/jpeg;base64,${PX}` } },
@@ -65,7 +70,7 @@ for (const p of PROVIDERS) {
     ? ["qwen/qwen3.8-27b", "meta-llama/llama-4-scout-17b-16e-instruct", "meta-llama/llama-4-maverick-17b-128e-instruct"]
     : p.name === "openrouter"
     ? ["qwen/qwen2.5-vl-72b-instruct:free", "qwen/qwen2.5-vl-32b-instruct:free", "meta-llama/llama-3.2-11b-vision-instruct:free", "google/gemma-3-27b-it:free"]
-    : ["glm-4v-flash", "glm-4v"];
+    : [];
   const listed = (ids ?? []).filter(p.hint);
   const candidates = [...new Set([...listed, ...guesses])];
   if (!candidates.length) { console.log(`  no vision-looking models found for ${p.name}.`); continue; }
@@ -86,7 +91,8 @@ for (const p of PROVIDERS) {
     changed = true;
     console.log(`  -> ${p.envVar}=${found}`);
   } else {
-    console.log(`  ${p.name}: no model accepted an image. If you saw "insufficient balance", this provider's free vision tier has ended.`);
+    console.log(`  ${p.name}: no model accepted an image.`);
+    if (p.name === "openrouter") console.log(`     "401: User not found" = the OPENROUTER_API_KEY is wrong/empty. Get a fresh one (free, email only) at openrouter.ai/keys and put it in .env.`);
   }
 }
 

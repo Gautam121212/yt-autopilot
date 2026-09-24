@@ -134,7 +134,7 @@ for (const key of ["LLM_ROLE_GATE", "LLM_ROLE_WRITE", "LLM_ROLE_JUDGE", "MISTRAL
 }
 ok(llm.includes('o.role === "write" ? 0'), "#27 writing passes disable thinking so the output fits");
 ok(llm.includes("paceFor("), "#33 calls to a provider are paced against its rate limit");
-ok(llm.includes("cerebras") && llm.includes("zai") && llm.includes("nvidia") && llm.includes("openrouter"),
+ok(llm.includes("cerebras") && llm.includes("nvidia") && llm.includes("openrouter") && llm.includes("groq"),
   "#39 several free providers are configured, not one");
 // Every provider in the client must be testable, or a broken key is only discovered mid-run.
 {
