@@ -95,10 +95,11 @@ const NAMED: Record<string, { baseUrl: string; key: string; heavy: string; light
   openrouter: {
     baseUrl: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
     key: process.env.OPENROUTER_API_KEY || "",
-    // NOTE: the well-known ":free" slugs now answer "unavailable for free". Check
-    // openrouter.ai/models?q=free for a current one before enabling this.
+    // OpenRouter carries several FREE vision models (one key, OpenAI-compatible). `npm run vision:probe`
+    // confirms which your key serves. This is the second free vision provider after Groq.
     heavy: process.env.OPENROUTER_MODEL_HEAVY || "z-ai/glm-4.5-air:free",
     light: process.env.OPENROUTER_MODEL_LIGHT || "z-ai/glm-4.5-air:free",
+    vision: process.env.OPENROUTER_MODEL_VISION || "qwen/qwen2.5-vl-72b-instruct:free",
   },
 };
 
@@ -319,6 +320,9 @@ async function openaiCompatible(
   // silently truncated every Mistral script mid-JSON — a 13-scene script in JSON is well past it.
   const cap = outputCapFor(base);
   maxTokens = Math.min(maxTokens, cap);
+  // An image call is a short ranking/verdict, not a script; reserving thousands of output tokens is
+  // what made Groq reject vision calls ("tokens per minute" limit). 1000 is ample for the JSON.
+  if ((images?.length ?? 0) > 0) maxTokens = Math.min(maxTokens, Number(process.env.VISION_MAX_TOKENS ?? 1000));
   if (!base) throw new Error("Set OPENAI_COMPAT_BASE_URL (e.g. https://api.groq.com/openai/v1)");
   const content: unknown[] = [];
   for (const f of images ?? []) {

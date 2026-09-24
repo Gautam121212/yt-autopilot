@@ -209,6 +209,12 @@ ok(produce.includes("rewriting from scratch"), "#38 the script bar rewrites, not
     "#82 configured providers (Groq, Z.ai…) join the fallback chain automatically");
   ok(llm.includes("vision?: string }") || llm.includes("light: string; vision?: string"),
     "#82 the fallback chain carries each provider's vision model");
+  // #88 an image call must reserve only a small output budget, or Groq's per-minute cap rejects it
+  ok(llm.includes("VISION_MAX_TOKENS") && /\(images\?\.length \?\? 0\) > 0\) maxTokens = Math\.min/.test(llm),
+    "#88 a vision call reserves a small output budget, so Groq accepts it");
+  ok(llm.includes('vision: process.env.OPENROUTER_MODEL_VISION'),
+    "#88 OpenRouter is a second free vision provider");
+  ok(src("src/lib/llm.ts").includes('data:${mime}'), "#87 the vision image data-URL uses the correct mime type");
   // topic tooling
   ok(src("package.json").includes("set-topics") || fsSync.existsSync(pathSync.join(ROOT2, "scripts/set-topics.mjs")),
     "#81 the topic list has a validated editing tool");

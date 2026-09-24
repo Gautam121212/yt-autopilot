@@ -23,6 +23,8 @@ const PROVIDERS = [
     hint: (id) => /vision|scout|maverick|llama-4|qwen3\.?[0-9]|3\.8|vl|multimodal/i.test(id) },
   { name: "zai", base: "https://open.bigmodel.cn/api/paas/v4", key: process.env.ZAI_API_KEY, envVar: "ZAI_MODEL_VISION",
     hint: (id) => /v(?:ision)?\b|4v|4\.5v|glm-4v|vl/i.test(id) },
+  { name: "openrouter", base: "https://openrouter.ai/api/v1", key: process.env.OPENROUTER_API_KEY, envVar: "OPENROUTER_MODEL_VISION",
+    hint: (id) => /:free/.test(id) && /vl|vision|gemma-3|llama-3\.2-11b|qwen2?\.5-vl|scout|maverick|nemotron.*vl/i.test(id) },
 ];
 
 async function listModels(base, key) {
@@ -61,6 +63,8 @@ for (const p of PROVIDERS) {
   // candidates: models the provider lists whose id looks multimodal, plus a few known ids as backup
   const guesses = p.name === "groq"
     ? ["qwen/qwen3.8-27b", "meta-llama/llama-4-scout-17b-16e-instruct", "meta-llama/llama-4-maverick-17b-128e-instruct"]
+    : p.name === "openrouter"
+    ? ["qwen/qwen2.5-vl-72b-instruct:free", "qwen/qwen2.5-vl-32b-instruct:free", "meta-llama/llama-3.2-11b-vision-instruct:free", "google/gemma-3-27b-it:free"]
     : ["glm-4v-flash", "glm-4v"];
   const listed = (ids ?? []).filter(p.hint);
   const candidates = [...new Set([...listed, ...guesses])];
