@@ -19,7 +19,8 @@
     "humanReviewFirst": 3,
     "minScore": 7,
     "uploadHeldVideos": false,
-    "minScriptScore": 7.5
+    "minScriptScore": 7.5,
+    "visionOptional": true
   },
   "imageSources": [
     "pexels",

@@ -111,7 +111,7 @@ async function pixabayPhotos(query: string, n: number, orient: Orientation): Pro
  * query dominates the sheet. Videos are included when the scene describes motion.
  */
 export async function gatherCandidates(queries: string[], used: Set<string>,
-  o: { wantVideo: boolean; perQuery?: number; max?: number; orientation?: Orientation }): Promise<Candidate[]> {
+  o: { wantVideo: boolean; perQuery?: number; max?: number; orientation?: Orientation; allowReuse?: boolean }): Promise<Candidate[]> {
   const orient = o.orientation ?? "landscape";
   const per = o.perQuery ?? 5;
   const lists: Candidate[][] = [];
@@ -137,7 +137,7 @@ export async function gatherCandidates(queries: string[], used: Set<string>,
       const c = l[i];
       if (!c) continue;
       added = true;
-      if (seen.has(c.key) || used.has(c.key)) continue;
+      if (seen.has(c.key) || (!o.allowReuse && used.has(c.key))) continue;
       seen.add(c.key);
       out.push(c);
       if (out.length >= (o.max ?? 9)) break;

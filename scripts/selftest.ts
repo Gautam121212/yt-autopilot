@@ -162,7 +162,7 @@ ok(produce.includes("rewriting from scratch"), "#38 the script bar rewrites, not
   const topicAt = produce.indexOf('log("picking a topic');
   ok(preAt > 0 && preAt < topicAt, "#62 the YouTube credential is checked before any credit is spent");
   // #61 vision exhaustion defers the video instead of abandoning it, and does not burn attempts.
-  ok(produce.includes("scene-select.deferred") && produce.includes("qa.unjudged.length > script.scenes.length / 2"),
+  ok(produce.includes("scene-select.deferred") && produce.includes("qa.autoPicked.length > script.scenes.length / 2"),
     "#61 a video short of vision quota is paused and resumed, not abandoned");
   ok(produce.includes("waiting for vision quota"), "#61 a paused video is not retried every hour");
   ok(src("package.json").includes("select:test"), "#63 a real-API selection test exists");
@@ -193,12 +193,31 @@ ok(produce.includes("rewriting from scratch"), "#38 the script bar rewrites, not
   // #70 research-backed writer changes
   const w = src("src/stages/script.ts");
   ok(w.includes("roadmap") && w.includes("LOOP"), "#70 the writer adds a payoff roadmap and loops the Short");
+  // #79 a real second vision provider; #80 the channel produces through a full Gemini outage
+  ok(llm.includes("vision?: string") && llm.includes("GROQ_MODEL_VISION"), "#79 a named provider can serve vision (Groq)");
+  ok(llm.includes("needsSight ? orderAll.filter") && llm.includes("if (needImages && !nv) continue"),
+    "#79 image calls route only to providers that can see, never blind");
+  const selQa = src("src/stages/scene-qa.ts");
+  ok(selQa.includes("autoPickFootage") && selQa.includes("hasUsableFootage"),
+    "#80 when vision is down, scenes without footage get the libraries' top-ranked shots");
+  ok(selQa.includes("allowReuse: true"), "#80 a repeated on-topic shot beats an empty scene during an outage");
+  ok(produce.includes("cfg.approval.visionOptional") && produce.includes("HELD for your approval"),
+    "#80 a video built during an outage is always held, never auto-published");
+  ok(src("src/config.ts").includes("visionOptional: z.boolean"), "#80 visionOptional is a config switch");
+  // #82 a NAMED vision provider (Groq) is reachable as a fallback even when the role is left on Gemini
+  ok(llm.includes("Any configured NAMED provider") && /for \(const \[name, n\] of Object\.entries\(NAMED\)\)/.test(llm),
+    "#82 configured providers (Groq, Z.ai…) join the fallback chain automatically");
+  ok(llm.includes("vision?: string }") || llm.includes("light: string; vision?: string"),
+    "#82 the fallback chain carries each provider's vision model");
+  // topic tooling
+  ok(src("package.json").includes("set-topics") || fsSync.existsSync(pathSync.join(ROOT2, "scripts/set-topics.mjs")),
+    "#81 the topic list has a validated editing tool");
   // #72 a judgement that ERRORS is unjudged, never failed
   const selSrc = src("src/stages/scene-qa.ts");
-  ok(selSrc.includes('"error" in pick') && selSrc.includes("could not be judged"), "#72 an outage marks scenes unjudged, not failed");
+  ok(selSrc.includes('"error" in pick') && selSrc.includes("keeping its already-fetched footage"), "#72 an outage marks scenes unjudged, not failed");
   // #73 refused keys are switched off; pictures never go to a blind model; the true cause is reported
   ok(llm.includes("deadProviders.add") && llm.includes("isAuthError"), "#73 a refused key is disabled for the rest of the run");
-  ok(llm.includes("(o.images?.length ?? 0) > 0 && !seesImages) throw e"), "#73 images never reach a model that cannot see");
+  ok(llm.includes("!seesImages && !anyVisionFallback) throw e"), "#73 images never reach a model that cannot see");
   ok(llm.includes("Fallbacks also failed"), "#73 a failed fallback reports the original capacity error, not its own 401");
   ok(llm.includes("await gemini(model, system, prompt, maxTokens, images, timeoutMs, thinkBudget)"),
     "#73 Gemini actually receives its timeout and thinking budget");

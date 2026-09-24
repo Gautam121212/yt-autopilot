@@ -140,6 +140,30 @@ async function choose(scene: Scene, cands: Candidate[], dir: string, videoId: nu
   return { ranked, suggest: v.suggestQueries, shown: cs.order.length };
 }
 
+/** True if the scene's first file exists and is not a trivially-small placeholder. */
+async function hasUsableFootage(files?: string[]): Promise<boolean> {
+  const f = files?.[0];
+  if (!f) return false;
+  return fs.stat(f).then((st) => st.size > 1000, () => false);
+}
+
+/** When vision cannot judge a scene, take the stock libraries' own top-ranked footage. */
+async function autoPickFootage(o: { dir: string; used: Set<string> }, scene: Scene, i: number,
+  wantVideo: boolean, orientation: "landscape" | "portrait", credits: ImageCredit[]): Promise<string[]> {
+  // allowReuse: during a vision outage a repeated on-topic shot beats an empty scene.
+  const cands = await gatherCandidates([scene.imageQuery, ...(scene.altQueries ?? [])], o.used,
+    { wantVideo, perQuery: 3, max: 3, orientation, allowReuse: true });
+  const picked: string[] = [];
+  for (const [k, c] of cands.slice(0, 3).entries()) {
+    const file = path.join(o.dir, `sel-${String(i).padStart(3, "0")}-${k}.${c.kind === "video" ? "mp4" : "jpg"}`);
+    if (await downloadCandidate(c, file)) {
+      picked.push(file); o.used.add(c.key);
+      if (k === 0) credits[i] = { source: c.source, id: c.key, title: c.caption || c.key, attribution: c.credit };
+    }
+  }
+  return picked;
+}
+
 export async function sceneQa(o: {
   cfg: ChannelConfig;
   dir: string;
@@ -152,13 +176,13 @@ export async function sceneQa(o: {
   attempts?: number;
   /** "portrait" for the Short: landscape stock cropped to 9:16 loses two-thirds of every frame. */
   orientation?: "landscape" | "portrait";
-}): Promise<{ passed: number; failed: string[]; replaced: number; unjudged: string[] }> {
+}): Promise<{ passed: number; failed: string[]; replaced: number; unjudged: string[]; autoPicked: string[] }> {
   const orientation = o.orientation ?? "landscape";
   const unjudged: string[] = [];
-  let consecutiveErrors = 0;
+  const autoPicked: string[] = [];
   if (!providerSupportsVision()) {
     log("  scene selection skipped (provider cannot see images) — keeping the fetched footage");
-    return { passed: o.scenes.length, failed: [], replaced: 0, unjudged: o.scenes.map((s) => s.id) };
+    return { passed: o.scenes.length, failed: [], replaced: 0, unjudged: o.scenes.map((s) => s.id), autoPicked: [] };
   }
   const failed: string[] = [];
   let replaced = 0;
@@ -166,12 +190,22 @@ export async function sceneQa(o: {
   for (const [i, scene] of o.scenes.entries()) {
     // Vision unavailable: keep what the fetch stage found. Not judging a scene is not the scene
     // failing — counting it as a failure is what would abandon an otherwise good video.
+    let consecutiveErrors = 0;
+    const wantVideo = scene.motion === "clip";
     if (visionExhausted || visionSpent >= VISION_BUDGET) {
       visionExhausted = true;
+      // Only fetch library footage if the scene has none already: a scene that arrived with pooled
+      // footage keeps it and spends nothing (that footage was chosen when the pool was built).
+      if (!(await hasUsableFootage(o.files[i]))) {
+        const picked = await autoPickFootage(o, scene, i, wantVideo, orientation, o.credits);
+        if (picked.length) { o.files[i] = picked; autoPicked.push(scene.id); }
+        log(`  scene ${scene.id}: vision budget reached, no footage yet — used the stock libraries' top ${picked.length} result(s)`);
+      } else {
+        log(`  scene ${scene.id}: vision budget reached — keeping its already-fetched footage (re-judged later)`);
+      }
       unjudged.push(scene.id);
       continue;
     }
-    const wantVideo = scene.motion === "clip";
     let best: { c: Candidate; score: number; why: string }[] = [];
     let judgeErrors = 0;
 
@@ -204,8 +238,16 @@ export async function sceneQa(o: {
     }
 
     if (!best.length && judgeErrors) {
-      unjudged.push(scene.id);
-      log(`  scene ${scene.id}: could not be judged (vision unavailable) — keeping its fetched footage, not counted as a failure`);
+      // Vision is down, but the video still gets made. The stock libraries already rank by relevance,
+      // so their top hit for this scene's own search is a real, on-topic shot — take it and move on.
+      // The video is marked so it can be re-judged later, when Gemini is back, WITHOUT re-rendering.
+      if (!(await hasUsableFootage(o.files[i]))) {
+        const picked = await autoPickFootage(o, scene, i, wantVideo, orientation, o.credits);
+        if (picked.length) { o.files[i] = picked; autoPicked.push(scene.id); }
+        log(`  scene ${scene.id}: vision unavailable, no footage yet — used the stock libraries' top ${picked.length} result(s)`);
+      } else {
+        log(`  scene ${scene.id}: vision unavailable — keeping its already-fetched footage (re-judged later)`);
+      }
       continue;
     }
 
@@ -238,5 +280,5 @@ export async function sceneQa(o: {
   if (unjudged.length) {
     log(`  vision ${visionSpent >= VISION_BUDGET ? `budget (${VISION_BUDGET})` : "quota"} reached — ${unjudged.length} scene(s) keep their fetched footage unjudged: ${unjudged.join(", ")}`);
   }
-  return { passed: o.scenes.length - failed.length - unjudged.length, failed, replaced, unjudged };
+  return { passed: o.scenes.length - failed.length - unjudged.length, failed, replaced, unjudged, autoPicked };
 }

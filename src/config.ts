@@ -41,6 +41,13 @@ const Channel = z.object({
     minScriptScore: z.number().min(0).max(10).default(7.5),
     /** false = a held video is never uploaded; its review notes go to the learning loop instead. */
     uploadHeldVideos: z.boolean().default(false),
+    /**
+     * What to do when Gemini (vision) is down at footage selection.
+     * false — pause and re-judge later, for the best footage (default).
+     * true  — build the video now with the stock libraries' own top-ranked footage, HELD for your
+     *         approval, so the channel keeps producing through a Gemini outage.
+     */
+    visionOptional: z.boolean().default(false),
   }),
   categoryId: z.string(),
   subNiches: z.array(SubNiche).min(1),

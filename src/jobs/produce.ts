@@ -633,10 +633,22 @@ async function main() {
       // Vision ran out before most scenes were judged. Rendering now would build a video from blind
       // picks and then hold it at the final check, which needs vision too. Keep everything done so
       // far and let the next run — two hours later, quota restored — resume from this stage.
-      if (qa.unjudged.length > script.scenes.length / 2) {
-        await incident("scene-select.deferred", new Error(`${qa.unjudged.length}/${script.scenes.length} scenes unjudged: vision quota or budget reached`), video.id);
-        return log(`#${video.id} paused before rendering: vision unavailable for ${qa.unjudged.length} scenes. ` +
-          `The script and research are kept; the next run resumes from footage selection.`);
+      // Vision down for most scenes, but the stock libraries' own top results were used, so the video
+      // IS watchable. Two honest choices, and neither throws away the render:
+      //   - config visionOptional=false (default): pause and re-judge later, for the best footage;
+      //   - config visionOptional=true: build the video now with library-ranked footage, and mark it
+      //     so the final gate never auto-publishes an unjudged video — you approve it, or a later run
+      //     re-judges it. This is what keeps the channel producing through a Gemini outage.
+      const mostlyBlind = qa.autoPicked.length > script.scenes.length / 2;
+      if (mostlyBlind && !cfg.approval.visionOptional) {
+        await incident("scene-select.deferred", new Error(`${qa.autoPicked.length}/${script.scenes.length} scenes used library-ranked footage: vision unavailable`), video.id);
+        return log(`#${video.id} paused before rendering: vision unavailable for ${qa.autoPicked.length} scenes. ` +
+          `The script and research are kept; the next run re-judges the footage.`);
+      }
+      const visionSkipped = qa.autoPicked.length > 0;
+      if (visionSkipped) {
+        log(`#${video.id} vision unavailable for ${qa.autoPicked.length} scene(s); built with library-ranked footage. ` +
+          `This video will be HELD for your approval, never auto-published.`);
       }
       if (qa.failed.length > Math.ceil(script.scenes.length * 0.25)) {
         // A quarter of the video looking wrong is not worth rendering, voicing or uploading.

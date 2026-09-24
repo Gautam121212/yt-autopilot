@@ -40,7 +40,7 @@ const PROVIDER = process.env.LLM_PROVIDER || "gemini";
 export const usage = { inputTokens: 0, outputTokens: 0, calls: 0, webSearches: 0, estCostUsd: 0 };
 
 /** name -> OpenAI-compatible endpoint for stage routing. Gemini is handled separately. */
-const NAMED: Record<string, { baseUrl: string; key: string; heavy: string; light: string }> = {
+const NAMED: Record<string, { baseUrl: string; key: string; heavy: string; light: string; vision?: string }> = {
   mistral: {
     baseUrl: process.env.MISTRAL_BASE_URL || "https://api.mistral.ai/v1",
     key: process.env.MISTRAL_API_KEY || "",
@@ -56,11 +56,16 @@ const NAMED: Record<string, { baseUrl: string; key: string; heavy: string; light
   },
   groq: {
     // gpt-oss-120b fails JSON-mode validation and llama-3.1-8b-instant no longer exists.
-    // qwen3-32b honours response_format properly.
+    // qwen3-32b honours response_format properly. Groq also serves a free Qwen VISION model, so
+    // Groq can stand in for Gemini on footage selection when set as LLM_ROLE_VISION.
     baseUrl: process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
     key: process.env.GROQ_API_KEY || "",
     heavy: process.env.GROQ_MODEL_HEAVY || "qwen/qwen3-32b",
     light: process.env.GROQ_MODEL_LIGHT || "qwen/qwen3-32b",
+    // Groq vision slugs change constantly (Llama-4 and Llama-3.2-vision were both retired). Always run
+    // `npm run vision:probe` — it queries your account and writes the working id. qwen3.8-27b is the
+    // current successor per Groq's deprecations page, but treat this default as a hint, not a promise.
+    vision: process.env.GROQ_MODEL_VISION || "qwen/qwen3.8-27b",
   },
   cerebras: {
     // NOTE: returns 402 "payment required" on new accounts — the $5 credit needs a card attached.
@@ -77,6 +82,7 @@ const NAMED: Record<string, { baseUrl: string; key: string; heavy: string; light
     key: process.env.ZAI_API_KEY || "",
     heavy: process.env.ZAI_MODEL_HEAVY || "glm-4.7-flash",
     light: process.env.ZAI_MODEL_LIGHT || "glm-4.5-flash",
+    vision: process.env.ZAI_MODEL_VISION || "glm-4v-flash",
   },
   nvidia: {
     // NOTE: the llama-3.x endpoints now return 410 Gone. Set NVIDIA_MODEL_* to a model that is
@@ -154,7 +160,7 @@ const isAuthError = (m: string) => /\b40[13]\b|authenticat|user not found|invali
  *
  * LLM_FALLBACKS="name|baseUrl|apiKey|heavyModel|lightModel; name|..."
  */
-export type Fallback = { name: string; baseUrl: string; apiKey: string; heavy: string; light: string };
+export type Fallback = { name: string; baseUrl: string; apiKey: string; heavy: string; light: string; vision?: string };
 
 export function fallbackChain(): Fallback[] {
   const chain: Fallback[] = [];
@@ -172,6 +178,14 @@ export function fallbackChain(): Fallback[] {
     const [name, baseUrl, apiKey, heavy, light] = entry.split("|").map((x) => x.trim());
     if (name && baseUrl && apiKey && heavy) chain.push({ name, baseUrl, apiKey, heavy, light: light || heavy });
   }
+  // Any configured NAMED provider (Groq, Z.ai, Mistral, ...) is a fallback too — this is what lets
+  // Groq's free vision model stand in for Gemini even when LLM_ROLE_VISION is left unset. Its `vision`
+  // model, if any, is carried through so an image call can reach it.
+  for (const [name, n] of Object.entries(NAMED)) {
+    if (n.key && !chain.some((c) => c.name === name)) {
+      chain.push({ name, baseUrl: n.baseUrl, apiKey: n.key, heavy: n.heavy, light: n.light, vision: n.vision });
+    }
+  }
   return chain;
 }
 /** The model stopped because it ran out of output budget — retryable with a smaller ask. */
@@ -184,7 +198,8 @@ export const isQuota = (e: unknown) =>
 
 export const providerSupportsWeb = () => PROVIDER === "claude-code";
 /** every supported provider can look at images, by different means. */
-export const providerSupportsVision = () => PROVIDER === "claude-code" || PROVIDER === "gemini" || process.env.OPENAI_COMPAT_VISION === "true";
+export const providerSupportsVision = () => PROVIDER === "claude-code" || PROVIDER === "gemini" ||
+  process.env.OPENAI_COMPAT_VISION === "true" || Object.values(NAMED).some((n) => n.key && n.vision);
 
 // ---------------- claude-code (subscription) ----------------
 let heavyFallback = false; // flips if the plan has no access to the heavy model
@@ -307,7 +322,8 @@ async function openaiCompatible(
   if (!base) throw new Error("Set OPENAI_COMPAT_BASE_URL (e.g. https://api.groq.com/openai/v1)");
   const content: unknown[] = [];
   for (const f of images ?? []) {
-    content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${(await fs.promises.readFile(f)).toString("base64")}` } });
+    const mime = f.endsWith(".png") ? "image/png" : f.endsWith(".webp") ? "image/webp" : "image/jpeg";
+    content.push({ type: "image_url", image_url: { url: `data:${mime};base64,${(await fs.promises.readFile(f)).toString("base64")}` } });
   }
   content.push({ type: "text", text: prompt });
   const res = await withRetry(() => fetchOk(`${base}/chat/completions`, {
@@ -414,7 +430,9 @@ const geminiDown = new Set<string>(); // models that returned 503/429 during thi
 /** Transient: the model is overloaded right now. Waiting fixes it. */
 const isOverload = (m: string) => /\b503\b|UNAVAILABLE|overload|high demand|try again later/i.test(m);
 /** Daily/minute quota. Waiting minutes does not fix a daily quota; moving on does. */
-const isQuotaMsg = (m: string) => /\b429\b|RESOURCE_EXHAUSTED|quota|rate/i.test(m);
+const isQuotaMsg = (m: string) => /\b429\b|RESOURCE_EXHAUSTED|quota|\brate limit|rate.?exceeded/i.test(m);
+/** Account-level refusal (bad key, project denied). Waiting never fixes it. */
+const isGeminiAccountError = (m: string) => /PERMISSION_DENIED|denied access|API key not valid|invalid authentication/i.test(m);
 
 async function geminiWithFallback(spec: string, system: string, prompt: string, maxTokens: number, images?: string[], timeoutMs = LLM_TIMEOUT_HEAVY, thinkBudget?: number): Promise<string> {
   const chain = spec.split(",").map((m) => m.trim()).filter(Boolean);
@@ -439,6 +457,13 @@ async function geminiWithFallback(spec: string, system: string, prompt: string, 
       } catch (e) {
         last = e as Error;
         const m = last.message;
+        // An account error is not something to retry across models or wait out — surface it at once,
+        // ahead of overload/quota so a URL substring can never mask it.
+        if (isGeminiAccountError(m)) {
+          throw new Error(`Gemini refused this project/key: ${m.slice(0, 160)}\n` +
+            `FIX: check GEMINI_API_KEY at aistudio.google.com. A NEW project sometimes needs the ` +
+            `Generative Language API enabled, or a minute after key creation. This is not a quota issue.`);
+        }
         if (!isOverload(m) && !isQuotaMsg(m)) throw last;
         if (!isOverload(m)) allOverloaded = false;
         geminiDown.add(model);
@@ -490,21 +515,27 @@ export async function askJson<T>(o: {
       const routed = o.role && o.role !== "auto" ? ROLE_PROVIDER[o.role] : "";
       // The role names a preference, not the only option: every other configured provider is tried
       // before falling back to Gemini, because each free tier runs out in a different way.
-      // A call carrying images can only go to a provider that can see. Of the free providers here
-      // that is Gemini alone, so a vision call is never routed away from it.
+      // A call carrying images can only go to a provider with a VISION model. When one is configured
+      // (e.g. Groq's free Qwen-VL as LLM_ROLE_VISION), a vision call may route to it; otherwise it
+      // stays with Gemini. Text calls route as before.
       const needsSight = (o.images?.length ?? 0) > 0 || o.role === "vision";
-      const order = routed && routed !== "gemini" && !needsSight
+      const orderAll = routed && routed !== "gemini"
         ? [routed, ...Object.keys(NAMED).filter((n) => n !== routed)]
         : [];
+      const order = needsSight ? orderAll.filter((n) => NAMED[n]?.vision) : orderAll;
       const live = order.filter((n) => NAMED[n]?.key && !deadProviders.has(n));
       const named = live.length ? NAMED[live[0]!] : undefined;
       const namedName = live[0] ?? routed;
-      if (named?.key) {
-        const m = o.tier === "heavy" ? named.heavy : named.light;
+      // A vision call may only go to a named provider that HAS a vision model; otherwise the images
+      // would be dropped and a blind model would "rank" a sheet it never saw.
+      const needsSightNamed = (o.images?.length ?? 0) > 0 || o.role === "vision";
+      const usableNamed = needsSightNamed ? (named?.vision ? named : undefined) : named;
+      if (usableNamed?.key) {
+        const m = needsSightNamed ? usableNamed.vision! : (o.tier === "heavy" ? usableNamed.heavy : usableNamed.light);
         console.log(`    [llm] ${o.role} -> ${namedName} (${m})`);
         try {
           const out = await openaiCompatible(m, o.system, body, Math.min(budget, o.maxTokens ?? 16000),
-            o.images, timeoutFor(o.tier), named.baseUrl, named.key);
+            o.images, timeoutFor(o.tier), usableNamed.baseUrl, usableNamed.key);
           try { raw = extractJson(out); } catch (e) { raw = undefined; lastErr = (e as Error).message; }
           const lastChance = attempt === 3 && o.role !== "write";
           if (raw === undefined && lastChance) {
@@ -543,6 +574,7 @@ export async function askJson<T>(o: {
           }
           // A routed provider failing is not fatal: fall through to the default path below.
           const msg = (err as Error).message;
+          void named;
           if (isAuthError(msg)) {
             deadProviders.add(namedName);
             console.warn(`    [llm] ${namedName} DISABLED for the rest of this run — its key was refused.`);
@@ -598,16 +630,22 @@ export async function askJson<T>(o: {
             // A call carrying images must never go to a model that cannot see them: the images
             // were silently dropped and a blind model "ranked" a contact sheet it never saw.
             const seesImages = process.env.OPENAI_COMPAT_VISION === "true";
-            if ((o.images?.length ?? 0) > 0 && !seesImages) throw e;
+            const anyVisionFallback = chain.some((fb) => NAMED[fb.name]?.vision);
+            if ((o.images?.length ?? 0) > 0 && !seesImages && !anyVisionFallback) throw e;
             // Walk the whole chain: each provider has its own free-tier limit, so one being
             // exhausted says nothing about the next.
             const failures: string[] = [];
+            const needImages = (o.images?.length ?? 0) > 0;
             for (const fb of chain) {
-              const model = o.tier === "heavy" ? fb.heavy : fb.light;
+              // Vision for this fallback: a named provider's own vision model, or the legacy
+              // OPENAI_COMPAT_VISION flag which trusts the configured compat model to see.
+              const nv = fb.vision ?? NAMED[fb.name]?.vision ?? (fb.name === "openai-compat" && seesImages ? (o.tier === "heavy" ? fb.heavy : fb.light) : undefined);
+              if (needImages && !nv) continue; // this fallback cannot see; skip rather than send blind
+              const model = needImages ? nv! : (o.tier === "heavy" ? fb.heavy : fb.light);
               try {
                 console.warn(`    [llm] Gemini unavailable — trying ${fb.name} (${model})`);
                 return await openaiCompatible(model, o.system, body, Math.min(budget, o.maxTokens ?? 16000),
-                  seesImages ? o.images : undefined, timeoutFor(o.tier), fb.baseUrl, fb.apiKey);
+                  needImages ? o.images : (seesImages ? o.images : undefined), timeoutFor(o.tier), fb.baseUrl, fb.apiKey);
               } catch (err) {
                 const m = (err as Error).message;
                 failures.push(`${fb.name}: ${m.slice(0, 80)}`);

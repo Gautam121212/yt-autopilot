@@ -732,3 +732,34 @@ When Gemini is unavailable:
 
 Both pauses wait 3 hours before retrying, and a waiting video holds the queue so no second video is
 started that would also need Gemini to review it.
+
+## Producing through a Gemini outage
+
+Two independent protections now keep the channel running when Gemini (the vision model) is down:
+
+**Find the vision slug your key serves** (they differ by account and change over time):
+```bash
+npm run vision:probe        # tries the known Groq / Z.ai vision models, writes the working one to .env
+```
+
+**A second vision provider.** Groq serves a free Llama-4 vision model. Set it and footage
+selection uses it when Gemini is overloaded:
+```bash
+GROQ_API_KEY=...          # console.groq.com
+LLM_ROLE_VISION=groq      # or leave on gemini; Groq is tried automatically as a fallback
+```
+
+**Build anyway, held for approval.** With `visionOptional: true` in `config/channel.json`, if vision
+is down for a scene the pipeline takes the stock libraries' OWN top-ranked footage (they already rank
+by relevance) and builds the video — but it is always HELD for your approval, never auto-published.
+Default is `false` (pause and re-judge later, for the best footage). Turn it on if you would rather
+have a good-enough video today than the best video after the outage passes.
+
+## Changing your topics
+
+```bash
+node scripts/set-topics.mjs   # edit the TOPICS list inside first
+npm run github
+```
+The file validates ids, enforces at least two search phrases per lane, and has the picker's rules
+written in. The next run draws from the new list.
