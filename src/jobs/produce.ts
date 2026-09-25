@@ -23,7 +23,7 @@ import { pickSlot } from "../stages/schedule";
 import { ensureIllustratable, MIN_FEASIBLE, MIN_TOPIC_VISUAL, probeTopicVisuals } from "../stages/feasibility";
 import { forecast } from "../stages/forecast";
 import { expandScript, punchUp, repairScript, reviseScript, stripUnsourced, writeScript } from "../stages/script";
-import { makeThumbnail, safeThumbnailText } from "../stages/thumbnail";
+import { bestFrameFrom, makeThumbnail, safeThumbnailText } from "../stages/thumbnail";
 import { pickTopic } from "../stages/topic";
 import { verify } from "../stages/verify";
 import { sceneQa, SCENE_BAR } from "../stages/scene-qa";
@@ -247,6 +247,16 @@ async function main() {
    * copied to work/pending/, which the workflow uploads as an artifact; the next run downloads it
    * by the run id stored here and continues from the final check.
    */
+  /**
+   * Distinguishes "the vision provider is down" (defer, resume later) from "our code broke" (surface
+   * it). Deferring a code bug is what made the final check appear to wait for Gemini forever.
+   */
+  const isVisionOutage = (e: unknown): boolean => {
+    const m = (e as Error)?.message ?? String(e);
+    if (/ENOENT|no such file|not a function|undefined is not|cannot read propert|JSON|Unexpected token/i.test(m)) return false;
+    return /overload|unavailable|quota|rate.?limit|refused this project|PERMISSION_DENIED|\b40[13]\b|\b429\b|\b503\b|timeout|timed out|ECONN|fetch failed|every configured|all configured providers/i.test(m);
+  };
+
   const savePendingRender = async (p: {
     reason: string; videoPath: string; srtPath: string; thumbPath: string; shortOut?: { videoPath: string; srtPath: string };
     timings: SceneTiming[]; allCredits: ImageCredit[]; shortCredits: ImageCredit[]; description: string; predicted: number | string;
@@ -255,7 +265,14 @@ async function main() {
     await fs.mkdir(pendingDir, { recursive: true });
     await fs.copyFile(p.videoPath, path.join(pendingDir, "video.mp4"));
     await fs.copyFile(p.srtPath, path.join(pendingDir, "captions.srt"));
-    await fs.copyFile(p.thumbPath, path.join(pendingDir, "thumbnail.jpg")).catch(() => {});
+    const savedThumb = path.join(pendingDir, "thumbnail.jpg");
+    const copied = await fs.copyFile(p.thumbPath, savedThumb).then(() => true, () => false);
+    if (!copied) {
+      // The thumbnail wasn't ready when we saved — cut one from the video itself so resume never
+      // hits a missing file. This is the bug that made every resume "wait for Gemini".
+      const frame = await bestFrameFrom(p.videoPath, pendingDir).catch(() => null);
+      if (frame) await fs.copyFile(frame, savedThumb).catch(() => {});
+    }
     if (p.shortOut) {
       await fs.copyFile(p.shortOut.videoPath, path.join(pendingDir, "short.mp4"));
       await fs.copyFile(p.shortOut.srtPath, path.join(pendingDir, "short.srt"));
@@ -483,11 +500,20 @@ async function main() {
       }
       log(`#${video.id} resuming at the final check with the render saved by run ${pend!.runId}`);
       const shortOut = pend!.hasShort ? { videoPath: file("short.mp4"), srtPath: file("short.srt") } : undefined;
-      const thumbPath = file("thumbnail.jpg");
+      let thumbPath = file("thumbnail.jpg");
+      if (!existsSync(thumbPath)) {
+        const frame = await bestFrameFrom(vp, restored).catch(() => null);
+        if (frame) thumbPath = frame;
+        // copy it to where finalReview expects it, so its thumbnail score has an image to look at
+        if (frame) await fs.copyFile(frame, path.join(restored, "thumbnail.jpg")).catch(() => {});
+      }
       let unavailable: string | null = null;
       const review = await finalReview({ dir: restored, script: video.script!, verification: video.verification!,
         description: pend!.description, videoPath: vp, shortPath: shortOut?.videoPath, credits: saved?.images ?? [] })
-        .catch((e) => { unavailable = (e as Error).message.slice(0, 200); return unreviewed(unavailable); });
+        .catch((e) => {
+          if (!isVisionOutage(e)) throw e; // a code bug must not masquerade as "vision unavailable"
+          unavailable = (e as Error).message.slice(0, 200); return unreviewed(unavailable);
+        });
       if (unavailable) {
         // Still down: save again under THIS run, so the artifact never ages out while we wait.
         await savePendingRender({ reason: unavailable, videoPath: vp, srtPath: file("captions.srt"), thumbPath, shortOut,
@@ -689,6 +715,7 @@ async function main() {
       let reviewUnavailable: string | null = null;
       let review = await finalReview({ dir, script, verification: video.verification!, description, videoPath, shortPath: shortOut?.videoPath, credits: long.credits })
         .catch(async (e) => {
+          if (!isVisionOutage(e)) throw e;
           reviewUnavailable = (e as Error).message.slice(0, 200);
           return unreviewed(reviewUnavailable);
         });
@@ -759,7 +786,10 @@ async function main() {
           dir, used, stillFallback, rendered.videoPath).catch(() => thumbPath);
         description = buildDescription(script, script.scenes, rendered.timings, video.dossier!, allCredits);
         review = await finalReview({ dir, script, verification: video.verification!, description, videoPath: rendered.videoPath, shortPath: shortOut?.videoPath, credits: long.credits })
-          .catch(async (e) => { reviewUnavailable = (e as Error).message.slice(0, 200); return unreviewed(reviewUnavailable); });
+          .catch(async (e) => {
+            if (!isVisionOutage(e)) throw e;
+            reviewUnavailable = (e as Error).message.slice(0, 200); return unreviewed(reviewUnavailable);
+          });
         // Gemini went down DURING a repair: keep the repaired render and resume at the check, rather
         // than letting "could not judge" fall through to the reject path.
         if (reviewUnavailable) break;

@@ -66,7 +66,11 @@ export async function finalReview(o: {
 
   const vision = providerSupportsVision();
   // A hold is a hold: a blocker can never be outvoted by a high average.
-  const images = [path.join(o.dir, "thumbnail.jpg"), path.join(o.dir, "contact-long.jpg"), ...(o.shortPath ? [path.join(o.dir, "contact-short.jpg")] : [])];
+  const wanted = [path.join(o.dir, "thumbnail.jpg"), path.join(o.dir, "contact-long.jpg"), ...(o.shortPath ? [path.join(o.dir, "contact-short.jpg")] : [])];
+  // Only include images that exist — a resumed render may not have saved the thumbnail, and a missing
+  // file must degrade the review, never crash it (which the caller wrongly reads as "vision down").
+  const images: string[] = [];
+  for (const f of wanted) { try { await fs.stat(f); images.push(f); } catch { /* skip missing */ } }
   return askJson({
     tier: "heavy",
     role: "vision",

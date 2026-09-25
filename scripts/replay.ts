@@ -472,6 +472,36 @@ console.log("\nScenario 6 — an image-bearing call whose role is routed to a te
   check(!/out of quota|midnight Pacific/.test(msg), "#83 a 403 is NOT reported as a quota/overload problem");
 }
 
+// ── Scenario 35: a missing thumbnail on resume must NOT be misread as "Gemini down". ──
+{
+  console.log("\nScenario 35 — final review with a missing thumbnail file");
+  const fs6 = await import("node:fs"); const path6 = await import("node:path"); const { execFileSync } = await import("node:child_process");
+  const dir = fs6.mkdtempSync("/tmp/replay-fr-");
+  // a real video, but NO thumbnail.jpg — the exact state a resumed render was in
+  const vp = path6.join(dir, "video.mp4");
+  execFileSync("ffmpeg", ["-v","error","-y","-f","lavfi","-i","testsrc2=size=320x180:d=2","-c:v","libx264","-pix_fmt","yuv420p",vp]);
+  process.env.LLM_ROLE_VISION = "groq"; process.env.GROQ_API_KEY = "gk"; process.env.GROQ_MODEL_VISION = "vm";
+  process.env.VISION_MIN_GAP_MS = "0"; process.env.GEMINI_MIN_GAP_MS = "0";
+  const { finalReview } = await import(`../src/stages/review.ts?fr=${Date.now()}`) as typeof import("../src/stages/review");
+  let sawImageCount = -1;
+  const saved = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    if (String(url).includes("groq")) {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      sawImageCount = (body.messages?.[body.messages.length - 1]?.content ?? []).filter?.((c: {type?:string}) => c.type === "image_url").length ?? 0;
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ decision: "publish", overall: 8, scores: { hook: 8, clarity: 8, visualsMatch: 8, thumbnail: 7, packaging: 8 }, issues: [], noteForOwner: "ok" }) }, finish_reason: "stop" }] }), { status: 200 });
+    }
+    return new Response("{}", { status: 500 });
+  }) as typeof fetch;
+  const r = await finalReview({ dir, script: { thumbnailText: "T", scenes: [] } as never, verification: {} as never, description: "d", videoPath: vp, credits: [] })
+    .then((x) => ({ ok: true, x }), (e) => ({ ok: false, e: (e as Error).message }));
+  globalThis.fetch = saved;
+  for (const k of ["LLM_ROLE_VISION","GROQ_API_KEY","GROQ_MODEL_VISION","VISION_MIN_GAP_MS","GEMINI_MIN_GAP_MS"]) delete process.env[k];
+  check(r.ok, "#94 a missing thumbnail does not crash the final review", r.ok ? "" : (r as {e:string}).e.slice(0, 60));
+  check(sawImageCount >= 1, "#94 the review still runs on the frames that DO exist (contact sheet from the video)", `${sawImageCount} image(s) sent`);
+  fs6.rmSync(dir, { recursive: true, force: true });
+}
+
 // ── Scenario 34: a per-minute rate limit is waited out, not treated as vision-down. ──
 {
   console.log("\nScenario 34 — Groq hits its per-minute token limit, then recovers");
