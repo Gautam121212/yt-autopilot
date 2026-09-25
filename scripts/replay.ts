@@ -472,6 +472,33 @@ console.log("\nScenario 6 — an image-bearing call whose role is routed to a te
   check(!/out of quota|midnight Pacific/.test(msg), "#83 a 403 is NOT reported as a quota/overload problem");
 }
 
+// ── Scenario 34: a per-minute rate limit is waited out, not treated as vision-down. ──
+{
+  console.log("\nScenario 34 — Groq hits its per-minute token limit, then recovers");
+  process.env.LLM_ROLE_VISION = "groq"; process.env.GROQ_API_KEY = "gk"; process.env.GROQ_MODEL_VISION = "vm";
+  process.env.VISION_MIN_GAP_MS = "0"; process.env.RATE_WAIT_MS = "50"; process.env.GEMINI_MIN_GAP_MS = "0";
+  const llm34 = await import(`../src/lib/llm.ts?rl=${Date.now()}`) as typeof import("../src/lib/llm");
+  let call = 0;
+  const saved = globalThis.fetch;
+  const fs5 = await import("node:fs"); const os5 = await import("node:os"); const p5 = await import("node:path");
+  const img = p5.join(os5.tmpdir(), "rl.jpg");
+  const { execFileSync } = await import("node:child_process");
+  execFileSync("ffmpeg", ["-v","error","-y","-f","lavfi","-i","color=c=blue:s=64x64","-frames:v","1",img]);
+  globalThis.fetch = (async (url: string) => {
+    if (String(url).includes("groq")) {
+      call++;
+      if (call === 1) return new Response(JSON.stringify({ error: { message: "Rate limit reached: tokens per minute (TPM). retry-after: 1", code: 429 } }), { status: 429 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":true}' }, finish_reason: "stop" }] }), { status: 200 });
+    }
+    return new Response("{}", { status: 500 });
+  }) as typeof fetch;
+  const z34 = (await import("zod")).z;
+  const ok34 = await llm34.askJson({ tier: "light", role: "vision", schema: z34.object({ ok: z34.boolean() }), system: "s", prompt: "p", images: [img] }).then(() => true, () => false);
+  globalThis.fetch = saved;
+  for (const k of ["GROQ_API_KEY","GROQ_MODEL_VISION","VISION_MIN_GAP_MS","RATE_WAIT_MS","GEMINI_MIN_GAP_MS","LLM_ROLE_VISION"]) delete process.env[k];
+  check(ok34 && call === 2, "#92 a per-minute limit is waited out and the SAME provider retried, not abandoned", `${call} groq call(s), ok=${ok34}`);
+}
+
 // ── Scenario 32: Groq is reached as a vision fallback even when LLM_ROLE_VISION is unset. ──
 {
   console.log("\nScenario 32 — role unset (Gemini), Gemini down, Groq picks up the vision call");

@@ -7,6 +7,7 @@
  */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import type { z } from "zod";
@@ -88,8 +89,8 @@ const NAMED: Record<string, { baseUrl: string; key: string; heavy: string; light
     key: process.env.OPENROUTER_API_KEY || "",
     // OpenRouter carries several FREE vision models (one key, OpenAI-compatible). `npm run vision:probe`
     // confirms which your key serves. This is the second free vision provider after Groq.
-    heavy: process.env.OPENROUTER_MODEL_HEAVY || "z-ai/glm-4.5-air:free",
-    light: process.env.OPENROUTER_MODEL_LIGHT || "z-ai/glm-4.5-air:free",
+    heavy: process.env.OPENROUTER_MODEL_HEAVY || "",
+    light: process.env.OPENROUTER_MODEL_LIGHT || "",
     vision: process.env.OPENROUTER_MODEL_VISION || "google/gemma-3-4b-it:free",
   },
 };
@@ -134,6 +135,8 @@ export type CallOpts = {
 
 /** claude-code can search the live web; the Gemini free path cannot (grounding + JSON output conflict). */
 export class QuotaError extends Error {}
+/** A transient per-minute rate/token limit. Carries how long to wait; the caller retries. */
+export class RateLimitError extends Error { constructor(msg: string, public waitMs: number) { super(msg); } }
 
 /** A key that was refused (401/403) will be refused again; stop calling it for this run. */
 const deadProviders = new Set<string>();
@@ -317,8 +320,20 @@ async function openaiCompatible(
   if (!base) throw new Error("Set OPENAI_COMPAT_BASE_URL (e.g. https://api.groq.com/openai/v1)");
   const content: unknown[] = [];
   for (const f of images ?? []) {
-    const mime = f.endsWith(".png") ? "image/png" : f.endsWith(".webp") ? "image/webp" : "image/jpeg";
-    content.push({ type: "image_url", image_url: { url: `data:${mime};base64,${(await fs.promises.readFile(f)).toString("base64")}` } });
+    // Downscale before sending: Groq counts image INPUT tokens against a small per-minute budget, and
+    // a full contact sheet exhausts it in 2-3 calls. A 768px sheet is still legible to the model.
+    let toSend = f;
+    const maxW = Number(process.env.VISION_IMAGE_MAX_W ?? 768);
+    try {
+      const small = f.replace(/\.(jpg|jpeg|png|webp)$/i, ".vis.jpg");
+      await new Promise<void>((res, rej) => {
+        execFile("ffmpeg", ["-y", "-v", "error", "-i", f, "-vf", `scale='min(${maxW},iw)':-2`, "-q:v", "6", small],
+          { timeout: 20000 }, (err) => (err ? rej(err) : res()));
+      });
+      if (await fs.promises.stat(small).then((x) => x.size > 500, () => false)) toSend = small;
+    } catch { /* fall back to the original */ }
+    const mime = toSend.endsWith(".png") ? "image/png" : toSend.endsWith(".webp") ? "image/webp" : "image/jpeg";
+    content.push({ type: "image_url", image_url: { url: `data:${mime};base64,${(await fs.promises.readFile(toSend)).toString("base64")}` } });
   }
   content.push({ type: "text", text: prompt });
   const res = await withRetry(() => fetchOk(`${base}/chat/completions`, {
@@ -341,10 +356,13 @@ async function openaiCompatible(
       throw new QuotaError(`${model} has no credit left on this account.\n` +
         `Run \`npm run models:backup\` to switch to a free (":free") model, or top up the provider.\n${e.message.slice(0, 200)}`);
     }
-    if (/Request too large|enforced limit|tokens per minute|OTPM/i.test(e.message)) {
-      throw new QuotaError(`${model} rejected the request: this provider's free tier caps output tokens per minute, ` +
-        `which is too small for a full script.\nEither lower OPENAI_COMPAT_MAX_TOKENS for light tasks only, ` +
-        `or use a provider with per-day rather than per-minute output limits (see SETUP.md "Backup provider").\n${e.message.slice(0, 200)}`);
+    // Per-minute token/request limit: retryable. Wait the Retry-After (or a default) and try again,
+    // rather than failing the scene. This is what made every 2nd-3rd vision call fall through to a
+    // dead Gemini and log a scary 403.
+    const retryAfter = /retry.?after["':\s]+(\d+)/i.exec(e.message)?.[1];
+    if (/\b429\b|Request too large|enforced limit|tokens per minute|rate limit|TPM|RPM|OTPM|ITPM/i.test(e.message)) {
+      const waitMs = Math.min(30000, (retryAfter ? Number(retryAfter) : Number(process.env.RATE_WAIT_MS ?? 8000) / 1000) * 1000);
+      throw new RateLimitError(`${model} hit a per-minute limit; wait ${Math.round(waitMs / 1000)}s`, waitMs);
     }
     throw e;
   });
@@ -496,6 +514,10 @@ export async function askJson<T>(o: {
   delete jsonSchema.$schema;
   let feedback = "";
   let lastErr = "";
+  // Vision calls are paced: Groq's free per-minute token budget is small, and firing 13 sheets in a
+  // row exhausts it. A short gap between image calls keeps every scene judged by the real model.
+  if ((o.images?.length ?? 0) > 0) await paceFor("vision-calls", Number(process.env.VISION_MIN_GAP_MS ?? 6000));
+
   for (let attempt = 1; attempt <= 3; attempt++) {
     console.log(`    [llm] ${o.tier} call${attempt > 1 ? ` (attempt ${attempt})` : ""}${o.web ? " +web" : ""}${o.images?.length ? " +images" : ""}`);
     let raw: unknown;
@@ -572,6 +594,11 @@ export async function askJson<T>(o: {
               `whole object fits. Narration must NOT be shortened.`;
             continue;
           }
+          if (err instanceof RateLimitError && attempt < 3) {
+            console.warn(`    [llm] ${namedName} rate-limited; waiting ${Math.round(err.waitMs / 1000)}s and retrying it`);
+            await new Promise((r) => setTimeout(r, err.waitMs));
+            continue;
+          }
           // A routed provider failing is not fatal: fall through to the default path below.
           const msg = (err as Error).message;
           void named;
@@ -637,6 +664,9 @@ export async function askJson<T>(o: {
             const failures: string[] = [];
             const needImages = (o.images?.length ?? 0) > 0;
             for (const fb of chain) {
+              // Skip a provider with no usable model for THIS call: an empty text model, or an image
+              // call where the provider has no vision model. Prevents a dead ":free" slug 401-ing.
+              if (!needImages && !(o.tier === "heavy" ? fb.heavy : fb.light)) continue;
               // Vision for this fallback: a named provider's own vision model, or the legacy
               // OPENAI_COMPAT_VISION flag which trusts the configured compat model to see.
               const nv = fb.vision ?? NAMED[fb.name]?.vision ?? (fb.name === "openai-compat" && seesImages ? (o.tier === "heavy" ? fb.heavy : fb.light) : undefined);
