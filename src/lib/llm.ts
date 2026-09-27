@@ -306,7 +306,7 @@ async function paceFor(endpoint: string, minGapMs = Number(process.env.PROVIDER_
 
 async function openaiCompatible(
   model: string, system: string, prompt: string, maxTokens: number, images?: string[],
-  timeoutMs = LLM_TIMEOUT_HEAVY, baseUrl?: string, apiKey?: string,
+  timeoutMs = LLM_TIMEOUT_HEAVY, baseUrl?: string, apiKey?: string, visionCap?: number,
 ): Promise<string> {
   const base = (baseUrl ?? process.env.OPENAI_COMPAT_BASE_URL ?? "").replace(/\/$/, "");
   await paceFor(base);
@@ -316,7 +316,9 @@ async function openaiCompatible(
   maxTokens = Math.min(maxTokens, cap);
   // An image call is a short ranking/verdict, not a script; reserving thousands of output tokens is
   // what made Groq reject vision calls ("tokens per minute" limit). 1000 is ample for the JSON.
-  if ((images?.length ?? 0) > 0) maxTokens = Math.min(maxTokens, Number(process.env.VISION_MAX_TOKENS ?? 1000));
+  // A caller that needs a longer answer from an image call (the final check's visual verdict) passes
+  // its own ceiling; everything else keeps the small default.
+  if ((images?.length ?? 0) > 0) maxTokens = Math.min(maxTokens, visionCap ?? Number(process.env.VISION_MAX_TOKENS ?? 1000));
   if (!base) throw new Error("Set OPENAI_COMPAT_BASE_URL (e.g. https://api.groq.com/openai/v1)");
   const content: unknown[] = [];
   for (const f of images ?? []) {
@@ -509,6 +511,8 @@ export async function askJson<T>(o: {
   prompt: string;
   schema: z.ZodType<T, z.ZodTypeDef, unknown>;
   maxTokens?: number;
+  /** output ceiling for an image call on an OpenAI-compatible provider (default VISION_MAX_TOKENS) */
+  visionMaxTokens?: number;
 } & CallOpts): Promise<T> {
   const jsonSchema = zodToJsonSchema(o.schema, { $refStrategy: "none", target: "jsonSchema7" }) as Record<string, unknown>;
   delete jsonSchema.$schema;
@@ -557,7 +561,7 @@ export async function askJson<T>(o: {
         console.log(`    [llm] ${o.role} -> ${namedName} (${m})`);
         try {
           const out = await openaiCompatible(m, o.system, body, Math.min(budget, o.maxTokens ?? 16000),
-            o.images, timeoutFor(o.tier), usableNamed.baseUrl, usableNamed.key);
+            o.images, timeoutFor(o.tier), usableNamed.baseUrl, usableNamed.key, o.visionMaxTokens);
           try { raw = extractJson(out); } catch (e) { raw = undefined; lastErr = (e as Error).message; }
           const lastChance = attempt === 3 && o.role !== "write";
           if (raw === undefined && lastChance) {
@@ -619,7 +623,7 @@ export async function askJson<T>(o: {
             try {
               console.warn(`    [llm] trying ${nextName} (${nm})`);
               const out2 = await openaiCompatible(nm, o.system, body, Math.min(budget, o.maxTokens ?? 16000),
-                o.images, timeoutFor(o.tier), next.baseUrl, next.key);
+                o.images, timeoutFor(o.tier), next.baseUrl, next.key, o.visionMaxTokens);
               const raw2 = extractJson(out2);
               const parsed2 = o.schema.safeParse(raw2);
               if (parsed2.success) return parsed2.data;
@@ -635,10 +639,28 @@ export async function askJson<T>(o: {
             throw new Error(`every configured writing provider failed (${lastErr.slice(0, 160)}). ` +
               `Not falling back to Gemini: its output cap cannot hold a full script.`);
           }
+          // A vision call (final review, per-scene image QA) must not fall back to Gemini either:
+          // the Gemini project has repeatedly been denied/quota-limited on this account, which is
+          // exactly what wedges the final check. Groq's Qwen-VL is the configured vision provider;
+          // let it retry next run rather than routing back to the provider we're trying to avoid.
+          if (o.role === "vision" || (o.images?.length ?? 0) > 0) {
+            throw new Error(`every configured vision provider failed (${lastErr.slice(0, 160)}). ` +
+              `Not falling back to Gemini for the final check.`);
+          }
           console.warn(`    [llm] all configured providers failed; using ${PROVIDER}`);
         }
       }
 
+      // A vision call must never reach the default PROVIDER path when that provider is Gemini:
+      // the whole point of routing vision to Groq is to keep the final check off Gemini. If no
+      // named vision provider was usable above, stop with a clear error rather than silently
+      // sending the images to Gemini.
+      if ((o.role === "vision" || (o.images?.length ?? 0) > 0) && PROVIDER === "gemini") {
+        throw new Error(
+          `no non-Gemini vision provider is available for this ${o.role ?? "image"} call. ` +
+          `Set LLM_ROLE_VISION=groq (or openrouter) and make sure that provider's API key and vision model are configured.`,
+        );
+      }
       const text = PROVIDER === "anthropic" ? await anthropic(model, o.system, body, o.maxTokens ?? 32000)
         : PROVIDER === "openai-compatible" ? await openaiCompatible(model, o.system, body, o.maxTokens ?? 16000, o.images, timeoutFor(o.tier))
         : await geminiWithFallback(model, o.system, body, budget, o.images, timeoutFor(o.tier),
@@ -675,7 +697,7 @@ export async function askJson<T>(o: {
               try {
                 console.warn(`    [llm] Gemini unavailable — trying ${fb.name} (${model})`);
                 return await openaiCompatible(model, o.system, body, Math.min(budget, o.maxTokens ?? 16000),
-                  needImages ? o.images : (seesImages ? o.images : undefined), timeoutFor(o.tier), fb.baseUrl, fb.apiKey);
+                  needImages ? o.images : (seesImages ? o.images : undefined), timeoutFor(o.tier), fb.baseUrl, fb.apiKey, o.visionMaxTokens);
               } catch (err) {
                 const m = (err as Error).message;
                 failures.push(`${fb.name}: ${m.slice(0, 80)}`);

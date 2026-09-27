@@ -32,6 +32,13 @@ import type { ImageCredit } from "./visuals";
 export const SCENE_BAR = Number(process.env.SCENE_BAR ?? 7.5);
 /** A second or third cut in a scene may be a little weaker than its lead shot, but not unrelated. */
 const SUPPORT_BAR = Number(process.env.SCENE_SUPPORT_BAR ?? 6);
+/**
+ * A scene is cut into ~3 shots. With one picture, the renderer showed that SAME picture in every shot
+ * (the truck three times in a row, 27 Sep). A related-but-generic second angle (5+) is better than a
+ * visible repeat, so the scene is topped up to SHOTS_WANTED distinct pictures from the ranked list.
+ */
+const FILL_BAR = Number(process.env.SCENE_FILL_BAR ?? 5);
+const SHOTS_WANTED = 3;
 const SHEET_SIZE = 9;
 /**
  * Vision calls this stage may spend per run. The final check also needs vision, so selection must
@@ -47,7 +54,7 @@ const Pick = z.object({
     n: z.coerce.number().int().min(1),
     score: z.coerce.number().min(0).max(10),
     why: z.string(),
-  })).min(1).max(3),
+  })).min(1).max(5),
   // Only needed when nothing clears the bar; models sometimes send a string or omit it.
   suggestQueries: z.preprocess((x) => (Array.isArray(x) ? x : typeof x === "string" ? [x] : []), z.array(z.string())).default([]),
 });
@@ -97,16 +104,28 @@ You are shown a numbered contact sheet (▶ marks a video clip) and ONE line of 
 never shows the exact historical moment; nobody expects it to. Your question is the one every editor
 asks: would I cut this shot under this line, and would it hold the viewer's attention there?
 
-Score each shot you rank:
+HARD BLOCKS — score 0 no matter how nice the shot looks, and never rank it:
+ - a visible logo, wordmark, insignia, brand livery, or storefront brand (e.g. a beer brand on a
+   window, a logoed shirt as the subject) — this is off-brand and a publish blocker downstream;
+ - a protest, rally, march or demonstration; a placard, picket sign, banner or flag carried as a
+   message; any political, activist or campaign slogan; a national/religious symbol used as a
+   message (e.g. a "FREE PALESTINE" banner, a political flag being waved) — off-brand on EVERY
+   topic, even one where the line mentions protest, unless the scene's ERA and narration explicitly
+   name that exact event and it is the only way to illustrate it;
+ - a recognisable identifiable person as the SUBJECT of the shot (hands working or a distant crowd
+   are fine);
+ - full-frame text, charts, diagrams, screenshots, memes or clip-art / illustration.
+
+Score the rest:
  9-10  shows the actual subject, place or process the line describes
  7-8   strong B-roll: clearly the right subject, material, setting or kind of action — a viewer
        feels it belongs, even though it is not that specific event
  5-6   loosely related or generic; it fills the screen but adds nothing
- 0-4   wrong subject; wrong era (modern tech, cars or clothing in a period story); a recognisable
-       person as the subject; text, logos, watermarks, charts or diagrams; clip-art or illustration
+ 0-4   wrong subject; wrong era (modern tech, cars or clothing in a period story)
 
 Prefer a moving clip (▶) over a still when the line describes motion or process.
-Rank your best THREE, best first. If none reaches 7, also suggest two stock-library searches
+Rank your best FIVE (fewer if the sheet has fewer), best first, each a DIFFERENT shot — the scene is cut
+into several shots and needs several pictures. Keep each "why" under 12 words. If none reaches 7, also suggest two stock-library searches
 (2-4 words, concrete and filmable) that would find better footage for this line.`;
 
 async function choose(scene: Scene, cands: Candidate[], dir: string, videoId: number, tag: string, portrait = false) {
@@ -122,7 +141,7 @@ async function choose(scene: Scene, cands: Candidate[], dir: string, videoId: nu
     system: EDITOR,
     prompt: `NARRATION: ${scene.narration}\nERA: ${scene.era ?? "any"}\n` +
       `The sheet has ${cs.order.length} numbered shots. Return JSON: ` +
-      `{ "ranking": [{ "n", "score", "why" }] (best 3), "suggestQueries": [2 searches, only if none reaches 7] }`,
+      `{ "ranking": [{ "n", "score", "why" }] (best 5), "suggestQueries": [2 searches, only if none reaches 7] }`,
   }).catch(async (e) => {
     // Out of vision quota: stop asking for the rest of the run. Every further call would fail the
     // same way, and each one would count a perfectly good scene as a failure.
@@ -251,8 +270,17 @@ export async function sceneQa(o: {
       continue;
     }
 
-    // Download the lead and up to two supporting cuts that also clear the support bar.
-    const chosen = best.filter((b, k) => k === 0 || b.score >= SUPPORT_BAR);
+    // A "clip" scene leads with moving footage when a clip scored within a point of the best still.
+    if (wantVideo && best[0]?.c.kind === "photo") {
+      const v = best.findIndex((b) => b.c.kind === "video" && b.score >= SUPPORT_BAR && b.score >= best[0]!.score - 1);
+      if (v > 0) best = [best[v]!, ...best.filter((_, k) => k !== v)];
+    }
+    // Download the lead and supporting cuts that clear the support bar; if that leaves the scene short
+    // of distinct pictures, top it up with ranked shots down to FILL_BAR rather than repeat one.
+    const distinct = best.filter((b, k) => best.findIndex((x) => x.c.key === b.c.key) === k);
+    const strong = distinct.filter((b, k) => k === 0 || b.score >= SUPPORT_BAR).slice(0, SHOTS_WANTED);
+    const filler = distinct.filter((b) => !strong.includes(b) && b.score >= FILL_BAR);
+    const chosen = [...strong, ...filler].slice(0, SHOTS_WANTED);
     const got: string[] = [];
     for (const [k, b] of chosen.entries()) {
       const file = path.join(o.dir, `sel-${String(i).padStart(3, "0")}-${k}.${b.c.kind === "video" ? "mp4" : "jpg"}`);
