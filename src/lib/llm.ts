@@ -361,9 +361,14 @@ async function openaiCompatible(
     // Per-minute token/request limit: retryable. Wait the Retry-After (or a default) and try again,
     // rather than failing the scene. This is what made every 2nd-3rd vision call fall through to a
     // dead Gemini and log a scary 403.
+    // The cap must outlast a per-minute window: capping at 30s meant three retries of 8s each
+    // (24s total) never survived Groq's 60-second reset, so the final check kept giving up before
+    // the budget refilled — see the 27 Sep 18:44 UTC "waiting 8s" x3 log on #14.
     const retryAfter = /retry.?after["':\s]+(\d+)/i.exec(e.message)?.[1];
     if (/\b429\b|Request too large|enforced limit|tokens per minute|rate limit|TPM|RPM|OTPM|ITPM/i.test(e.message)) {
-      const waitMs = Math.min(30000, (retryAfter ? Number(retryAfter) : Number(process.env.RATE_WAIT_MS ?? 8000) / 1000) * 1000);
+      const capMs = Number(process.env.RATE_WAIT_MAX_MS ?? 90_000);
+      const defaultMs = Number(process.env.RATE_WAIT_MS ?? 65_000);
+      const waitMs = Math.min(capMs, retryAfter ? Number(retryAfter) * 1000 : defaultMs);
       throw new RateLimitError(`${model} hit a per-minute limit; wait ${Math.round(waitMs / 1000)}s`, waitMs);
     }
     throw e;
