@@ -108,7 +108,20 @@ one continuous thought — loops are rewatched, and completion is what YouTube r
 export function normaliseSceneCount<T extends Script>(script: T): T {
   const scenes = [...script.scenes];
   const words = (t: string) => t.trim().split(/\s+/).filter(Boolean).length;
-  const sentences = (t: string) => t.match(/[^.!?]+[.!?]+(?:["')\]]+)?\s*/g)?.map((x) => x.trim()).filter(Boolean) ?? [t];
+  // Protect decimals (£8.36, 28.35 grams, 3.5 million) and common abbreviations (e.g., i.e., Dr., U.K.)
+  // from the sentence splitter, or the second half of the number becomes its own "sentence" and lands
+  // as a lone scene like "36 per square yard." (long video, 25 Sep run — captions cues 3/4 and 51/52).
+  const sentences = (t: string) => {
+    const guarded = t
+      .replace(/(\d)\.(\d)/g, "$1\u0001$2")                                                 // decimals: 8.36 -> 8␁36
+      .replace(/\b(e|i)\.(g|e)\./gi, "$1\u0001$2\u0001")                                    // e.g., i.e.
+      .replace(/\b([ap])\.(m)\./gi, "$1\u0001$2\u0001")                                     // a.m., p.m.
+      .replace(/\b([BA])\.(C|D)\./gi, "$1\u0001$2\u0001")                                   // B.C., A.D.
+      .replace(/\b(U)\.(S|K)(?:\.(A))?\./gi, (_m, a, b, c) => c ? `${a}\u0001${b}\u0001${c}\u0001` : `${a}\u0001${b}\u0001`)  // U.S., U.K., U.S.A.
+      .replace(/\b(Mr|Mrs|Ms|Dr|Jr|Sr|St|vs|etc|Inc|Ltd|Co|Prof|Fig|No|approx)\./gi, "$1\u0001"); // titles/abbrevs
+    return guarded.match(/[^.!?]+[.!?]+(?:["')\]]+)?\s*/g)
+      ?.map((x) => x.trim().replace(/\u0001/g, ".")).filter(Boolean) ?? [t];
+  };
   let splits = 0;
 
   while (scenes.length < TARGET_SCENES) {
