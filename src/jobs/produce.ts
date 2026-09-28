@@ -283,8 +283,8 @@ async function main() {
     await updateVideo(video.id, { status: (stage = "rendered"), scene_timings: p.timings,
       assets: { images: p.allCredits, pending } });
     await incident("final-check.deferred", new Error(`final check unavailable, render saved: ${p.reason}`), video.id);
-    log(`#${video.id} paused at the final check: Gemini unavailable. The finished render is saved and the next ` +
-      `run resumes from the final check — nothing is re-rendered.`);
+    log(`#${video.id} paused at the final check (${p.reason.split("\n")[0]!.slice(0, 140)}). The finished render is saved ` +
+      `and the next run resumes from the final check — nothing is re-rendered.`);
   };
 
   /**
@@ -325,7 +325,10 @@ async function main() {
         review.noteForOwner ?? "",
         ...review.issues.map((i) => `- [${i.severity}/${i.area}] ${i.what}${i.fix ? ` → ${i.fix}` : ""}`),
       ].filter(Boolean).join("\n");
-      await updateVideo(video.id, { status: "rejected", actual_score: review.overall, review });
+      // `review` is already saved inside the assets JSONB at line 308; the videos table has no top-level
+       // `review` column, so persisting it here again crashed with 'column "review" ... does not exist'
+       // (28 Sep 09:59 UTC #14, the first run whose final check actually completed).
+      await updateVideo(video.id, { status: "rejected", actual_score: review.overall });
       await incident("final-check.not-uploaded", new Error(notes.slice(0, 1500)), video.id);
       await createIssue(`Not uploaded: ${script.title}`.slice(0, 90),
         `${notes}\n\nThe file is in this run's artifacts if you want to watch it. Nothing was uploaded to YouTube.\nThese notes feed the weekly learning cycle.`,
