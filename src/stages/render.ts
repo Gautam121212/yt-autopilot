@@ -250,7 +250,12 @@ export async function renderVideo(o: {
   const plan: Shot[] = [];
   for (const [i, a] of o.audio.entries()) {
     const imgs = (Array.isArray(o.images[i]) ? (o.images[i] as string[]) : [o.images[i] as string]).filter(Boolean);
-    const shots = planShots(a, shotTarget);
+    // Fewer pictures than shots used to cycle the SAME picture through consecutive shots, which reads
+    // as a glitch (27 Sep: one truck photo three times in a row). Lengthen the shots instead, so each
+    // picture is shown once, up to MAX_HOLD; past that a repeat is the lesser evil than a frozen frame.
+    const maxHold = shotTarget * Number(process.env.SHOT_MAX_HOLD_X ?? 2);
+    const target = imgs.length ? Math.max(shotTarget, Math.min(maxHold, a.duration / imgs.length)) : shotTarget;
+    const shots = planShots(a, target);
     for (const [j, sh_] of shots.entries()) {
       plan.push({
         sceneIdx: i,

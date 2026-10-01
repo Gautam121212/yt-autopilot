@@ -13,7 +13,7 @@ import fs from "node:fs/promises";
 import { resetPexelsBudget, takePexels } from "./budget";
 import { hfetch } from "./http";
 import { isPlayable } from "./media";
-import { MIN_IMG_W, MIN_VID_W } from "./sources";
+import { MIN_IMG_W, MIN_VID_W, OFF_BRAND } from "./sources";
 
 export type Candidate = {
   key: string;                // same id scheme as the fetchers, so `used` dedupes across both paths
@@ -29,6 +29,12 @@ export type Candidate = {
 // Faces as the SUBJECT are off-brand. Hands working, crowds at a distance and so on are fine — the
 // old caption filter also rejected "hands", which excluded exactly the shots the approved list asks for.
 const PORTRAIT = /\b(portrait|selfie|posing|model|headshot|smiling|face)\b/i;
+// Political and activist imagery is off-brand on every topic ("FREE PALESTINE" placards appeared twice in
+// a video about measurement, 27 Sep). The editor is told too, but a small vision model can miss a sign,
+// and scenes picked during an outage are never shown to it — so the caption is checked here as well.
+const offBrand = (text: string) => OFF_BRAND.test(text);
+/** Pexels page URLs carry a description ("/video/people-protesting-in-the-street-123/"); use it as the caption. */
+const slugCaption = (url?: string) => (url ?? "").match(/\/(?:photo|video)\/([a-z0-9-]+?)-\d+\/?$/i)?.[1]?.replace(/-/g, " ") ?? "";
 
 const pexelsKey = () => process.env.PEXELS_API_KEY ?? "";
 const pixKey = () => process.env.PIXABAY_API_KEY ?? "";
@@ -55,7 +61,7 @@ async function pexelsPhotos(query: string, n: number, orient: Orientation): Prom
   // A vertical photo is narrower than it is tall, so the width floor applies to its short side.
   const minW = orient === "portrait" ? Math.round(MIN_IMG_W * 0.56) : MIN_IMG_W;
   return photos
-    .filter((p) => p.width >= minW && !PORTRAIT.test(p.alt ?? "") && (p.src.medium || p.src.large))
+    .filter((p) => p.width >= minW && !PORTRAIT.test(p.alt ?? "") && !offBrand(`${p.alt ?? ""} ${slugCaption(p.url)}`) && (p.src.medium || p.src.large))
     .map((p) => ({
       key: `pexels:${p.id}`, source: "pexels" as const, kind: "photo" as const, query,
       thumb: p.src.medium ?? p.src.large!, full: p.src.large2x ?? p.src.large ?? p.src.original!,
@@ -76,13 +82,15 @@ async function pexelsVideos(query: string, n: number, orient: Orientation): Prom
   const out: Candidate[] = [];
   for (const v of videos) {
     if (v.duration < 4 || v.duration > 60 || !v.image) continue;
+    const caption = slugCaption(v.url);
+    if (offBrand(caption)) continue;
     const minVW = orient === "portrait" ? Math.round(MIN_VID_W * 0.56) : MIN_VID_W;
     const f = v.video_files.filter((x) => x.file_type === "video/mp4" && x.width >= minVW && x.width <= 2560)
       .sort((a, b) => b.width - a.width)[0];
     if (!f) continue;
     out.push({
       key: `pexelsv:${v.id}`, source: "pexels", kind: "video", query,
-      thumb: v.image, full: f.link, caption: `video ${v.id}`,
+      thumb: v.image, full: f.link, caption: caption || `video ${v.id}`,
       credit: `Video by ${v.user?.name ?? "Pexels"} on Pexels${v.url ? ` — ${v.url}` : ""}`,
     });
   }
@@ -99,7 +107,7 @@ async function pixabayPhotos(query: string, n: number, orient: Orientation): Pro
   };
   const minW = orient === "portrait" ? Math.round(MIN_IMG_W * 0.56) : MIN_IMG_W;
   return hits
-    .filter((h) => h.imageWidth >= minW && !PORTRAIT.test(h.tags ?? "") && h.webformatURL)
+    .filter((h) => h.imageWidth >= minW && !PORTRAIT.test(h.tags ?? "") && !offBrand(h.tags ?? "") && h.webformatURL)
     .map((h) => ({
       key: `px:${h.id}`, source: "pixabay" as const, kind: "photo" as const, query,
       thumb: h.webformatURL!, full: h.fullHDURL ?? h.largeImageURL ?? h.webformatURL!, caption: h.tags ?? "",

@@ -180,6 +180,8 @@ type PexelsPhoto = { id: number; alt?: string; width: number; photographer?: str
 type PexelsVideo = { id: number; width: number; height: number; duration: number; user?: { name?: string }; url?: string; video_files: { link: string; width: number; height: number; file_type: string }[] };
 
 // Stock photo captions that mean "a person", which this channel never wants.
+/** Political/activist imagery: off-brand on every topic. Shared with lib/candidates.ts. */
+export const OFF_BRAND = /\b(protest(s|ers?|ing)?|rall(y|ies)|demonstrat(ion|ions|ors?)|activis[mt]s?|placards?|picket(s|ing)?|riots?|slogans?|election|campaign(ing)?|politic(s|al|ian|ians)|palestin\w*|israel\w*|gaza|free palestine|black lives matter|blm|maga|trump|biden)\b/i;
 const LIFESTYLE = /\b(man|woman|men|women|person|people|boy|girl|guy|lady|model|couple|family|child|kid|teen|hand|hands|legs?|feet|face|portrait|tattoo|selfie|smiling|posing|standing|sitting|walking|wearing|holding)\b/i;
 
 const pexelsKey = () => process.env.PEXELS_API_KEY ?? "";
@@ -193,7 +195,7 @@ export async function pexelsImage(query: string, used: Set<string>, file: string
   const { photos = [] } = (await r.json()) as { photos?: PexelsPhoto[] };
   const scored = photos
     .filter((p) => p.width >= MIN_IMG_W && !used.has(`pexels:${p.id}`))
-    .filter((p) => !LIFESTYLE.test(p.alt ?? ""))   // stock libraries are full of people; we never want them
+    .filter((p) => !LIFESTYLE.test(p.alt ?? "") && !OFF_BRAND.test(`${p.alt ?? ""} ${p.url ?? ""}`))   // stock libraries are full of people; we never want them
     .map((p) => ({ p, score: relevance(query, p.alt ?? "") }))
     .sort((a, b) => b.score - a.score);
 
@@ -220,7 +222,7 @@ export async function pexelsVideo(query: string, used: Set<string>, file: string
     { headers: { Authorization: pexelsKey() } }).catch(() => null);
   if (!r?.ok) return null;
   const { videos = [] } = (await r.json()) as { videos?: PexelsVideo[] };
-  for (const v of videos.filter((v) => v.duration >= 5 && v.duration <= 60 && !used.has(`pexelsv:${v.id}`) && !LIFESTYLE.test(v.user?.name ?? "")).slice(0, 5)) {
+  for (const v of videos.filter((v) => v.duration >= 5 && v.duration <= 60 && !used.has(`pexelsv:${v.id}`) && !LIFESTYLE.test(v.user?.name ?? "") && !OFF_BRAND.test((v as { url?: string }).url?.replace(/-/g, " ") ?? "")).slice(0, 5)) {
     const id = `pexelsv:${v.id}`;
     used.add(id);
     const f = v.video_files
@@ -251,7 +253,7 @@ export async function openverseImage(query: string, used: Set<string>, file: str
   const res = await getJson<{ results?: OpenverseItem[] }>(api).catch(() => null);
   const scored = (res?.results ?? [])
     .filter((r) => OPENVERSE_OK.test(r.license) && !used.has(`ov:${r.id}`))
-    .filter((r) => !PEOPLE.test(r.title ?? "") && !MARKS.test(r.title ?? "") && !LIFESTYLE.test(r.title ?? ""))
+    .filter((r) => !PEOPLE.test(r.title ?? "") && !MARKS.test(r.title ?? "") && !LIFESTYLE.test(r.title ?? "") && !OFF_BRAND.test(`${r.title ?? ""} ${(r.tags ?? []).map((t) => t.name).join(" ")}`))
     .map((r) => ({ r, score: relevance(query, r.title ?? "", (r.tags ?? []).map((t) => t.name).join(" ")) }))
     .sort((a, b) => b.score - a.score);
 
@@ -287,7 +289,7 @@ export async function pixabayImage(query: string, used: Set<string>, file: strin
     `https://pixabay.com/api/?key=${pixKey()}&q=${encodeURIComponent(query)}&image_type=photo&orientation=horizontal&per_page=40&safesearch=true`,
   ).catch(() => null);
   const scored = (r?.hits ?? [])
-    .filter((h) => h.imageWidth >= MIN_IMG_W && !used.has(`px:${h.id}`) && !LIFESTYLE.test(h.tags ?? ""))
+    .filter((h) => h.imageWidth >= MIN_IMG_W && !used.has(`px:${h.id}`) && !LIFESTYLE.test(h.tags ?? "") && !OFF_BRAND.test(h.tags ?? ""))
     .map((h) => ({ h, score: relevance(query, h.tags ?? "") }))
     .sort((a, b) => b.score - a.score);
   for (const { h, score } of scored.slice(0, 4)) {
@@ -310,7 +312,7 @@ export async function pixabayVideo(query: string, used: Set<string>, file: strin
     `https://pixabay.com/api/videos/?key=${pixKey()}&q=${encodeURIComponent(query)}&per_page=30&safesearch=true`,
   ).catch(() => null);
   const scored = (r?.hits ?? [])
-    .filter((h) => h.duration >= 4 && h.duration <= 90 && !used.has(`pxv:${h.id}`) && !LIFESTYLE.test(h.tags ?? ""))
+    .filter((h) => h.duration >= 4 && h.duration <= 90 && !used.has(`pxv:${h.id}`) && !LIFESTYLE.test(h.tags ?? "") && !OFF_BRAND.test(h.tags ?? ""))
     .map((h) => ({ h, score: relevance(query, h.tags ?? "") }))
     .sort((a, b) => b.score - a.score);
   for (const { h, score } of scored.slice(0, 4)) {
