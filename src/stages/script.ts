@@ -1,6 +1,6 @@
 import type { ChannelConfig } from "../config";
 import { askJson } from "../lib/llm";
-import { scriptLessons } from "../lib/lessons";
+import { recentScoreProfile, scriptLessons } from "../lib/lessons";
 import { ScriptSchema, TARGET_SCENES, type Dossier, type Script, type Topic, type Verification } from "../types";
 
 function system(cfg: ChannelConfig, playbook: string) {
@@ -165,13 +165,25 @@ export async function writeScript(o: {
   /** set when an earlier draft was rejected, so the new one avoids the same faults */
   critique?: string;
 }): Promise<Script> {
-  const lessons = await scriptLessons();
+  const [lessons, scoreProfile] = await Promise.all([scriptLessons(), recentScoreProfile()]);
+  // Hard-rules block at the TOP of the prompt, not advisory bullets near the bottom. The scoreProfile
+  // names which specific dimensions have been dragging the gate score down (e.g. "hook 4.2/10"), and
+  // the lessons name recent concrete failures. Both get a verdict-style header so the writer treats
+  // them as pass/fail criteria rather than tips. Buried advisories at the end of a long dossier
+  // prompt (the previous layout) were being read and politely ignored.
+  const hardRules = [lessons, scoreProfile].filter(Boolean).join("\n\n");
+  const header = hardRules
+    ? `════════ RULES FROM YOUR OWN TRACK RECORD ════════\n${hardRules}\n` +
+      `This script will be scored by the same gate against the same rubric. ` +
+      `Treat the two weakest dimensions above as the primary design constraints for THIS draft.\n` +
+      `════════════════════════════════════════════════\n\n`
+    : "";
   return normaliseSceneCount(await askJson({
     tier: "heavy",
     role: "write",
     schema: ScriptSchema,
     system: system(o.cfg, o.playbook),
-    prompt: `${lessons ? `${lessons}\n\n` : ""}Structure: ${o.structure.id} - ${o.structure.description}
+    prompt: `${header}Structure: ${o.structure.id} - ${o.structure.description}
 Working title: ${o.topic.chosen.workingTitle}
 Hook idea: ${o.topic.chosen.hook}
 Angle: ${o.topic.chosen.angle}

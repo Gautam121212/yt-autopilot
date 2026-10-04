@@ -56,3 +56,44 @@ export async function scriptLessons(): Promise<string> {
     ? `RECENT SCRIPTS WERE REJECTED FOR THESE REASONS — avoid every one of them:\n${formatLessons(xs)}`
     : "";
 }
+
+/**
+ * Average review scores across the last N completed reviews, by dimension (hook, clarity,
+ * visualsMatch, thumbnail, packaging). This is the signal the writer needs most: a 4.2/10 average
+ * on "hook" tells it specifically which dimension is dragging every attempt down, whereas the
+ * incident bullets only name individual symptoms. Reviews are stored in videos.assets.review.scores.
+ *
+ * Only published or rejected videos count — awaiting_approval and in-progress are not final verdicts.
+ */
+type ScoreRow = { hook: string; clarity: string; visualsMatch: string; thumbnail: string; packaging: string; overall: string; n: string };
+export async function recentScoreProfile(): Promise<string> {
+  const [row] = await q<ScoreRow>(
+    `select
+       avg((assets->'review'->'scores'->>'hook')::numeric)         as hook,
+       avg((assets->'review'->'scores'->>'clarity')::numeric)      as clarity,
+       avg((assets->'review'->'scores'->>'visualsMatch')::numeric) as "visualsMatch",
+       avg((assets->'review'->'scores'->>'thumbnail')::numeric)    as thumbnail,
+       avg((assets->'review'->'scores'->>'packaging')::numeric)    as packaging,
+       avg((assets->'review'->>'overall')::numeric)                as overall,
+       count(*)                                                    as n
+     from videos
+     where assets->'review'->'scores' is not null
+       and status in ('published', 'rejected', 'uploaded', 'dry_run_complete')
+       and updated_at > now() - interval '30 days'`,
+  ).catch(() => []);
+  const n = Number(row?.n ?? 0);
+  if (n < 2) return ""; // one data point is noise, not a profile
+  const dims = {
+    hook: Number(row!.hook), clarity: Number(row!.clarity),
+    visualsMatch: Number(row!.visualsMatch), thumbnail: Number(row!.thumbnail),
+    packaging: Number(row!.packaging),
+  };
+  const overall = Number(row!.overall);
+  const sorted = Object.entries(dims).sort((a, b) => a[1] - b[1]);
+  const weakest = sorted.slice(0, 2).map(([k, v]) => `${k} ${v.toFixed(1)}/10`).join(", ");
+  const strongest = sorted.slice(-1).map(([k, v]) => `${k} ${v.toFixed(1)}/10`)[0];
+  const list = Object.entries(dims).map(([k, v]) => `${k} ${v.toFixed(1)}/10`).join(" · ");
+  return `YOUR LAST ${n} SCRIPTS averaged ${overall.toFixed(1)}/10 overall — ${list}.\n` +
+    `WEAKEST: ${weakest}. STRONGEST: ${strongest}. ` +
+    `This script must beat the average on both weakest dimensions, or it will be rejected again.`;
+}

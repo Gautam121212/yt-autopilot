@@ -54,29 +54,51 @@ function retentionSummary(ret: { elapsed_ratio: string; watch_ratio: string }[],
 
 async function main() {
   const cfg = loadChannel();
-  const rows = await q<Row>(`
-    select v.id, v.sub_niche, v.structure, v.title, v.script, v.scene_timings, v.publish_slot, v.publish_at, v.assets, v.predicted_score,
+  // Pull BOTH published and rejected videos. Rejected ones have the full `assets.review` payload — the
+  // same scores and issues the loop would read on published videos — but no YouTube metrics. The LLM
+  // treats the two cohorts differently (what WORKS vs what to AVOID), but both are evidence.
+  //
+  // Before: this query filtered to `status = 'published' AND publish_at < now() - 7d`, so if the gate
+  // was blocking everything the loop never ran — a cold-start deadlock. Now, if 8 videos have been
+  // RENDERED-AND-SCORED in the last 30 days (any status), the loop runs on them.
+  const rows = await q<Row & { status: string }>(`
+    select v.id, v.status, v.sub_niche, v.structure, v.title, v.script, v.scene_timings, v.publish_slot, v.publish_at, v.assets, v.predicted_score,
       coalesce(sum(m.views) filter (where m.day < (v.publish_at at time zone 'UTC')::date + 7), 0) as views_7d,
       avg(m.avg_view_pct) as avg_pct,
       coalesce(sum(m.subs_gained) filter (where m.day < (v.publish_at at time zone 'UTC')::date + 7), 0) as subs_7d,
       coalesce(sum(m.likes) filter (where m.day < (v.publish_at at time zone 'UTC')::date + 7), 0) as likes_7d
     from videos v left join metrics_daily m on m.video_id = v.id
-    where v.status = 'published' and v.publish_at < now() - interval '7 days'
-    group by v.id order by v.id desc limit 60`);
+    where v.assets->'review' is not null
+      and (
+        (v.status = 'published' and v.publish_at < now() - interval '7 days')
+        or (v.status in ('rejected','abandoned') and v.updated_at > now() - interval '30 days')
+      )
+    group by v.id order by v.id desc limit 80`);
 
   if (rows.length < cfg.learning.minVideosForLearning) {
-    return log(`only ${rows.length} mature videos (< ${cfg.learning.minVideosForLearning}); not learning from noise yet`);
+    return log(`only ${rows.length} scored videos in the window (< ${cfg.learning.minVideosForLearning}); not learning from noise yet`);
   }
 
   const videos = [];
   for (const r of rows) {
-    const ret = await q<{ elapsed_ratio: string; watch_ratio: string }>("select elapsed_ratio, watch_ratio from retention where video_id = $1", [r.id]);
+    const wasPublished = r.status === "published";
+    const ret = wasPublished
+      ? await q<{ elapsed_ratio: string; watch_ratio: string }>("select elapsed_ratio, watch_ratio from retention where video_id = $1", [r.id])
+      : [];
     videos.push({
       id: r.id, subNiche: r.sub_niche, structure: r.structure, title: r.title,
+      // "published" videos teach what WORKS (keep this cohort for YouTube metrics + retention), while
+      // "rejected" videos teach what to AVOID (the gate caught them, so their scores + issues ARE the
+      // lesson). Marking this explicitly keeps the LLM from averaging the two cohorts into noise.
+      cohort: wasPublished ? "published" as const : "rejected" as const,
       hook: r.script.scenes[0]?.narration, minutes: r.scene_timings?.length ? +(r.scene_timings.at(-1)!.end / 60).toFixed(1) : null,
-      views7d: Number(r.views_7d), avgViewPct: r.avg_pct ? Number(Number(r.avg_pct).toFixed(1)) : null,
-      subs7d: Number(r.subs_7d), likes7d: Number(r.likes_7d),
-      slot: r.publish_slot, publishedAt: r.publish_at,
+      // YouTube metrics only make sense for published videos; nulled on rejected so the LLM doesn't
+      // read "0 views" as a performance signal.
+      views7d: wasPublished ? Number(r.views_7d) : null,
+      avgViewPct: wasPublished && r.avg_pct ? Number(Number(r.avg_pct).toFixed(1)) : null,
+      subs7d: wasPublished ? Number(r.subs_7d) : null,
+      likes7d: wasPublished ? Number(r.likes_7d) : null,
+      slot: r.publish_slot, publishedAt: wasPublished ? r.publish_at : null,
       predictedScore: r.predicted_score != null ? Number(r.predicted_score) : null,
       preReleaseScore: r.assets?.review?.overall ?? null,
       preReleaseScores: r.assets?.review?.scores ?? null,
@@ -84,6 +106,9 @@ async function main() {
       retention: retentionSummary(ret, r.scene_timings),
     });
   }
+  const nPublished = videos.filter((v) => v.cohort === "published").length;
+  const nRejected = videos.length - nPublished;
+  log(`learning cohorts: ${nPublished} published (what WORKS) + ${nRejected} rejected (what to AVOID)`);
   const incidents = await q("select stage, count(*)::int as n, max(message) as example from incidents where created_at > now() - interval '30 days' group by stage order by n desc limit 15");
   // Per-slot and per-sub-niche view averages, so the playbook can reason about WHEN as well as WHAT.
   const bySlot = await q(`
@@ -105,21 +130,37 @@ async function main() {
     tier: "heavy",
     schema: LearnSchema,
     system: `You are the channel's data-driven showrunner. You update the writing playbook from evidence.
-You see, for every video: pre-release quality scores from the final check, 7-day views/watch/likes/subs,
-the retention curve with the scene at each steep drop, which publish slot it used, and the pipeline's own incidents.
+You see, for every video: pre-release quality scores from the final check, 7-day views/watch/likes/subs
+(ONLY for the "published" cohort — see below), the retention curve with the scene at each steep drop,
+which publish slot it used, and the pipeline's own incidents.
+
+Every video is marked with a "cohort":
+- cohort = "published": aired, has YouTube metrics (views7d, avgViewPct, subs7d, likes7d) and a
+  retention curve. These teach what WORKS — the pattern of hook/structure/subject that earns attention.
+- cohort = "rejected": held by the final-check gate, so YouTube metrics are null. The reviewer's own
+  scores and issues ARE the lesson here. These teach what to AVOID — which dimensions (hook, clarity,
+  visualsMatch, thumbnail, packaging) and which specific issues cause rejections.
+NEVER average the two cohorts into a single metric; "views7d: null" on a rejected video is not zero
+performance, it is "not aired yet". When the published cohort is small, lean on the rejected cohort for
+"what the gate is rejecting" patterns and update the playbook rules accordingly.
 
 Your job is three things at once:
-1. WRITING RULES — what makes this channel's videos hold attention (from retention drops + scores).
-2. WHAT TO MAKE — sub-niche weights (from views and subscribers gained per sub-niche).
+1. WRITING RULES — what makes this channel's videos hold attention (from retention drops + scores on
+   the published cohort) AND what the gate is rejecting on (from scores + issues on the rejected cohort).
+   If a specific dimension (say "hook") is averaging 4-5/10 across the rejected cohort, the playbook
+   needs a concrete rule about how to open — not just "write better hooks".
+2. WHAT TO MAKE — sub-niche weights, from views and subs on the published cohort primarily; if a
+   sub-niche is REJECTING at a much higher rate than others, that is also signal to lower its weight.
 3. WHEN TO PUBLISH — say plainly in the rationale which slots look better for which sub-niches, and flag any slot
-   that should be dropped. Never claim a timing effect from fewer than 4 videos in that slot.
+   that should be dropped. Never claim a timing effect from fewer than 4 videos in that slot. Timing
+   only applies to the published cohort.
 
 You also see predictedScore (estimated before production) next to preReleaseScore (what the reviewer gave).
 If predictions run consistently high, say so in qualityVerdict — that means topics are being approved that
 should have been abandoned, and the topic bars in the playbook need raising.
 
-Also compare pre-release scores against actual performance: if videos the final check scored 8+ underperform,
-say so, because that means the check is measuring the wrong thing.
+Also compare pre-release scores against actual performance (published cohort only): if videos the final
+check scored 8+ underperform, say so, because that means the check is measuring the wrong thing.
 
 EXPANSION — you may propose ONE new sub-niche per cycle, and you are expected to keep widening the channel's
 range over time rather than settling early: a channel with more proven topic areas has more ways to grow. Propose one only when the data points somewhere
@@ -160,9 +201,13 @@ Statistical discipline:
   });
 
   // ---- Guardrails. The model proposes; these rules decide. ----
+  // Cadence decisions use the PUBLISHED cohort only — we only speed up when real-world evidence says
+  // we're winning, and the rejected-cohort scores (from the gate itself) aren't that evidence.
+  // medianScore stays computed across both cohorts: it's the signal for "is the writer getting
+  // better?", which is exactly what matters when the gate is rejecting everything.
   const scores = videos.map((v) => v.preReleaseScore).filter((n): n is number => typeof n === "number");
   const median = (a: number[]) => (a.length ? [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)]! : 0);
-  const published = rows.length;
+  const published = nPublished;
   const [{ n: heldCount }] = await q<{ n: number }>("select count(*)::int as n from videos where status in ('awaiting_approval','rejected','abandoned') and updated_at > now() - interval '30 days'");
   const [{ n: policyIncidents }] = await q<{ n: number }>("select count(*)::int as n from incidents where created_at > now() - interval '30 days' and (stage like 'verify%' or stage like 'image-qa%' or stage like 'visuals.weak%')");
   const medianScore = median(scores);
