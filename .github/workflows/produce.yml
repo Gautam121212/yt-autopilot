@@ -68,6 +68,10 @@ jobs:
           MISTRAL_MODEL_HEAVY: ${{ secrets.MISTRAL_MODEL_HEAVY || vars.MISTRAL_MODEL_HEAVY || 'mistral-small-latest' }}
           MISTRAL_MODEL_LIGHT: ${{ secrets.MISTRAL_MODEL_LIGHT || vars.MISTRAL_MODEL_LIGHT || 'open-mistral-nemo' }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          # Model ids set locally must reach the runner too; without these the cloud silently used the
+          # code's built-in defaults whatever .env said.
+          GROQ_MODEL_VISION: ${{ secrets.GROQ_MODEL_VISION || vars.GROQ_MODEL_VISION }}
+          OPENROUTER_MODEL_VISION: ${{ secrets.OPENROUTER_MODEL_VISION || vars.OPENROUTER_MODEL_VISION }}
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
