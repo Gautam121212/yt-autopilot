@@ -72,12 +72,20 @@ const PageRenderer: React.FC<{
 
   const currentMs = page.startMs + (frame / fps) * 1000;
 
-  // Spring entrance
+  // Spring entrance.
+  // Apple-design (yt-autopilot vendored patch): calmer, closer to critically damped. A caption
+  // appearing isn't a momentum interaction (no flick preceded it), so overshoot reads as "cute"
+  // rather than physical. Keeping `stiffness` moderate so the entrance doesn't drag.
   const entrance = spring({
     frame,
     fps,
-    config: { damping: 18, stiffness: 120 },
+    config: { damping: 24, stiffness: 160, mass: 0.9 },
   });
+
+  // Tracking (letter-spacing) is size-specific per the Apple-design type rules:
+  // at 42px (default caption) we're in the "slightly tighten" range; at 60px+ definitely negative.
+  // Formula is approximate — the skill's rule is "tighten large text, leave body near 0".
+  const tracking = fontSize >= 60 ? "-0.02em" : fontSize >= 36 ? "-0.005em" : "0.01em";
 
   return (
     <AbsoluteFill
@@ -92,7 +100,16 @@ const PageRenderer: React.FC<{
           opacity: entrance,
           transform: `translateY(${interpolate(entrance, [0, 1], [20, 0])}px)`,
           backgroundColor,
-          borderRadius: 12,
+          // Material layer: backdrop blur + saturation lift so the pill reads as glass over any
+          // B-roll (Apple-design "materials convey hierarchy"). WebkitBackdropFilter for Safari/
+          // Chromium parity; Remotion renders through Chrome so it's effectively always supported,
+          // but the prefix costs nothing and future-proofs for Studio playback in other browsers.
+          backdropFilter: "blur(20px) saturate(180%)",
+          WebkitBackdropFilter: "blur(20px) saturate(180%)",
+          borderRadius: 14,
+          // Subtle top edge catches "light" — the hallmark detail of a translucent material. Gives
+          // the pill definition without a hard border.
+          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.12), 0 8px 24px rgba(0,0,0,0.25)",
           padding: "14px 28px",
           maxWidth: "80%",
           textAlign: "center",
@@ -103,7 +120,8 @@ const PageRenderer: React.FC<{
             fontSize,
             fontWeight: 700,
             fontFamily,
-            lineHeight: 1.4,
+            lineHeight: 1.35,
+            letterSpacing: tracking,
             whiteSpace: "pre-wrap",
           }}
         >
