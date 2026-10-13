@@ -44,7 +44,8 @@
     "renderer:install": "cd remotion-composer && npm install --no-audit --no-fund",
     "renderer:smoke": "tsx scripts/renderer-smoke.ts",
     "scores": "tsx --env-file-if-exists=.env scripts/scores.ts",
-    "analyze": "tsx scripts/analyze-video.ts"
+    "analyze": "tsx scripts/analyze-video.ts",
+    "adapter:smoke": "tsx scripts/remotion-props-smoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
