@@ -49,43 +49,56 @@ export const HeroTitle: React.FC<HeroTitleProps> = ({
       }}
     >
       <div style={{ textAlign: "center", maxWidth: "85%" }}>
-        {/* Main title with per-character spring */}
+        {/* Main title with per-character spring.
+            yt-autopilot Apple-design patch:
+            - letterSpacing -0.02em: display text wants negative tracking (letters read too far
+              apart as they grow). The skill's rule — "tighten large text, body near 0".
+            - lineHeight 1.05: tight leading on display sizes, loose on body.
+            - Accent cutoff is word-based, not a hard-coded 8 characters. "The World in Numbers"
+              with i<8 lands at "The Worl|d in Numbers" — breaking "World" mid-word. Rounding to
+              a whole word (or two, when the first word is a short article) is unambiguously
+              correct and still renders the same visual intent in the common case. */}
         <div
           style={{
             fontSize: 72,
             fontWeight: 800,
             fontFamily: "Space Grotesk, Inter, system-ui, sans-serif",
-            lineHeight: 1.2,
+            lineHeight: 1.05,
+            letterSpacing: "-0.02em",
             display: "flex",
             justifyContent: "center",
             flexWrap: "wrap",
             gap: 0,
           }}
         >
-          {titleChars.map((char, i) => {
-            const delay = i * 1.2;
-            const charSpring = spring({
-              frame: frame - delay,
-              fps,
-              config: { damping: 12, stiffness: 150 },
+          {(() => {
+            const words = title.split(" ");
+            const accentWordCount = words.length > 1 && words[0]!.length <= 3 ? 2 : 1;
+            const accentCharCount = words.slice(0, accentWordCount).join(" ").length;
+            return titleChars.map((char, i) => {
+              const delay = i * 1.2;
+              const charSpring = spring({
+                frame: frame - delay,
+                fps,
+                config: { damping: 12, stiffness: 150 },
+              });
+              return (
+                <span
+                  key={i}
+                  style={{
+                    display: "inline-block",
+                    opacity: charSpring,
+                    transform: `translateY(${interpolate(charSpring, [0, 1], [30, 0])}px)`,
+                    color: i < accentCharCount ? accentColor : textColor,
+                    whiteSpace: char === " " ? "pre" : undefined,
+                    minWidth: char === " " ? "0.3em" : undefined,
+                  }}
+                >
+                  {char}
+                </span>
+              );
             });
-
-            return (
-              <span
-                key={i}
-                style={{
-                  display: "inline-block",
-                  opacity: charSpring,
-                  transform: `translateY(${interpolate(charSpring, [0, 1], [30, 0])}px)`,
-                  color: i < 8 ? accentColor : textColor, // Accent first word
-                  whiteSpace: char === " " ? "pre" : undefined,
-                  minWidth: char === " " ? "0.3em" : undefined,
-                }}
-              >
-                {char}
-              </span>
-            );
-          })}
+          })()}
         </div>
 
         {/* Subtitle */}
