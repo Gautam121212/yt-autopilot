@@ -1,9 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { ROOT } from "../config";
 import os from "node:os";
 import { durationSec, mapLimit, sh } from "../lib/media";
 import type { SceneTiming } from "../types";
+import { buildExplainerProps } from "./remotion-props";
 
 type Narrated = { id: string; narration: string };
 
@@ -224,6 +226,121 @@ async function pickMusic(seed: number): Promise<string | undefined> {
   return files.length ? path.join(dir, files[seed % files.length]!) : undefined;
 }
 
+/**
+ * Phase 3 — the Remotion render path, behind USE_REMOTION_RENDERER=true.
+ *
+ * Keeps the same signature + return shape as renderVideo so callers can't tell the difference.
+ * Internally:
+ *   1. normalize per-scene asset lists
+ *   2. compute scene timings from audio durations
+ *   3. concat per-scene narration into one wav for the composer
+ *   4. pick a music bed (same seed / same assets/music folder as the ffmpeg path)
+ *   5. buildExplainerProps(...) via the Phase 2 adapter
+ *   6. write <dir>/remotion-props.json
+ *   7. shell `npx remotion render src/index.tsx Explainer <out.mp4> --props <json>` from
+ *      remotion-composer/
+ *   8. generate the SRT via the existing buildSrt() so captions.srt stays identical to the
+ *      ffmpeg path's output (upload stage reads it)
+ *   9. return { videoPath, srtPath, timings }
+ */
+async function renderWithRemotion(o: {
+  scenes: Narrated[];
+  images: (string | string[])[];
+  audio: SceneAudio[]; dir: string; seed: number;
+  size?: Size; name?: string;
+  captions?: (string | undefined)[];
+}): Promise<{ videoPath: string; srtPath: string; timings: SceneTiming[] }> {
+  const size = o.size ?? LANDSCAPE;
+  const name = o.name ?? "final";
+  const shotTarget = size.w < size.h ? SHOT_SECS_V : SHOT_SECS_H;
+
+  // 1. Normalize assets. renderVideo accepts `string | string[]` per scene — Remotion wants an
+  //    array per scene (one asset per shot).
+  const sceneAssets: string[][] = o.images.map((x) => Array.isArray(x) ? x : [x]).map((xs) => xs.filter(Boolean) as string[]);
+  if (sceneAssets.some((a) => a.length === 0)) {
+    throw new Error("renderWithRemotion: at least one scene has no assets — the composer can't render an empty scene");
+  }
+
+  // 2. Scene timings: cumulative sum of audio durations. The composer uses in_seconds/out_seconds
+  //    on each Cut relative to the start of the video, so these have to line up with the narration.
+  const timings: SceneTiming[] = [];
+  let t = 0;
+  for (let i = 0; i < o.scenes.length; i++) {
+    const dur = o.audio[i]!.duration;
+    timings.push({ sceneId: o.scenes[i]!.id, start: t, end: t + dur, speechSec: dur });
+    t += dur;
+  }
+
+  // 3. Concat narration. ffmpeg's concat demuxer with -c copy requires same codec/sample rate,
+  //    which voice.ts guarantees (all scenes synthesized by the same engine). Writes a single mp3.
+  const narrationFile = path.join(o.dir, "narration-full.m4a");
+  const listFile = path.join(o.dir, "narration-list.txt");
+  await fs.writeFile(listFile, o.audio.map((a) => `file '${a.file}'`).join("\n"));
+  await sh("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", narrationFile]);
+
+  // 4. Music: same picker as the ffmpeg path so the look-and-feel stays consistent across the flag.
+  const music = await pickMusic(o.seed);
+
+  // 5. Props. The adapter wants a Script-shaped object; we only need id, narration and
+  //    cardHeadline/cardSub (= the figure captions passed in). Everything else is unused.
+  const scriptShim = {
+    scenes: o.scenes.map((s, i) => ({
+      id: s.id,
+      narration: s.narration,
+      cardHeadline: o.captions?.[i] ?? "",
+      cardSub: "",
+    })),
+  } as Parameters<typeof buildExplainerProps>[0]["script"];
+
+  const props = buildExplainerProps({
+    script: scriptShim,
+    audios: o.audio,
+    timings,
+    sceneAssets,
+    narrationFile,
+    musicFile: music ?? undefined,
+    shotTargetSec: shotTarget,
+    // Later we can key the theme to channel.json; for now use the design system that shipped with
+    // OpenMontage's zero-key explainer demo (clean, dark, high contrast).
+    theme: process.env.REMOTION_THEME ?? "clean-professional",
+  });
+
+  // 6. Write the props JSON. Remotion resolves `--props <path>` relative to the composer's cwd,
+  //    so we hand it an absolute path and let it own the resolution.
+  const propsFile = path.join(o.dir, "remotion-props.json");
+  await fs.writeFile(propsFile, JSON.stringify(props, null, 2));
+
+  // 7. Shell. Chromium render is CPU-bound; let it use what the runner has. --log=warn so we see
+  //    anything that needs attention without drowning in frame-by-frame progress noise.
+  const final = path.join(o.dir, `${name}.mp4`);
+  const composerDir = path.join(ROOT, "remotion-composer");
+  const args = [
+    "remotion", "render", "src/index.tsx", "Explainer", final,
+    "--props", propsFile,
+    "--codec", "h264",
+    "--concurrency", process.env.REMOTION_CONCURRENCY ?? String(Math.max(1, Math.min(4, os.cpus().length))),
+    "--log=warn",
+  ];
+  console.log(`  [remotion] rendering via npx remotion render → ${final}`);
+  const startedAt = Date.now();
+  await new Promise<void>((resolve, reject) => {
+    const p = spawn("npx", args, { cwd: composerDir, stdio: "inherit" });
+    p.on("error", reject);
+    p.on("close", (code) => code === 0 ? resolve() : reject(new Error(`remotion render exited ${code}`)));
+  });
+  const elapsed = ((Date.now() - startedAt) / 1000).toFixed(0);
+  console.log(`  [remotion] render complete in ${elapsed}s`);
+  const bytes = (await fs.stat(final)).size;
+  if (bytes < 100_000) throw new Error(`remotion render reported success but ${final} is only ${bytes} bytes — looks truncated`);
+
+  // 8. SRT, same shape and timings as the ffmpeg path, so publish.ts can upload captions without
+  //    knowing which renderer produced them.
+  const srt = path.join(o.dir, `${name}.srt`);
+  await fs.writeFile(srt, buildSrt(o.scenes, timings, o.audio, size.w < size.h));
+
+  return { videoPath: final, srtPath: srt, timings };
+}
+
 export async function renderVideo(o: {
   scenes: Narrated[];
   /** one or more images/clips per scene — the render cuts between them on sentence boundaries */
@@ -233,6 +350,12 @@ export async function renderVideo(o: {
   /** short figure captions, one per scene, burned over the footage instead of shown as a slide */
   captions?: (string | undefined)[];
 }) {
+  // Phase 3: flag-gated swap to the Remotion renderer. Default stays on ffmpeg so a bad merge
+  // doesn't take production down. burnCaptions is ignored on the Remotion path — the composer's
+  // own CaptionOverlay handles it, and burning on top of a rendered video would duplicate text.
+  if (process.env.USE_REMOTION_RENDERER === "true") {
+    return renderWithRemotion({ scenes: o.scenes, images: o.images, audio: o.audio, dir: o.dir, seed: o.seed, size: o.size, name: o.name, captions: o.captions });
+  }
   const size = o.size ?? LANDSCAPE;
   const name = o.name ?? "final";
   // One shared clip cache per video: a repair round only re-encodes the scenes whose
