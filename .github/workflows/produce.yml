@@ -26,13 +26,28 @@ permissions: { contents: read, issues: write, actions: read }
 jobs:
   produce:
     runs-on: ubuntu-latest
-    timeout-minutes: 170
+    # Bumped from 170 → 240 to accommodate Remotion render (10–30 min per video on 2-vCPU runner).
+    # Our own PRODUCE_DEADLINE_MIN below stays conservative so we exit cleanly before this hard cap.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core espeak-ng
+      # fonts-noto + fonts-noto-color-emoji so Remotion themes (Inter, Noto Serif JP, emoji) render
+      # correctly in headless Chromium. Without these, captions fall back to Deja Vu and emoji appear
+      # as tofu boxes. libnss3/libatk/libasound2 are Chromium's own runtime deps.
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core fonts-noto fonts-noto-color-emoji espeak-ng \
+            libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 \
+            libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2t64
       - run: npm ci
+      # Install Remotion renderer deps (vendored at remotion-composer/, AGPLv3, see its NOTICE.md).
+      # Separate node_modules so Remotion's React 18 doesn't collide with yt-autopilot's own deps.
+      # First run downloads Chromium (~300MB) via @remotion/renderer; cached between runs by setup-node.
+      - name: Install Remotion composer deps
+        working-directory: remotion-composer
+        run: npm ci --no-audit --no-fund
       - name: Install Claude Code CLI (only when using a Claude subscription)
         env:
           LLM_PROVIDER: ${{ secrets.LLM_PROVIDER }}
@@ -43,12 +58,15 @@ jobs:
           path: .model-cache
           key: kokoro-v1-q8
       - run: npm run produce
-        timeout-minutes: 160
+        # Bumped from 160 → 230 for Remotion render time (10–30 min added per video).
+        timeout-minutes: 230
         env:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
           FORCE_SUB_NICHE: ${{ inputs.sub_niche }}
           FORCE_PRODUCE: ${{ inputs.force }}
-          PRODUCE_DEADLINE_MIN: "110"    # our own deadline, below the 160-minute step timeout
+          # Raised from 110 → 180 to accommodate Remotion renders. Still safely below the 230-min step
+          # cap so we exit cleanly if a render stalls, instead of being killed mid-write.
+          PRODUCE_DEADLINE_MIN: "180"
           PHASE_BUDGET_MS: "1200000"     # 20 min ceiling on the whole image phase
           SCENE_BUDGET_MS: "90000"       # 90s per scene, then pooled footage
           MIN_TOPIC_SCORE: "7.5"         # average across the six topic axes
