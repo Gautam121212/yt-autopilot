@@ -35,7 +35,13 @@ async function recent(stages: string[], limit: number): Promise<Lesson[]> {
       order by i.id desc
       limit $2`,
     [stages, limit],
-  ).catch(() => []);
+  ).catch((e) => {
+    // Defensive: an empty lessons list is fine (the writer just loses this hint), but silently
+    // SWALLOWING the error leaves the user wondering why guidance never shows up. Log it so it
+    // surfaces in produce run logs; don't crash the pipeline over missing feedback.
+    console.warn(`    [lessons] recent() query failed, returning empty: ${(e as Error).message.slice(0, 160)}`);
+    return [];
+  });
 }
 
 export const formatLessons = (xs: Lesson[]) =>
@@ -80,7 +86,10 @@ export async function recentScoreProfile(): Promise<string> {
      where assets->'review'->'scores' is not null
        and status in ('published', 'rejected', 'uploaded', 'dry_run_complete')
        and updated_at > now() - interval '30 days'`,
-  ).catch(() => []);
+  ).catch((e) => {
+    console.warn(`    [lessons] recentScoreProfile() query failed, returning empty: ${(e as Error).message.slice(0, 160)}`);
+    return [];
+  });
   const n = Number(row?.n ?? 0);
   if (n < 2) return ""; // one data point is noise, not a profile
   const dims = {
