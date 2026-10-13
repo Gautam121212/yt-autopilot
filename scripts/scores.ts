@@ -26,6 +26,10 @@ type Row = {
 };
 
 async function pullReviews(sinceDays: number): Promise<Row[]> {
+  // No swallowed errors here. The old `.catch(() => [])` turned a DB connection problem OR a
+  // schema mismatch into a silent "0 reviews" verdict, which is indistinguishable from "the
+  // pipeline hasn't produced anything" — the whole point of the dashboard is to tell you WHICH
+  // of those is true. Surface the error so the user can fix the real problem.
   return q<Row>(
     `select v.id, v.title, v.status, v.sub_niche, v.updated_at,
        (assets->'review'->'scores'->>'hook')::numeric         as hook,
@@ -40,7 +44,31 @@ async function pullReviews(sinceDays: number): Promise<Row[]> {
        and updated_at > now() - ($1 || ' days')::interval
      order by updated_at desc`,
     [String(sinceDays)],
-  ).catch(() => []);
+  );
+}
+
+/**
+ * Diagnostic — when the main query returns 0 rows, count how far each filter stage reduces the
+ * row count. Catches cases where the review payload is persisted under a different shape
+ * (e.g. `assets.review` with no `scores` field, which can happen if `unreviewed()` is replaced
+ * upstream with a lighter object), vs. actually having no rows at all.
+ */
+type Diag = { stage: string; n: string };
+async function diagnose(sinceDays: number): Promise<Diag[]> {
+  return q<Diag>(
+    `select 'total videos'                               as stage, count(*)::text as n from videos
+     union all
+     select 'with assets.review'                                      , count(*)::text    from videos where assets ? 'review'
+     union all
+     select 'with assets.review.scores'                               , count(*)::text    from videos where assets->'review'->'scores' is not null
+     union all
+     select 'with scores AND updated in window'                       , count(*)::text    from videos where assets->'review'->'scores' is not null and updated_at > now() - ($1 || ' days')::interval
+     union all
+     select 'rejected status (any window)'                            , count(*)::text    from videos where status in ('rejected','abandoned')
+     union all
+     select 'published status (any window)'                           , count(*)::text    from videos where status in ('published','uploaded')`,
+    [String(sinceDays)],
+  );
 }
 
 const num = (s: string | number | null): number => (s == null ? NaN : Number(s));
@@ -133,7 +161,14 @@ async function main() {
   }
 
   if (!rows.length) {
-    out.push("\n_No reviews in the window. Either the pipeline hasn't produced anything, or review.ts hasn't been run on anything yet. Check `select count(*) from videos where assets->'review' is not null`._");
+    out.push(section("Diagnostic — why 0 rows?"));
+    out.push("Running the dashboard query piece-by-piece so you can see which filter dropped them:\n");
+    const diag = await diagnose(WINDOW_DAYS);
+    for (const d of diag) out.push(`  ${d.n.padStart(5)}  ${d.stage}`);
+    out.push("\nIf `with assets.review.scores` is 0 but `with assets.review` is > 0, the review payload");
+    out.push("is missing a `scores` object — probably persisted via a path that doesn't set it (bug upstream).");
+    out.push("If `with scores AND updated in window` is 0 but `with assets.review.scores` is > 0, bump WINDOW_DAYS.");
+    out.push("If `total videos` is 0, you're pointing at the wrong database — check DATABASE_URL in .env.");
   }
 
   console.log(out.join("\n"));
