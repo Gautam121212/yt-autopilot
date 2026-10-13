@@ -42,7 +42,9 @@
     "vision:probe": "tsx --env-file-if-exists=.env scripts/vision-probe.mjs",
     "openrouter:test": "node scripts/openrouter-test.mjs",
     "renderer:install": "cd remotion-composer && npm install --no-audit --no-fund",
-    "renderer:smoke": "tsx scripts/renderer-smoke.ts"
+    "renderer:smoke": "tsx scripts/renderer-smoke.ts",
+    "scores": "tsx --env-file-if-exists=.env scripts/scores.ts",
+    "analyze": "tsx scripts/analyze-video.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
