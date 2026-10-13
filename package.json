@@ -40,7 +40,9 @@
     "select:test": "tsx --env-file-if-exists=.env scripts/select-test.ts",
     "dryrun": "tsx scripts/dryrun.ts",
     "vision:probe": "tsx --env-file-if-exists=.env scripts/vision-probe.mjs",
-    "openrouter:test": "node scripts/openrouter-test.mjs"
+    "openrouter:test": "node scripts/openrouter-test.mjs",
+    "renderer:install": "cd remotion-composer && npm install --no-audit --no-fund",
+    "renderer:smoke": "tsx scripts/renderer-smoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
