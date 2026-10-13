@@ -197,6 +197,66 @@
         "record broken loophole",
         "competition exploited rule"
       ]
+    },
+    {
+      "id": "cartography_oddities",
+      "label": "Cartography oddities",
+      "description": "Maps that lied for centuries — phantom islands, trap streets, borders no one can agree on, and the people who kept drawing them anyway",
+      "weight": 1,
+      "adRisk": "low",
+      "searchQueries": [
+        "phantom island map history",
+        "trap street cartography",
+        "border dispute explained"
+      ]
+    },
+    {
+      "id": "translation_disasters",
+      "label": "Translation disasters",
+      "description": "A single word, mistranslated, with consequences nobody could walk back — treaties, summits, product launches ruined by one preposition",
+      "weight": 1,
+      "adRisk": "low",
+      "searchQueries": [
+        "mistranslation treaty history",
+        "translation error disaster",
+        "diplomatic mistranslation"
+      ]
+    },
+    {
+      "id": "unintended_consequences",
+      "label": "Unintended consequences",
+      "description": "A government or institution did X to solve Y and accidentally caused Z — cobra effect, rabbit fences, the four pests campaign, dollar auctions",
+      "weight": 1,
+      "adRisk": "low",
+      "searchQueries": [
+        "policy backfired history",
+        "cobra effect example",
+        "unintended consequence government program"
+      ]
+    },
+    {
+      "id": "archive_lost_media",
+      "label": "Lost media",
+      "description": "Films that only exist in one copy, songs no one can find, recordings a janitor erased by mistake, and the people who spend decades trying to recover them",
+      "weight": 1,
+      "adRisk": "low",
+      "searchQueries": [
+        "lost film archive history",
+        "missing recording search",
+        "wiped master tape bbc"
+      ]
+    },
+    {
+      "id": "unlikely_record_holders",
+      "label": "Unlikely record holders",
+      "description": "World records that exist only because exactly one person bothered to try — treadmill breath-holding, longest-held strange title, the asterisk category",
+      "weight": 1,
+      "adRisk": "low",
+      "searchQueries": [
+        "strange world record history",
+        "obscure guinness record",
+        "only person to attempt record"
+      ]
     }
   ],
   "structures": [

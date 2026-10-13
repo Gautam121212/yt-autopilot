@@ -1,12 +1,15 @@
 name: produce
 on:
   schedule:
-    # GitHub drops or delays scheduled runs at the top of the hour under load ("high load times
-    # include the start of every hour" — Actions docs), so never use minute 0. Two staggered
-    # entries every 2 hours: 12 chances a day, and a dropped one costs nothing because a run that
-    # finds the day already won exits in seconds.
-    - cron: "23 1-23/2 * * *"
-    - cron: "47 0-22/2 * * *"
+    # 2 attempts per day, aligned to the audience's timezone (America/New_York).
+    # 15:17 UTC = 10:17 ET: morning queue drain, finishes before US primetime.
+    # 21:17 UTC = 16:17 ET: late-afternoon retry if the morning run failed or deferred.
+    # Both avoid the top of the hour where GitHub drops/delays runs under load ("high load times
+    # include the start of every hour" — Actions docs).
+    # Reduced from 12/day because Remotion renders are 10–30 min each (vs. ffmpeg's ~2); over-
+    # dispatching burns CI minutes without extra value when the queue is empty anyway.
+    - cron: "17 15 * * *"
+    - cron: "17 21 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
