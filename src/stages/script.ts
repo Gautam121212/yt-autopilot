@@ -204,7 +204,7 @@ ${SHAPE}`,
 /** Targeted rewrite driven by the final check's issues; everything not mentioned must stay byte-identical. */
 export async function repairScript(o: {
   cfg: ChannelConfig; playbook: string; script: Script; dossier: Dossier;
-  issues: { severity: string; area: string; sceneId: string | null; what: string; fix: string }[];
+  issues: { severity: string; area: string; sceneId?: string | null; what: string; fix: string }[];
 }): Promise<Script> {
   return normaliseSceneCount(await askJson({
     tier: "heavy",

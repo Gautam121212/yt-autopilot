@@ -15,7 +15,11 @@ export const ForecastSchema = z.object({
   weakest: z.string(),
   fixes: z.array(z.object({
     area: z.enum(["script", "title", "thumbnail", "image"]),
-    sceneId: z.string().nullable(),
+    // nullable().optional(): the LLM sometimes OMITS sceneId for non-scene-specific fixes
+    // (title, thumbnail) rather than returning null. Omission is equivalent intent, and
+    // downstream code already treats both as falsy. Caught on 13 Oct 11:36 UTC run #57 —
+    // judge returned a fixes[3] with no sceneId key, validation failed, retry succeeded.
+    sceneId: z.string().nullable().optional(),
     what: z.string(),
     fix: z.string(),
     severity: z.enum(["blocker", "major", "minor"]),
