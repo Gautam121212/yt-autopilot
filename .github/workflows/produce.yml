@@ -23,6 +23,10 @@ on:
         description: "Ignore the weekly failure cap"
         type: boolean
         default: false
+      use_remotion:
+        description: "Phase 3 — render via the Remotion composer instead of ffmpeg"
+        type: boolean
+        default: false
 concurrency: { group: produce, cancel-in-progress: false }
 # actions: read lets a run download the render an earlier run saved when the final check was unavailable.
 permissions: { contents: read, issues: write, actions: read }
@@ -70,6 +74,10 @@ jobs:
           # Raised from 110 → 180 to accommodate Remotion renders. Still safely below the 230-min step
           # cap so we exit cleanly if a render stalls, instead of being killed mid-write.
           PRODUCE_DEADLINE_MIN: "180"
+          # Phase 3 flag: when true, render.ts dispatches to the Remotion composer instead of ffmpeg.
+          # Default false means scheduled runs keep the proven ffmpeg path; manual dispatch can flip
+          # it via the use_remotion input above to try the new renderer on one run.
+          USE_REMOTION_RENDERER: ${{ inputs.use_remotion }}
           PHASE_BUDGET_MS: "1200000"     # 20 min ceiling on the whole image phase
           SCENE_BUDGET_MS: "90000"       # 90s per scene, then pooled footage
           MIN_TOPIC_SCORE: "7.5"         # average across the six topic axes

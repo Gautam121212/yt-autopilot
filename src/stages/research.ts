@@ -34,7 +34,7 @@ Mental model to teach: ${topic.chosen.mentalModel}
 SOURCES:
 ${pages.map((p, i) => `### S${i + 1}: ${p.title} (${p.url})\n${p.text}`).join("\n\n")}
 
-JSON: { "summary", "sources": [{ "id": "S1", "url", "title" }], "keyFacts": [{ "fact", "sourceIds" }] (min 8), "figures": [{ "claim", "value", "sourceIds" }], "mentalModel",
+JSON: { "summary", "sources": [{ "id": "S1", "url", "title" }] (min 2 — list EVERY source you cite, including every S# page supplied above; the schema rejects fewer), "keyFacts": [{ "fact", "sourceIds" }] (min 8), "figures": [{ "claim", "value", "sourceIds" }], "mentalModel",
  "details": [{ "detail", "sourceIds" }] (min 6, concrete narrative specifics),
  "uncertain": [string] }`,
   });
