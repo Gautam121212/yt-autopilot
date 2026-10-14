@@ -271,12 +271,16 @@ async function renderWithRemotion(o: {
     t += dur;
   }
 
-  // 3. Concat narration. ffmpeg's concat demuxer with -c copy requires same codec/sample rate,
-  //    which voice.ts guarantees (all scenes synthesized by the same engine). Writes a single mp3.
+  // 3. Concat narration. Kokoro emits PCM float32 (pcm_f32le @ 24 kHz), which the MP4/m4a
+  //    container does NOT accept — a stream copy here previously failed hard with "Could not
+  //    find tag for codec pcm_f32le in stream #0" (run #60, 14 Oct 06:41 UTC: produce.verified
+  //    incident at ffmpeg exit 234). Re-encode to AAC-LC so the output is a container-valid
+  //    file Remotion can read. Extra 2–5s per video, worth it for correctness.
   const narrationFile = path.join(o.dir, "narration-full.m4a");
   const listFile = path.join(o.dir, "narration-list.txt");
   await fs.writeFile(listFile, o.audio.map((a) => `file '${a.file}'`).join("\n"));
-  await sh("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", narrationFile]);
+  await sh("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listFile,
+    "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", narrationFile]);
 
   // 4. Music: same picker as the ffmpeg path so the look-and-feel stays consistent across the flag.
   const music = await pickMusic(o.seed);
