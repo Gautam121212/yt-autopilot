@@ -82,6 +82,12 @@ jobs:
           # Remotion render throws, so a composer failure doesn't lose the video.
           # Expression: only `== false` on the input flips it off (so unset/null = default-ON).
           USE_REMOTION_RENDERER: ${{ inputs.use_remotion == false && 'false' || 'true' }}
+          # Per-render timeout for Remotion (ms). 60 min covers the 10–30 min expected window with
+          # slack for a cold-runner Chromium download (~5 min first time) and the long tail of a
+          # heavy composition. On timeout render.ts SIGKILLs the subprocess and falls back to
+          # ffmpeg. Raise if you see legitimately long renders being killed; lower to fail-fast
+          # when iterating on the composer.
+          REMOTION_TIMEOUT_MS: "3600000"
           PHASE_BUDGET_MS: "1200000"     # 20 min ceiling on the whole image phase
           SCENE_BUDGET_MS: "90000"       # 90s per scene, then pooled footage
           MIN_TOPIC_SCORE: "7.5"         # average across the six topic axes
