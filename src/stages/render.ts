@@ -312,6 +312,15 @@ async function renderWithRemotion(o: {
 
   // 7. Shell. Chromium render is CPU-bound; let it use what the runner has. --log=warn so we see
   //    anything that needs attention without drowning in frame-by-frame progress noise.
+  //
+  //    Per-render timeout matters now that this is the default renderer: a hung Chromium or an
+  //    infinite loop in a composer component previously would have sat for the whole 230-min step
+  //    budget on ONE video. Default 60 min covers the 10–30 min expected window with slack for a
+  //    one-time Chromium download on a cold runner (~5 min) and the long tail. Override with
+  //    REMOTION_TIMEOUT_MS when debugging a slow render. On timeout we SIGKILL (SIGTERM first
+  //    isn't honored by headless Chrome quickly enough) and reject — render.ts' outer try/catch
+  //    then falls back to ffmpeg so the video still ships.
+  const timeoutMs = Number(process.env.REMOTION_TIMEOUT_MS ?? 60 * 60 * 1000);
   const final = path.join(o.dir, `${name}.mp4`);
   const composerDir = path.join(ROOT, "remotion-composer");
   const args = [
@@ -321,12 +330,25 @@ async function renderWithRemotion(o: {
     "--concurrency", process.env.REMOTION_CONCURRENCY ?? String(Math.max(1, Math.min(4, os.cpus().length))),
     "--log=warn",
   ];
-  console.log(`  [remotion] rendering via npx remotion render → ${final}`);
+  console.log(`  [remotion] rendering via npx remotion render → ${final} (timeout ${Math.round(timeoutMs / 60000)}min)`);
   const startedAt = Date.now();
   await new Promise<void>((resolve, reject) => {
     const p = spawn("npx", args, { cwd: composerDir, stdio: "inherit" });
-    p.on("error", reject);
-    p.on("close", (code) => code === 0 ? resolve() : reject(new Error(`remotion render exited ${code}`)));
+    let timedOut = false;
+    const killer = setTimeout(() => {
+      timedOut = true;
+      console.warn(`  [remotion] render exceeded ${Math.round(timeoutMs / 60000)}min — killing`);
+      p.kill("SIGTERM");
+      // SIGTERM may not win against a stuck Chromium quickly; follow up with SIGKILL after 10s.
+      setTimeout(() => { try { p.kill("SIGKILL"); } catch { /* already dead */ } }, 10_000);
+    }, timeoutMs);
+    p.on("error", (e) => { clearTimeout(killer); reject(e); });
+    p.on("close", (code) => {
+      clearTimeout(killer);
+      if (timedOut) reject(new Error(`remotion render timed out after ${Math.round(timeoutMs / 60000)}min`));
+      else if (code !== 0) reject(new Error(`remotion render exited ${code}`));
+      else resolve();
+    });
   });
   const elapsed = ((Date.now() - startedAt) / 1000).toFixed(0);
   console.log(`  [remotion] render complete in ${elapsed}s`);
