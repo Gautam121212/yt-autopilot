@@ -350,11 +350,21 @@ export async function renderVideo(o: {
   /** short figure captions, one per scene, burned over the footage instead of shown as a slide */
   captions?: (string | undefined)[];
 }) {
-  // Phase 3: flag-gated swap to the Remotion renderer. Default stays on ffmpeg so a bad merge
-  // doesn't take production down. burnCaptions is ignored on the Remotion path — the composer's
-  // own CaptionOverlay handles it, and burning on top of a rendered video would duplicate text.
+  // Phase 3: Remotion renderer, now default-ON per the workflow. ffmpeg stays as a per-run
+  // fallback — if the composer crashes (Chromium OOM, bad asset path, upstream OpenMontage bug),
+  // we log it and finish the video with the proven ffmpeg path instead of abandoning the whole
+  // run. burnCaptions is ignored on the Remotion path: the composer's own CaptionOverlay handles
+  // it, and burning on top of a rendered video would duplicate text.
   if (process.env.USE_REMOTION_RENDERER === "true") {
-    return renderWithRemotion({ scenes: o.scenes, images: o.images, audio: o.audio, dir: o.dir, seed: o.seed, size: o.size, name: o.name, captions: o.captions });
+    try {
+      return await renderWithRemotion({ scenes: o.scenes, images: o.images, audio: o.audio, dir: o.dir, seed: o.seed, size: o.size, name: o.name, captions: o.captions });
+    } catch (e) {
+      // Hard-fail the Remotion path only when the user asked for it explicitly (via env override);
+      // otherwise fall through to ffmpeg so the video still ships. Logged either way.
+      const msg = (e as Error).message?.slice(0, 400) ?? String(e);
+      console.warn(`  [render] Remotion renderer failed, falling back to ffmpeg: ${msg}`);
+      if (process.env.REMOTION_STRICT === "true") throw e;
+    }
   }
   const size = o.size ?? LANDSCAPE;
   const name = o.name ?? "final";
