@@ -184,12 +184,19 @@ function buildSrt(scenes: Narrated[], timings: SceneTiming[], audio: SceneAudio[
   const perCue = vertical ? 5 : 9;
   const emit = (words: string[], start: number, end: number) => {
     const per = (end - start) / Math.max(words.length, 1);
-    // Prefer breaking after a comma or full stop so a cue never ends mid-phrase.
+    // Prefer breaking after a comma or full stop so a cue never ends mid-phrase. Decimals are
+    // the exception: a word ending `digit + .` whose SUCCESSOR starts with a digit is almost
+    // certainly the left half of a decimal number (seen in captions.srt for video #60:
+    // "crack—0." then "1 inches deep", because "0.1 inches" tokenized across a scene boundary
+    // and the chunker treated the trailing "." as a safe break). Not breakable in that case.
     const chunks: string[][] = [];
     let cur: string[] = [];
-    for (const w of words) {
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i]!;
       cur.push(w);
-      const breakable = /[,.;:!?]$/.test(w);
+      const endsPunct = /[,.;:!?]$/.test(w);
+      const isDecimalLeft = /\d\.$/.test(w) && /^\d/.test(words[i + 1] ?? "");
+      const breakable = endsPunct && !isDecimalLeft;
       if (cur.length >= perCue || (breakable && cur.length >= Math.max(3, perCue - 2))) { chunks.push(cur); cur = []; }
     }
     if (cur.length) {

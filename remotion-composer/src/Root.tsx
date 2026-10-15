@@ -16,6 +16,7 @@ import { ProductReveal, ProductRevealProps } from "./components/ProductReveal";
 import { CaptionOverlay, WordCaption } from "./components/CaptionOverlay";
 import { CollageBurst, CollageBurstProps } from "./CollageBurst";
 import { LyricOverlay, LyricOverlayProps } from "./LyricOverlay";
+import { Thumbnail, ThumbnailProps } from "./Thumbnail";
 
 // ---------------------------------------------------------------------------
 // Theme System — prevents every video from looking like dark fintech
@@ -329,6 +330,22 @@ export const Root: React.FC = () => {
           fadeOutSeconds: 1.5,
           overlay: true,
         } as EndTagProps}
+      />
+      {/* yt-autopilot thumbnail. Rendered with `npx remotion still` (one frame → PNG/JPG).
+          1280x720 to match YouTube's recommended thumbnail size. 30fps/durationInFrames
+          are required by the API but irrelevant for a still render. */}
+      <Composition
+        id="Thumbnail"
+        component={Thumbnail}
+        durationInFrames={1}
+        fps={30}
+        width={1280}
+        height={720}
+        defaultProps={{
+          bgSrc: "demo-props/world-in-numbers.json",
+          line1: "EMPIRE",
+          line2: "WON",
+        } as ThumbnailProps}
       />
     </>
   );
