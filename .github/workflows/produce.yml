@@ -80,8 +80,17 @@ jobs:
           # Phase 3 default: ON for scheduled runs; manual dispatch can explicitly set
           # use_remotion=false to fall back to ffmpeg. render.ts also falls back to ffmpeg if the
           # Remotion render throws, so a composer failure doesn't lose the video.
-          # Expression: only `== false` on the input flips it off (so unset/null = default-ON).
-          USE_REMOTION_RENDERER: ${{ inputs.use_remotion == false && 'false' || 'true' }}
+          #
+          # Expression gotcha: `inputs.use_remotion == false` evaluated TRUE on scheduled runs
+          # (where inputs are unset) because GH Actions treats null==false as true. The previous
+          # expression therefore returned 'false' on every schedule — Remotion never ran for
+          # anything the user didn't dispatch by hand (PR #25 landed Oct 14; discovered Oct 15
+          # when run #60's env dump showed `USE_REMOTION_RENDERER: false`).
+          #
+          # Correct form: only emit 'false' when event is explicitly a dispatch AND the user
+          # explicitly set use_remotion to false. Everything else — schedule, dispatch with
+          # true, dispatch with no input — stays 'true'.
+          USE_REMOTION_RENDERER: ${{ (github.event_name == 'workflow_dispatch' && inputs.use_remotion == false) && 'false' || 'true' }}
           # Per-render timeout for Remotion (ms). 60 min covers the 10–30 min expected window with
           # slack for a cold-runner Chromium download (~5 min first time) and the long tail of a
           # heavy composition. On timeout render.ts SIGKILLs the subprocess and falls back to
