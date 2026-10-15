@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import type { ChannelConfig } from "../config";
+import { ROOT } from "../config";
 import { durationSec, sh } from "../lib/media";
 import { commonsImage, openverseImage, pexelsImage, pixabayImage } from "../lib/sources";
 
@@ -102,6 +104,50 @@ export async function bestFrameFrom(videoPath: string, dir: string): Promise<str
   return best.file;
 }
 
+/**
+ * Thumbnail via Remotion's `still` command. Renders the Thumbnail composition (OpenMontage +
+ * Apple-design typography/material) to a single JPG. Keeps the old ffmpeg background pipeline
+ * (best-frame extraction + grading) because the composition only draws the overlay — the
+ * background image is still the yt-autopilot best-frame pick.
+ *
+ * Returns null if the still render fails or if the composer isn't installed. Caller falls back
+ * to the ffmpeg path, same shape as render.ts's Phase 3 fallback.
+ */
+async function makeThumbnailRemotion(bgSrc: string, text: string, out: string): Promise<string | null> {
+  const words = text.toUpperCase().split(/\s+/).filter(Boolean);
+  const split = words.length >= 4 ? Math.ceil(words.length / 2) : words.length > 1 ? words.length - 1 : 1;
+  const line1 = words.slice(0, split).join(" ");
+  const line2 = words.slice(split).join(" ");
+
+  const composerDir = path.join(ROOT, "remotion-composer");
+  const propsFile = path.join(path.dirname(out), "thumbnail-props.json");
+  await fs.writeFile(propsFile, JSON.stringify({ bgSrc, line1, line2 }));
+
+  const args = [
+    "remotion", "still", "src/index.tsx", "Thumbnail", out,
+    "--props", propsFile,
+    "--image-format", "jpeg",
+    "--jpeg-quality", "90",
+    "--log=warn",
+  ];
+  const timeoutMs = Number(process.env.REMOTION_THUMB_TIMEOUT_MS ?? 10 * 60 * 1000);
+  console.log(`  [remotion-still] rendering thumbnail → ${out} (timeout ${Math.round(timeoutMs / 60000)}min)`);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const p = spawn("npx", args, { cwd: composerDir, stdio: "inherit" });
+      const killer = setTimeout(() => { p.kill("SIGTERM"); setTimeout(() => { try { p.kill("SIGKILL"); } catch { /* dead */ } }, 10_000); }, timeoutMs);
+      p.on("error", (e) => { clearTimeout(killer); reject(e); });
+      p.on("close", (code) => { clearTimeout(killer); code === 0 ? resolve() : reject(new Error(`remotion still exited ${code}`)); });
+    });
+    const bytes = await fs.stat(out).then((s) => s.size, () => 0);
+    if (bytes < 10_000) throw new Error(`thumbnail is only ${bytes} bytes — truncated`);
+    return out;
+  } catch (e) {
+    console.warn(`  [remotion-still] thumbnail render failed: ${(e as Error).message.slice(0, 200)}`);
+    return null;
+  }
+}
+
 export async function makeThumbnail(
   cfg: ChannelConfig, query: string, text: string, dir: string, used: Set<string>, fallbackImage: string,
   /** the finished video — the thumbnail is cut from its own best moment when given */
@@ -123,6 +169,16 @@ export async function makeThumbnail(
     src = got ? raw : fallbackImage;
   }
   const out = path.join(dir, "thumbnail.jpg");
+
+  // When Phase 3's renderer is on, use the same engine for the thumbnail — same type system,
+  // same materials, so the thumbnail doesn't look like it was glued on by a different tool
+  // than the video. Falls back to the ffmpeg path below on any failure, so a composer bug
+  // doesn't lose the video.
+  if (process.env.USE_REMOTION_RENDERER === "true" && !isVideoFile(src)) {
+    const t = await makeThumbnailRemotion(src, text, out);
+    if (t) return t;
+    console.warn("  [thumbnail] Remotion still failed, falling back to ffmpeg drawtext path");
+  }
   const single = isVideoFile(src) ? ["-frames:v", "1", "-update", "1"] : [];
 
   // Punchy grade: tight crop, lifted contrast, saturated, darkened corners so text pops.
