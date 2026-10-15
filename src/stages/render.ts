@@ -316,8 +316,44 @@ async function renderWithRemotion(o: {
     theme: process.env.REMOTION_THEME ?? "clean-professional",
   });
 
-  // 6. Write the props JSON. Remotion resolves `--props <path>` relative to the composer's cwd,
-  //    so we hand it an absolute path and let it own the resolution.
+  // 6a. Stage assets into remotion-composer/public/ so Chromium can load them. The Phase 1
+  //     scoping assumed resolveAsset.ts's file:// conversion would work; it DOES NOT. Headless
+  //     Chromium refuses `file://` URLs when the page itself is served from `http://`
+  //     (Remotion's bundler runs a local HTTP server). Seen on run #61 at 16:06 UTC:
+  //         "Not allowed to load local resource: file:///.../sel-000-0.jpg"
+  //         "Not allowed to load local resource: file:///.../assets/music/bed-low-c.wav"
+  //         An error occurred while rendering frame 0.
+  //
+  //     Fix: symlink every asset into remotion-composer/public/run-<id>/<basename> and rewrite
+  //     the paths in props to `run-<id>/<basename>`. staticFile() (which resolveAsset falls
+  //     back to for non-absolute paths) then serves them over the same HTTP origin as the page.
+  //     Symlinks are instant on Linux/macOS; cost is tiny. The stage dir is wiped at the start
+  //     of each render so re-runs don't accumulate state.
+  const composerDirForStaging = path.join(ROOT, "remotion-composer");
+  const runId = path.basename(o.dir);
+  const stageDir = path.join(composerDirForStaging, "public", `run-${runId}`);
+  await fs.rm(stageDir, { recursive: true, force: true });
+  await fs.mkdir(stageDir, { recursive: true });
+  const staged = new Map<string, string>();
+  const stage = async (abs: string): Promise<string> => {
+    if (!abs) return abs;
+    const cached = staged.get(abs);
+    if (cached) return cached;
+    // Collision-safe name: basename alone can repeat across scenes (e.g. multiple scenes using
+    // the same pool image). Prefix with a short hash of the full path.
+    const hash = Buffer.from(abs).toString("base64url").slice(-8);
+    const base = `${hash}-${path.basename(abs)}`;
+    const target = path.join(stageDir, base);
+    try { await fs.symlink(abs, target); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
+    const rel = `run-${runId}/${base}`;
+    staged.set(abs, rel);
+    return rel;
+  };
+  for (const cut of props.cuts) cut.source = await stage(cut.source);
+  if (props.audio?.narration?.src) props.audio.narration.src = await stage(props.audio.narration.src);
+  if (props.audio?.music?.src) props.audio.music.src = await stage(props.audio.music.src);
+
+  // 6b. Write the props JSON (now with staged relative paths).
   const propsFile = path.join(o.dir, "remotion-props.json");
   await fs.writeFile(propsFile, JSON.stringify(props, null, 2));
 

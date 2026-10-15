@@ -6,3 +6,7 @@ node_modules/
 work/
 select-test/
 dryrun/
+# Per-render asset staging dirs — symlinks into work/ created on each Remotion render,
+# wiped at the start of the next. Not source.
+remotion-composer/public/run-*/
+remotion-composer/public/thumb-*/

@@ -120,8 +120,20 @@ async function makeThumbnailRemotion(bgSrc: string, text: string, out: string): 
   const line2 = words.slice(split).join(" ");
 
   const composerDir = path.join(ROOT, "remotion-composer");
+  // Stage the bg image into public/ so Chromium can load it over Remotion's HTTP origin.
+  // Same reason as render.ts' stage step: `file://` URLs are refused when the page is served
+  // from `http://`. The thumb stage dir is per-video and wiped on each render.
+  const runId = path.basename(path.dirname(out));
+  const stageDir = path.join(composerDir, "public", `thumb-${runId}`);
+  await fs.rm(stageDir, { recursive: true, force: true });
+  await fs.mkdir(stageDir, { recursive: true });
+  const stagedBase = path.basename(bgSrc);
+  const stagedPath = path.join(stageDir, stagedBase);
+  try { await fs.symlink(bgSrc, stagedPath); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
+  const stagedBgSrc = `thumb-${runId}/${stagedBase}`;
+
   const propsFile = path.join(path.dirname(out), "thumbnail-props.json");
-  await fs.writeFile(propsFile, JSON.stringify({ bgSrc, line1, line2 }));
+  await fs.writeFile(propsFile, JSON.stringify({ bgSrc: stagedBgSrc, line1, line2 }));
 
   const args = [
     "remotion", "still", "src/index.tsx", "Thumbnail", out,
