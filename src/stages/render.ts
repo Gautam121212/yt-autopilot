@@ -184,11 +184,17 @@ function buildSrt(scenes: Narrated[], timings: SceneTiming[], audio: SceneAudio[
   const perCue = vertical ? 5 : 9;
   const emit = (words: string[], start: number, end: number) => {
     const per = (end - start) / Math.max(words.length, 1);
-    // Prefer breaking after a comma or full stop so a cue never ends mid-phrase. Decimals are
-    // the exception: a word ending `digit + .` whose SUCCESSOR starts with a digit is almost
-    // certainly the left half of a decimal number (seen in captions.srt for video #60:
-    // "crack—0." then "1 inches deep", because "0.1 inches" tokenized across a scene boundary
-    // and the chunker treated the trailing "." as a safe break). Not breakable in that case.
+    // Prefer breaking after a comma or full stop so a cue never ends mid-phrase. Two exceptions:
+    //
+    // 1) Decimals: "0.1 inches" tokenized across a boundary gave `"0."` + `"1 inches"` on #60.
+    //    A word ending `digit + .` whose SUCCESSOR starts with a digit stays intact.
+    //
+    // 2) Abbreviations: "7:10 p.m." gave `"7:10 p."` + `"m."` on #61 (seen in captions.srt
+    //    cues 1-2). Common abbreviations end mid-sentence with a `.` that shouldn't trigger a
+    //    cue break. Matched against a small list; if adding one, keep it lowercase and the
+    //    comparison strips trailing punct from the word first.
+    const ABBREV = new Set(["p.m", "a.m", "e.g", "i.e", "b.c", "a.d", "u.s", "u.k",
+      "mr", "mrs", "ms", "dr", "jr", "sr", "st", "vs", "etc", "inc", "ltd", "co", "prof", "fig", "no"]);
     const chunks: string[][] = [];
     let cur: string[] = [];
     for (let i = 0; i < words.length; i++) {
@@ -196,7 +202,10 @@ function buildSrt(scenes: Narrated[], timings: SceneTiming[], audio: SceneAudio[
       cur.push(w);
       const endsPunct = /[,.;:!?]$/.test(w);
       const isDecimalLeft = /\d\.$/.test(w) && /^\d/.test(words[i + 1] ?? "");
-      const breakable = endsPunct && !isDecimalLeft;
+      // Strip the trailing punct and any leading punct/dashes so we match the raw abbrev form.
+      const bare = w.replace(/[^A-Za-z0-9.]/g, "").replace(/\.$/, "").toLowerCase();
+      const isAbbrev = ABBREV.has(bare);
+      const breakable = endsPunct && !isDecimalLeft && !isAbbrev;
       if (cur.length >= perCue || (breakable && cur.length >= Math.max(3, perCue - 2))) { chunks.push(cur); cur = []; }
     }
     if (cur.length) {
