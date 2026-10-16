@@ -129,7 +129,10 @@ async function makeThumbnailRemotion(bgSrc: string, text: string, out: string): 
   await fs.mkdir(stageDir, { recursive: true });
   const stagedBase = path.basename(bgSrc);
   const stagedPath = path.join(stageDir, stagedBase);
-  try { await fs.symlink(bgSrc, stagedPath); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
+  // Copy, not symlink. Remotion's bundler copies public/ into /tmp/remotion-webpack-bundle-*/
+  // and symlinks don't survive that snapshot — the bundle ends up with broken links and
+  // Chromium 404s. See the identical fix in render.ts' staging block (run #61 at 19:28 UTC).
+  await fs.copyFile(bgSrc, stagedPath);
   const stagedBgSrc = `thumb-${runId}/${stagedBase}`;
 
   const propsFile = path.join(path.dirname(out), "thumbnail-props.json");

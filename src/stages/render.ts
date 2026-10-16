@@ -325,19 +325,23 @@ async function renderWithRemotion(o: {
     theme: process.env.REMOTION_THEME ?? "clean-professional",
   });
 
-  // 6a. Stage assets into remotion-composer/public/ so Chromium can load them. The Phase 1
-  //     scoping assumed resolveAsset.ts's file:// conversion would work; it DOES NOT. Headless
-  //     Chromium refuses `file://` URLs when the page itself is served from `http://`
-  //     (Remotion's bundler runs a local HTTP server). Seen on run #61 at 16:06 UTC:
-  //         "Not allowed to load local resource: file:///.../sel-000-0.jpg"
-  //         "Not allowed to load local resource: file:///.../assets/music/bed-low-c.wav"
-  //         An error occurred while rendering frame 0.
+  // 6a. Stage assets into remotion-composer/public/ so Chromium can load them.
   //
-  //     Fix: symlink every asset into remotion-composer/public/run-<id>/<basename> and rewrite
-  //     the paths in props to `run-<id>/<basename>`. staticFile() (which resolveAsset falls
-  //     back to for non-absolute paths) then serves them over the same HTTP origin as the page.
-  //     Symlinks are instant on Linux/macOS; cost is tiny. The stage dir is wiped at the start
-  //     of each render so re-runs don't accumulate state.
+  //     History: Phase 1 scoping assumed resolveAsset.ts's file:// conversion would work in
+  //     Chromium (run #61 at 16:06 UTC: "Not allowed to load local resource" for every asset).
+  //     PR #31 switched to SYMLINKS from public/run-<id>/ into work/<id>/ to serve via Remotion's
+  //     static origin. First run with that fix (#61 at 19:28 UTC) revealed the next layer: the
+  //     Remotion bundler copies public/ to its /tmp/remotion-webpack-bundle-*/ dir at build
+  //     time, and SYMLINKS DO NOT SURVIVE THAT COPY. The bundle's public/ directory then has
+  //     either broken links or missing files, and every asset 404s from Chromium:
+  //         Received a status code of 404 while downloading file
+  //         http://localhost:3000/public/run-61/tMC5tcDQ-sel-000-0.mp4
+  //         (/tmp/remotion-webpack-bundle-chyydO/public/run-61/tMC5tcDQ-sel-000-0.mp4)
+  //         could not be found
+  //
+  //     Fix: COPY the files instead. Costs ~50 MB per video of extra disk, which GH Actions
+  //     runners don't care about. Guaranteed to survive the bundler's public/ snapshot.
+  //     The stage dir is wiped at the start of each render so re-runs don't accumulate state.
   const composerDirForStaging = path.join(ROOT, "remotion-composer");
   const runId = path.basename(o.dir);
   const stageDir = path.join(composerDirForStaging, "public", `run-${runId}`);
@@ -353,7 +357,7 @@ async function renderWithRemotion(o: {
     const hash = Buffer.from(abs).toString("base64url").slice(-8);
     const base = `${hash}-${path.basename(abs)}`;
     const target = path.join(stageDir, base);
-    try { await fs.symlink(abs, target); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
+    await fs.copyFile(abs, target);
     const rel = `run-${runId}/${base}`;
     staged.set(abs, rel);
     return rel;
