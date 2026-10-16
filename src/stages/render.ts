@@ -529,13 +529,23 @@ export async function renderVideo(o: {
 
   if (o.burnCaptions) {
     const burned = path.join(o.dir, `${name}-cc.mp4`);
-    // Shorts safe zone: YouTube overlays the channel name, title and music line on roughly the bottom
-    // quarter, so MarginV=34 (~12% up) put the second caption line under the UI on a phone. 80 of 288
-    // (~28% up) sits the captions just above it — the same band the big Shorts channels use.
-    // ASS coordinates, not pixels: MarginV is measured in a 288-tall script space, so 240 put the
-    // captions at the TOP of the frame in production.
-    const style = "FontName=DejaVu Sans,Fontsize=15,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000," +
-      "Outline=4,Shadow=1,Alignment=2,MarginV=80,MarginL=24,MarginR=24";
+    // Shorts safe zone: YouTube overlays the channel name, title and music line on roughly the
+    // bottom quarter. 100 in a 288-tall script space (~35% up) sits captions just above the UI.
+    //
+    // Style tuned to approximate OpenMontage's CaptionOverlay look as closely as ASS allows,
+    // so Shorts that fall back to the ffmpeg path (Phase 3 crashed, we burn here) don't look
+    // like old-school 2010-era subtitle blocks. Specifically:
+    // - Fontsize 24 (was 15): big enough to read on a phone without feeling like 90s karaoke.
+    // - BackColour + BorderStyle=4: translucent dark pill behind the text (~47% black opacity)
+    //   mirrors the backdrop-blurred caption pill from the Remotion CaptionOverlay. ASS can't
+    //   do real backdrop-blur, but a semi-opaque backing box is the closest fallback.
+    // - Outline 1, Shadow 1: crisp, not thick. The old Outline=4 produced the "heavy block"
+    //   look the user flagged on #61 fallback renders.
+    // - Spacing=-1: slight negative tracking at display size, matching the Apple-design rule
+    //   my CaptionOverlay patch (PR #20) also applies at this font size range.
+    const style = "FontName=DejaVu Sans,Fontsize=24,Bold=1," +
+      "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H88000000," +
+      "BorderStyle=4,Outline=1,Shadow=1,Alignment=2,MarginV=100,MarginL=48,MarginR=48,Spacing=-1";
     const ok = await sh("ffmpeg", ["-y", "-i", final, "-vf", `subtitles=${srt}:force_style='${style}'`,
       "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-maxrate", MAXRATE, "-bufsize", BUFSIZE,
       "-c:a", "copy", "-movflags", "+faststart", burned])
