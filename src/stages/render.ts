@@ -205,7 +205,12 @@ function buildSrt(scenes: Narrated[], timings: SceneTiming[], audio: SceneAudio[
       // Strip the trailing punct and any leading punct/dashes so we match the raw abbrev form.
       const bare = w.replace(/[^A-Za-z0-9.]/g, "").replace(/\.$/, "").toLowerCase();
       const isAbbrev = ABBREV.has(bare);
-      const breakable = endsPunct && !isDecimalLeft && !isAbbrev;
+      // Single-letter initial before a capitalized name: "H. Schultes", "J. R. R. Tolkien".
+      // Common in historical science writing. Detect: word is "X." (one capital + period) AND the
+      // NEXT word starts with a capital letter OR another initial. #63 cue 1→2 split "Hermann
+      // Frenzel and H." + "Schultes filled a tank..." on this exact pattern.
+      const isInitial = /^[A-Z]\.$/.test(w) && /^[A-Z]/.test(words[i + 1] ?? "");
+      const breakable = endsPunct && !isDecimalLeft && !isAbbrev && !isInitial;
       if (cur.length >= perCue || (breakable && cur.length >= Math.max(3, perCue - 2))) { chunks.push(cur); cur = []; }
     }
     if (cur.length) {
