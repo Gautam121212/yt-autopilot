@@ -200,13 +200,14 @@ export async function pickCandidates(meta: VideoMeta, cues: CaptionCue[]): Promi
   const prompt = [
     `VIDEO: ${meta.title}`,
     `BY: ${meta.uploader}`,
-    `DURATION: ${Math.floor(meta.durationSec / 60)}m${meta.durationSec % 60}s`,
+    `DURATION: ${meta.durationSec} seconds total (${Math.floor(meta.durationSec / 60)}m${meta.durationSec % 60}s)`,
+    `MAX endSec: ${meta.durationSec} — DO NOT pick a timestamp beyond this. The last valid clip is roughly startSec=${Math.max(0, meta.durationSec - 90)}, endSec=${meta.durationSec}.`,
     meta.chapters?.length ? `CHAPTERS:\n${meta.chapters.map((c) => `  [${Math.floor(c.startSec / 60)}:${String(Math.floor(c.startSec % 60)).padStart(2, "0")}] ${c.title}`).join("\n")}` : "",
     "",
     "TRANSCRIPT (auto-captioned, [MM:SS] markers every ~15 seconds):",
     transcript,
     "",
-    "Pick 3-5 clip candidates. Return JSON matching the schema. startSec and endSec are the actual spans you'd cut from the source video.",
+    `Pick 3-5 clip candidates. Return JSON matching the schema. startSec and endSec are the actual spans you'd cut from the source video, in SECONDS, with 0 ≤ startSec < endSec ≤ ${meta.durationSec}.`,
   ].filter(Boolean).join("\n");
 
   const raw = await askJson<ClipList>({
@@ -221,16 +222,25 @@ export async function pickCandidates(meta: VideoMeta, cues: CaptionCue[]): Promi
     maxTokens: 8000,
   });
 
-  // Defensive post-filter: even with the schema and prompt enforcing it, drop any candidate whose
-  // window is outside the band. Log what we dropped so a future reader sees why N candidates
-  // became N-k. If nothing survives, let the caller fail — don't paper over a totally bad response.
+  // Defensive post-filter: duration band AND video-duration bounds. Log what we dropped so a
+  // future reader sees why N candidates became N-k. If nothing survives, let the caller fail.
   const kept = raw.candidates.filter((c) => {
     const dur = c.endSec - c.startSec;
-    const ok = dur >= CLIP_MIN_SEC && dur <= CLIP_MAX_SEC;
-    if (!ok) console.warn(`[pick] dropping rank ${c.rank}: duration ${dur.toFixed(1)}s out of band [${CLIP_MIN_SEC}, ${CLIP_MAX_SEC}]`);
-    return ok;
+    if (dur < CLIP_MIN_SEC || dur > CLIP_MAX_SEC) {
+      console.warn(`[pick] dropping rank ${c.rank}: duration ${dur.toFixed(1)}s out of band [${CLIP_MIN_SEC}, ${CLIP_MAX_SEC}]`);
+      return false;
+    }
+    if (c.endSec > meta.durationSec) {
+      console.warn(`[pick] dropping rank ${c.rank}: endSec ${c.endSec}s > source duration ${meta.durationSec}s`);
+      return false;
+    }
+    if (c.startSec < 0) {
+      console.warn(`[pick] dropping rank ${c.rank}: startSec ${c.startSec}s < 0`);
+      return false;
+    }
+    return true;
   });
-  if (!kept.length) throw new Error(`LLM returned ${raw.candidates.length} candidates but all had out-of-band durations. Rerun or adjust the prompt.`);
+  if (!kept.length) throw new Error(`LLM returned ${raw.candidates.length} candidates but all were rejected. Rerun or adjust the prompt.`);
   return { candidates: kept };
 }
 

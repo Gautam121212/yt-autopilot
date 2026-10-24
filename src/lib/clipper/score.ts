@@ -125,7 +125,10 @@ export function score(path: string, m: Measurements, band: "shorts" | "long"): S
   gates["duration_band"] = inBand ? 10 : 0;
 
   const total = Object.values(gates).reduce((s, n) => s + n, 0);
-  const passed = total >= 80 && critical.length === 0;
+  // Threshold calibration: dropped from 80 → 70 after M4 real-world test. 80 was blocking clips
+  // that only missed one non-critical gate (typical: silence_ratio OR loudness single-pass drift).
+  // Critical fails still auto-fail at any score, so clipping/dead-air/silent clips still don't ship.
+  const passed = total >= 70 && critical.length === 0;
 
   return {
     path,
