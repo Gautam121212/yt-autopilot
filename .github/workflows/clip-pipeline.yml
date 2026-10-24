@@ -168,6 +168,8 @@ jobs:
       - name: Open review issue
         env:
           GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           # Collect manifest(s) from each run dir and summarize.
@@ -177,14 +179,14 @@ jobs:
             TITLE=$(node -e "console.log(require('${mf}').source?.title || '(unknown)')")
             FMT=$(node -e "console.log(require('${mf}').decision?.format || '-')")
             OUT=$(node -e "console.log((require('${mf}').outputs||[]).length)")
-            LISTED+="- **$TITLE** → $FMT ($OUT files) · artifact \`clips-${{ github.run_id }}\`\n"
+            LISTED+="- **$TITLE** → $FMT ($OUT files) · artifact clips-${RUN_ID}\n"
           done
           if [[ -z "$LISTED" ]]; then LISTED="(no clips produced — all candidates dropped by gates or download failed)"; fi
-          gh issue create \
-            --title "clipper: review clips from run ${{ github.run_id }}" \
-            --body "Pending clips are in artifact \`clips-${{ github.run_id }}\` (expires in 7 days). Download, review, then comment \`/approve\` or \`/reject\` with a comma-separated list of clip ids to mark their videoIds in state.json.
-
-$(printf '%b' "$LISTED")
-
-Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            --label "clipper-review" || echo "issue create failed (label may need to exist first)"
+          # Build body in a temp file so YAML parsing isn't confused by inline newlines.
+          BODY=$(mktemp)
+          {
+            printf 'Pending clips are in artifact clips-%s (expires in 7 days). Download, review, then comment /approve or /reject with the videoIds to mark them in state.json.\n\n' "$RUN_ID"
+            printf '%b\n' "$LISTED"
+            printf 'Run: https://github.com/%s/actions/runs/%s\n' "$REPO" "$RUN_ID"
+          } > "$BODY"
+          gh issue create --title "clipper: review clips from run ${RUN_ID}" --body-file "$BODY" --label "clipper-review" || echo "issue create failed (label may need to exist first)"
