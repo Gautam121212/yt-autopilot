@@ -78,6 +78,11 @@ jobs:
           LLM_ROLE_WRITE: mistral
           LLM_ROLE_GATE: mistral
           LLM_ROLE_JUDGE: mistral
+          # Optional: base64-encoded cookies.txt exported from a logged-in YouTube session on the
+          # user's own machine. Only needed when YouTube bot-checks the GH runner IP (common).
+          # Set with: `gh secret set YT_COOKIES_B64 --body "$(base64 -i cookies.txt)"`
+          # Export cookies.txt locally with: `yt-dlp --cookies-from-browser chrome --cookies cookies.txt --skip-download https://youtube.com`
+          YT_COOKIES_B64: ${{ secrets.YT_COOKIES_B64 }}
         run: |
           npm run clip:build -- "${{ github.event.inputs.url }}" \
             --format "${{ github.event.inputs.format }}" \

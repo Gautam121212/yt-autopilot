@@ -14,6 +14,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { ClipCandidate } from "../yt-clipper.js";
+import { ytdlpCommon } from "./ytdlp-args.js";
 
 const exec = promisify(execFile);
 
@@ -28,6 +29,7 @@ export async function downloadSource(url: string, outDir: string, maxHeight = 48
   await mkdir(outDir, { recursive: true });
   const tmpl = path.join(outDir, "source.%(ext)s");
   await exec("yt-dlp", [
+    ...ytdlpCommon(),
     "-f", `bestvideo[height<=${maxHeight}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${maxHeight}][ext=mp4]/best[height<=${maxHeight}]`,
     "--merge-output-format", "mp4",
     "-o", tmpl,

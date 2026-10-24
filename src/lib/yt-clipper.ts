@@ -23,6 +23,7 @@ import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { askJson } from "./llm.js";
+import { ytdlpCommon } from "./clipper/ytdlp-args.js";
 
 const exec = promisify(execFile);
 
@@ -57,7 +58,7 @@ export type ClipList = z.infer<typeof ClipList>;
 
 /** Fetch video metadata as JSON via yt-dlp. Public-page only, no auth. */
 export async function fetchMeta(url: string): Promise<VideoMeta> {
-  const { stdout } = await exec("yt-dlp", ["-J", "--no-warnings", "--skip-download", url], { maxBuffer: 32 * 1024 * 1024 });
+  const { stdout } = await exec("yt-dlp", [...ytdlpCommon(), "-J", "--no-warnings", "--skip-download", url], { maxBuffer: 32 * 1024 * 1024 });
   const info = JSON.parse(stdout) as {
     id: string; title: string; uploader?: string; channel?: string; duration?: number;
     view_count?: number; chapters?: Array<{ title: string; start_time: number; end_time: number }>;
@@ -86,6 +87,7 @@ export async function fetchCaptions(url: string, lang = "en"): Promise<CaptionCu
     for (let attempt = 0; attempt <= delays.length; attempt++) {
       try {
         await exec("yt-dlp", [
+          ...ytdlpCommon(),
           "--write-auto-sub", "--write-sub",
           "--sub-lang", lang,
           "--sub-format", "vtt",
