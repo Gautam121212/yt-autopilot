@@ -38,16 +38,23 @@ export type VideoMeta = {
   chapters?: Array<{ title: string; startSec: number; endSec: number }>;
 };
 
+// Hard clip-window constraints. The LLM has been known to return 1-second windows when the prompt
+// wasn't explicit enough — these bounds back the schema up so broken picks fail validation.
+export const CLIP_MIN_SEC = 20;
+export const CLIP_MAX_SEC = 90;
+
 export const ClipCandidate = z.object({
   rank: z.number().int().min(1),
-  startSec: z.number().min(0),
-  endSec: z.number().min(0),
+  startSec: z.number().min(0).describe("Start time in SECONDS from the beginning of the source video"),
+  endSec: z.number().min(0).describe("End time in SECONDS; MUST be at least 20 and at most 90 seconds AFTER startSec"),
   originalFirstLine: z.string(),
   newFirstLine: z.string().describe("A rewritten hook that works without the surrounding video context"),
   onScreenText: z.string().describe("Different words from the spoken line; shown for the first two seconds"),
   loopPoint: z.string().describe("What the last line sets up so the first line answers it"),
   framingNote: z.string().describe("What gets cropped out of a 16:9 frame for 9:16 vertical and whether it matters"),
   rationale: z.string().describe("Why this span survives on its own — reference the three gates (complete opening / a turn / lands on a line)"),
+}).refine((c) => (c.endSec - c.startSec) >= CLIP_MIN_SEC && (c.endSec - c.startSec) <= CLIP_MAX_SEC, {
+  message: `clip duration (endSec - startSec) must be between ${CLIP_MIN_SEC}s and ${CLIP_MAX_SEC}s`,
 });
 export type ClipCandidate = z.infer<typeof ClipCandidate>;
 
@@ -165,9 +172,14 @@ export function transcriptForLlm(cues: CaptionCue[]): string {
   return lines.join(" ");
 }
 
-const SYSTEM = `You are the yt-shorts skill from Jake Schincariol's youtube-agent-skill (MIT). Your job: read a long-video transcript and pick 3-5 spans of 20-55 seconds that survive on their own as a Short.
+const SYSTEM = `You are the yt-shorts skill from Jake Schincariol's youtube-agent-skill (MIT). Your job: read a long-video transcript and pick 3-5 spans of 20-90 SECONDS that survive on their own as a Short.
 
-The three gates (ALL must be true):
+HARD CONSTRAINTS (your output will be rejected if violated):
+- Each candidate's (endSec - startSec) MUST be between 20 and 90 seconds. A 1-second window is NOT a clip. A 10-second window is NOT a clip. Think "a good standalone moment of 30-60s" is typical.
+- startSec and endSec are measured in SECONDS from the beginning of the source video, taken from the [MM:SS] markers in the transcript (NOT from the transcript's word position).
+- Timestamps must land on actual spoken content from the transcript, not on silence or music.
+
+The three gates (ALL must be true for each candidate):
 1. Opens on a complete thought. If the first sentence needs the previous minute, it is NOT a Short.
 2. There is a turn in it — a claim, then something that complicates it or proves it.
 3. Ends on a line, not a trail-off.
@@ -197,7 +209,7 @@ export async function pickCandidates(meta: VideoMeta, cues: CaptionCue[]): Promi
     "Pick 3-5 clip candidates. Return JSON matching the schema. startSec and endSec are the actual spans you'd cut from the source video.",
   ].filter(Boolean).join("\n");
 
-  return askJson<ClipList>({
+  const raw = await askJson<ClipList>({
     tier: "heavy",
     // "write" is this project's long-form content role — routes to whichever provider
     // LLM_ROLE_WRITE names (Mistral by default), falls back to LLM_PROVIDER otherwise.
@@ -208,6 +220,18 @@ export async function pickCandidates(meta: VideoMeta, cues: CaptionCue[]): Promi
     schema: ClipList,
     maxTokens: 8000,
   });
+
+  // Defensive post-filter: even with the schema and prompt enforcing it, drop any candidate whose
+  // window is outside the band. Log what we dropped so a future reader sees why N candidates
+  // became N-k. If nothing survives, let the caller fail — don't paper over a totally bad response.
+  const kept = raw.candidates.filter((c) => {
+    const dur = c.endSec - c.startSec;
+    const ok = dur >= CLIP_MIN_SEC && dur <= CLIP_MAX_SEC;
+    if (!ok) console.warn(`[pick] dropping rank ${c.rank}: duration ${dur.toFixed(1)}s out of band [${CLIP_MIN_SEC}, ${CLIP_MAX_SEC}]`);
+    return ok;
+  });
+  if (!kept.length) throw new Error(`LLM returned ${raw.candidates.length} candidates but all had out-of-band durations. Rerun or adjust the prompt.`);
+  return { candidates: kept };
 }
 
 /** Format a candidate list for a readable terminal report. */
