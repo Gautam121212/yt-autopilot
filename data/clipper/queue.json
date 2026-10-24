@@ -1,0 +1,51 @@
+{
+  "generatedAt": "2026-10-24T11:33:28.558Z",
+  "picks": [
+    {
+      "id": "ZOWrTNazZxM",
+      "title": "I Worked With BioWare on the Next Mass Effect - Here's What They Were Making",
+      "channelId": "UCCNNFzGEsMS7RIVsH2Pov3g",
+      "channelTitle": "Dantics",
+      "publishedAt": "2026-10-23T15:00:39Z",
+      "durationSec": 1124,
+      "viewCount": 276033,
+      "likeCount": 13330,
+      "commentCount": 4518,
+      "categoryId": "20",
+      "regionSource": "US",
+      "thumbnails": {
+        "default": {
+          "url": "https://i.ytimg.com/vi/ZOWrTNazZxM/default.jpg",
+          "width": 120,
+          "height": 90
+        },
+        "medium": {
+          "url": "https://i.ytimg.com/vi/ZOWrTNazZxM/mqdefault.jpg",
+          "width": 320,
+          "height": 180
+        },
+        "high": {
+          "url": "https://i.ytimg.com/vi/ZOWrTNazZxM/hqdefault.jpg",
+          "width": 480,
+          "height": 360
+        },
+        "standard": {
+          "url": "https://i.ytimg.com/vi/ZOWrTNazZxM/sddefault.jpg",
+          "width": 640,
+          "height": 480
+        },
+        "maxres": {
+          "url": "https://i.ytimg.com/vi/ZOWrTNazZxM/maxresdefault.jpg",
+          "width": 1280,
+          "height": 720
+        }
+      },
+      "score": 2147.216212353016,
+      "signals": {
+        "views_per_day": 322420,
+        "engagement_per_m": 211967,
+        "duration_min": 19
+      }
+    }
+  ]
+}
