@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "records": [
+    {
+      "sourceVideoId": "ttVTPu0bS4M",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "\"France Has FALLEN!\" Riots Debate + North Korea UK Ally on Jung-On 'Death'",
+        "sourceChannel": "Piers Morgan Uncensored",
+        "clipScore": 75,
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "criticalFails": [],
+        "rejectReason": "score 75<80"
+      },
+      "recordedAt": "2026-10-24T22:00:44.877Z"
+    },
+    {
+      "sourceVideoId": "ttVTPu0bS4M",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "\"France Has FALLEN!\" Riots Debate + North Korea UK Ally on Jung-On 'Death'",
+        "sourceChannel": "Piers Morgan Uncensored",
+        "clipScore": 75,
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "criticalFails": [],
+        "rejectReason": "score 75<80"
+      },
+      "recordedAt": "2026-10-24T22:00:44.877Z"
+    },
+    {
+      "sourceVideoId": "ttVTPu0bS4M",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "\"France Has FALLEN!\" Riots Debate + North Korea UK Ally on Jung-On 'Death'",
+        "sourceChannel": "Piers Morgan Uncensored",
+        "clipScore": 75,
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "criticalFails": [],
+        "rejectReason": "score 75<80"
+      },
+      "recordedAt": "2026-10-24T22:00:44.876Z"
+    },
+    {
+      "sourceVideoId": "ttVTPu0bS4M",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "\"France Has FALLEN!\" Riots Debate + North Korea UK Ally on Jung-On 'Death'",
+        "sourceChannel": "Piers Morgan Uncensored",
+        "clipScore": 65,
+        "gatesFailed": [
+          "loudness",
+          "true_peak",
+          "duration_band"
+        ],
+        "criticalFails": [
+          "true_peak"
+        ],
+        "rejectReason": "critical: true_peak"
+      },
+      "recordedAt": "2026-10-24T22:00:44.868Z"
+    },
+    {
+      "sourceVideoId": "ttVTPu0bS4M",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "\"France Has FALLEN!\" Riots Debate + North Korea UK Ally on Jung-On 'Death'",
+        "sourceChannel": "Piers Morgan Uncensored",
+        "clipScore": 75,
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "criticalFails": [],
+        "rejectReason": "score 75<80"
+      },
+      "recordedAt": "2026-10-24T22:00:44.866Z"
+    }
+  ]
+}
