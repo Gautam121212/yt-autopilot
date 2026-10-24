@@ -48,7 +48,8 @@
     "adapter:smoke": "tsx scripts/remotion-props-smoke.ts",
     "clip": "tsx --env-file-if-exists=.env scripts/clip-from-url.ts",
     "clip:selftest": "tsx scripts/clip-selftest.ts",
-    "clip:build": "tsx --env-file-if-exists=.env scripts/clip-build.ts"
+    "clip:build": "tsx --env-file-if-exists=.env scripts/clip-build.ts",
+    "clip:discover": "tsx --env-file-if-exists=.env scripts/clip-discover.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

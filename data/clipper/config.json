@@ -1,0 +1,31 @@
+{
+  "_comment": "Discovery config. Edit the channels[] array and regions as you want. The default niches match the YouTube categories people engage with most (podcasts/interviews, entertainment, comedy, news, music). Set apiKey via YT_API_KEY env var — never in this file.",
+  "regionCodes": ["IN", "US", "GB"],
+  "categoryIds": ["22", "24", "23", "25", "10"],
+  "_categoryNames": {
+    "22": "People & Blogs (podcasts/interviews)",
+    "24": "Entertainment",
+    "23": "Comedy",
+    "25": "News & Politics",
+    "10": "Music",
+    "17": "Sports",
+    "20": "Gaming",
+    "27": "Education"
+  },
+  "channels": [
+    { "id": "UCSHZKyawb77ixDdsGog4iWA", "name": "Lex Fridman", "note": "long-form interviews, podcast format" },
+    { "id": "UC2D2CMWXMOVWx7giW1n3LIg", "name": "Andrew Huberman", "note": "science/health, segmentable" },
+    { "id": "UCzQUP1qoWDoEbmsQxvdjxgQ", "name": "Joe Rogan Experience Clips (JRE)", "note": "already-clipped, less competition" },
+    { "id": "UCX6OQ3DkcsbYNE6H8uQQuVA", "name": "MrBeast", "note": "entertainment benchmark" },
+    { "id": "UCsBjURrPoezykLs9EqgamOA", "name": "Fireship", "note": "tech explainers, dense info" },
+    { "id": "UCwRXb5dUK4cvsHbx-rGzSgw", "name": "Diary of a CEO", "note": "business/podcast interviews" }
+  ],
+  "perRegionTrending": 25,
+  "perCategory": 15,
+  "perChannel": 5,
+  "minViews": 100000,
+  "maxAgeDays": 14,
+  "minDurationSec": 600,
+  "maxDurationSec": 14400,
+  "topN": 20
+}

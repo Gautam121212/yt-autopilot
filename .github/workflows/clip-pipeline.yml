@@ -1,0 +1,184 @@
+name: clip-pipeline
+# Four-job clipper pipeline. Discovery + polish + assemble run on free Ubuntu runners; the download
+# step runs on a self-hosted runner (your Mac, label `mac-downloader`) so YouTube serves your real
+# residential IP and skips the bot-check that blocks GitHub-hosted IPs.
+#
+# Dispatch (either):
+#   gh workflow run clip-pipeline.yml                           # auto-discover + process top-N
+#   gh workflow run clip-pipeline.yml -f url=https://youtu.be/X # process one specific URL
+#
+# Scheduled: runs daily at 03:17 UTC (08:47 IST) to catch overnight virals.
+#
+# One-time setup for the self-hosted runner (your Mac):
+#   bash scripts/mac-runner-install.sh
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Specific YouTube URL to clip (overrides discovery)"
+        required: false
+      top_n:
+        description: "How many discovered picks to process (ignored if url is set)"
+        required: false
+        default: "3"
+      format:
+        description: "Output format"
+        type: choice
+        options:
+          - auto
+          - shorts
+          - long
+        default: auto
+      max_height:
+        description: "Max download resolution"
+        required: false
+        default: "1080"
+  schedule:
+    - cron: "17 3 * * *"
+
+concurrency:
+  group: clip-pipeline
+  cancel-in-progress: false
+
+permissions:
+  contents: write     # need write to commit updated reviewed.json state
+  issues: write       # we open an issue listing clips pending human review
+
+jobs:
+
+  # ─────────────── Job 1: discover ───────────────────────────────────────────
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      urls: ${{ steps.pick.outputs.urls }}
+      hasPicks: ${{ steps.pick.outputs.hasPicks }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci --no-audit --no-fund
+
+      - name: Discover candidates (or use given URL)
+        id: pick
+        env:
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ github.event.inputs.url }}" ]]; then
+            # Manual-URL path: skip discovery entirely, just queue the one URL.
+            mkdir -p data/clipper
+            echo "{\"picks\":[{\"id\":\"manual\",\"url\":\"${{ github.event.inputs.url }}\"}]}" > data/clipper/queue.json
+            echo "urls=${{ github.event.inputs.url }}" >> $GITHUB_OUTPUT
+            echo "hasPicks=1" >> $GITHUB_OUTPUT
+          else
+            TOPN="${{ github.event.inputs.top_n || '3' }}"
+            npm run clip:discover -- --top-n "$TOPN"
+            # Emit newline-joined URL list for the download job.
+            URLS=$(node -e "const q=require('./data/clipper/queue.json');console.log((q.picks||[]).map(p=>'https://www.youtube.com/watch?v='+p.id).join('\n'))")
+            echo "urls<<EOF" >> $GITHUB_OUTPUT
+            echo "$URLS" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            [[ -n "$URLS" ]] && echo "hasPicks=1" >> $GITHUB_OUTPUT || echo "hasPicks=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit updated state
+        if: steps.pick.outputs.hasPicks == '1' && github.event.inputs.url == ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/clipper/reviewed.json data/clipper/queue.json 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "clipper: discovery queued ${{ github.run_id }} [skip ci]"
+          git push || true
+
+      - name: Upload queue
+        if: steps.pick.outputs.hasPicks == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: queue
+          path: data/clipper/queue.json
+
+  # ─────────────── Job 2: download (self-hosted mac) ─────────────────────────
+  download:
+    needs: discover
+    if: needs.discover.outputs.hasPicks == '1'
+    runs-on: [self-hosted, mac-downloader]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: queue, path: data/clipper }
+
+      - name: Ensure Node 22 + deps
+        run: |
+          node --version
+          which yt-dlp || brew install yt-dlp
+          npm ci --no-audit --no-fund
+
+      - name: LLM picks candidate windows for each URL + yt-dlp downloads sections
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          MISTRAL_MODEL_HEAVY: ministral-14b-2512
+          MISTRAL_MODEL_LIGHT: ministral-8b-2512
+          LLM_PROVIDER: gemini
+          LLM_ROLE_WRITE: mistral
+          LLM_ROLE_GATE: mistral
+          LLM_ROLE_JUDGE: mistral
+        run: |
+          set -euo pipefail
+          mkdir -p work/clipper-pipeline
+          while IFS= read -r URL; do
+            [[ -z "$URL" ]] && continue
+            echo "::group::download+pick: $URL"
+            npm run clip:build -- "$URL" \
+              --format "${{ github.event.inputs.format || 'auto' }}" \
+              --max-height "${{ github.event.inputs.max_height || '1080' }}" \
+              --out work/clipper-pipeline || echo "  skipped (one URL failed, continuing)"
+            echo "::endgroup::"
+          done <<< "${{ needs.discover.outputs.urls }}"
+
+      - name: Upload final clips + manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clips-${{ github.run_id }}
+          path: work/clipper-pipeline/
+          retention-days: 7
+          if-no-files-found: warn
+
+  # ─────────────── Job 3: open pending-review issue ──────────────────────────
+  pending-review:
+    needs: download
+    if: always() && needs.download.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: clips-${{ github.run_id }}, path: work/clipper-pipeline, pattern: "clips-*" }
+
+      - name: Open review issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Collect manifest(s) from each run dir and summarize.
+          LISTED=""
+          for mf in work/clipper-pipeline/*/manifest.json; do
+            [[ -f "$mf" ]] || continue
+            TITLE=$(node -e "console.log(require('${mf}').source?.title || '(unknown)')")
+            FMT=$(node -e "console.log(require('${mf}').decision?.format || '-')")
+            OUT=$(node -e "console.log((require('${mf}').outputs||[]).length)")
+            LISTED+="- **$TITLE** → $FMT ($OUT files) · artifact \`clips-${{ github.run_id }}\`\n"
+          done
+          if [[ -z "$LISTED" ]]; then LISTED="(no clips produced — all candidates dropped by gates or download failed)"; fi
+          gh issue create \
+            --title "clipper: review clips from run ${{ github.run_id }}" \
+            --body "Pending clips are in artifact \`clips-${{ github.run_id }}\` (expires in 7 days). Download, review, then comment \`/approve\` or \`/reject\` with a comma-separated list of clip ids to mark their videoIds in state.json.
+
+$(printf '%b' "$LISTED")
+
+Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --label "clipper-review" || echo "issue create failed (label may need to exist first)"
