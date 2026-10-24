@@ -32,13 +32,25 @@ function materializeCookies(): string | undefined {
 }
 
 /** Prepend to any yt-dlp call. Returns [] on local shells with no bot-check issues, or
- *  the right flags on CI / blocked IPs. Always safe to include. */
+ *  the right flags on CI / blocked IPs. Always safe to include.
+ *
+ *  Cookie precedence (first match wins):
+ *   1. YT_DLP_COOKIES_BROWSER (e.g. "safari", "chrome", "firefox") → --cookies-from-browser
+ *      Used when running on the user's own Mac — reads cookies live from the installed browser,
+ *      so no secret ever needs to be stored or refreshed.
+ *   2. YT_COOKIES_B64 → decoded to a temp file, --cookies <file>
+ *      Used on CI runners where there's no browser; the secret has to be refreshed periodically.
+ *   3. Neither set → yt-dlp runs unauthenticated (may hit bot-check on datacenter IPs). */
 export function ytdlpCommon(): string[] {
   const args: string[] = [
     "--extractor-args", "youtube:player_client=default,-tv,android,ios,web_safari",
-    // Sleep a hair between requests to look less bot-ish. Costs ~1s per yt-dlp invocation.
     "--sleep-requests", "1",
   ];
+  const browser = process.env.YT_DLP_COOKIES_BROWSER;
+  if (browser) {
+    args.push("--cookies-from-browser", browser);
+    return args;
+  }
   const cookies = materializeCookies();
   if (cookies) args.push("--cookies", cookies);
   return args;

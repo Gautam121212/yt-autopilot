@@ -78,23 +78,20 @@ jobs:
             fi
           fi
 
-  # ────────────── Job 2: plan — LLM pick (ubuntu, free) ───────────────────────
+  # ────────────── Job 2: plan — LLM pick (self-hosted mac, native browser cookies) ─────
+  # Runs on the Mac because the caption fetch needs YouTube auth. Mac has Safari logged in, so we
+  # use --cookies-from-browser safari (via YT_DLP_COOKIES_BROWSER env) — no secret needed, nothing
+  # to refresh. Mac work: ~5s captions fetch + ~30-60s LLM call. Network-bound, no heat.
   plan:
     needs: discover
     if: needs.discover.outputs.hasPick == '1'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, mac-downloader]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install yt-dlp (captions fetch)
-        run: pip install --upgrade yt-dlp
+      - run: |
+          which yt-dlp || brew install yt-dlp
+          node --version
       - run: npm ci --no-audit --no-fund
       - name: Plan clip windows
         env:
@@ -108,7 +105,7 @@ jobs:
           LLM_ROLE_WRITE: mistral
           LLM_ROLE_GATE: mistral
           LLM_ROLE_JUDGE: mistral
-          YT_COOKIES_B64: ${{ secrets.YT_COOKIES_B64 }}
+          YT_DLP_COOKIES_BROWSER: safari
         run: |
           mkdir -p work/clipper
           npx tsx scripts/clip-plan.ts --url "${{ needs.discover.outputs.url }}" --out work/clipper/plan.json
@@ -135,7 +132,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Download sections (yt-dlp only — Mac does nothing else)
         env:
-          YT_COOKIES_B64: ${{ secrets.YT_COOKIES_B64 }}
+          YT_DLP_COOKIES_BROWSER: safari
         run: |
           npx tsx scripts/clip-fetch.ts --plan work/clipper/plan.json --out work/clipper/sections --max-height ${{ github.event.inputs.max_height || '1080' }}
       - uses: actions/upload-artifact@v4
