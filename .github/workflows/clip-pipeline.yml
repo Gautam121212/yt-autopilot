@@ -192,4 +192,6 @@ jobs:
             printf '%b\n' "$LISTED"
             printf 'Run: https://github.com/%s/actions/runs/%s\n' "$REPO" "$RUN_ID"
           } > "$BODY"
-          gh issue create --title "clipper: review clips from run ${RUN_ID}" --body-file "$BODY" --label "clipper-review" || echo "issue create failed (label may need to exist first)"
+          # Create the label if missing (one-time per repo), then open the issue.
+          gh label create clipper-review --color "f5a623" --description "Clips awaiting human review before upload" 2>/dev/null || true
+          gh issue create --title "clipper: review clips from run ${RUN_ID}" --body-file "$BODY" --label "clipper-review"

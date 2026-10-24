@@ -13,7 +13,7 @@
  * Pass threshold: ≥80 total AND no critical gate fail. Measurements come from a single `ffmpeg
  * -af ebur128+silencedetect+astats` pass over the audio, parsed from stderr.
  */
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
@@ -153,7 +153,6 @@ export async function measureAndScore(path: string, band: "shorts" | "long"): Pr
  *  there). We don't care about ffmpeg's own return code here because the null muxer always exits 0. */
 async function execCapture(cmd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const { spawn } = require("node:child_process") as typeof import("node:child_process");
     const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "", stderr = "";
     p.stdout.on("data", (c) => (stdout += c.toString()));
