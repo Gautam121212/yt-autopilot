@@ -126,6 +126,8 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           MISTRAL_MODEL_HEAVY: ministral-14b-2512
           MISTRAL_MODEL_LIGHT: ministral-8b-2512
+          GEMINI_MODEL_HEAVY: gemini-2.5-flash
+          GEMINI_MODEL_LIGHT: gemini-2.5-flash
           LLM_PROVIDER: gemini
           LLM_ROLE_WRITE: mistral
           LLM_ROLE_GATE: mistral
@@ -164,6 +166,7 @@ jobs:
         with:
           name: clips-${{ github.run_id }}
           path: work/clipper-pipeline
+        continue-on-error: true
 
       - name: Open review issue
         env:
