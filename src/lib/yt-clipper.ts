@@ -197,6 +197,10 @@ export async function pickCandidates(meta: VideoMeta, cues: CaptionCue[]): Promi
 
   return askJson<ClipList>({
     tier: "heavy",
+    // "write" is this project's long-form content role — routes to whichever provider
+    // LLM_ROLE_WRITE names (Mistral by default), falls back to LLM_PROVIDER otherwise.
+    // Picks text-only providers; a clip pick never needs vision.
+    role: "write",
     system: SYSTEM,
     prompt,
     schema: ClipList,
