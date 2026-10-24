@@ -176,12 +176,13 @@ jobs:
         run: |
           set -euo pipefail
           # Collect manifest(s) from each run dir and summarize.
+          # Use `node --input-type=module` since the project is ESM so bare `require` won't work.
           LISTED=""
           for mf in work/clipper-pipeline/*/manifest.json; do
             [[ -f "$mf" ]] || continue
-            TITLE=$(node -e "console.log(require('${mf}').source?.title || '(unknown)')")
-            FMT=$(node -e "console.log(require('${mf}').decision?.format || '-')")
-            OUT=$(node -e "console.log((require('${mf}').outputs||[]).length)")
+            TITLE=$(node --input-type=module -e "import {readFileSync} from 'node:fs'; const m=JSON.parse(readFileSync('${mf}','utf8')); console.log(m.source?.title ?? '(unknown)');")
+            FMT=$(node --input-type=module -e "import {readFileSync} from 'node:fs'; const m=JSON.parse(readFileSync('${mf}','utf8')); console.log(m.decision?.format ?? '-');")
+            OUT=$(node --input-type=module -e "import {readFileSync} from 'node:fs'; const m=JSON.parse(readFileSync('${mf}','utf8')); console.log((m.outputs ?? []).length);")
             LISTED+="- **$TITLE** → $FMT ($OUT files) · artifact clips-${RUN_ID}\n"
           done
           if [[ -z "$LISTED" ]]; then LISTED="(no clips produced — all candidates dropped by gates or download failed)"; fi
