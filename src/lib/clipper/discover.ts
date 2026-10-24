@@ -113,7 +113,14 @@ async function trendingInRegion(apiKey: string, regionCode: string, max: number,
     key: apiKey,
   });
   if (categoryId) parts.set("videoCategoryId", categoryId);
-  const r = await fetchOk(`https://www.googleapis.com/youtube/v3/videos?${parts}`, { method: "GET" });
+  // Direct fetch so we can read the full error body — fetchOk truncates to 800 chars which
+  // cut off the actual Google error reason on past CI runs ("API key not valid", "referer blocked", etc.).
+  const resp = await fetch(`https://www.googleapis.com/youtube/v3/videos?${parts}`, { method: "GET" });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`${resp.status}: ${text}`);
+  }
+  const r = resp;
   const data = await r.json() as { items: Array<{
     id: string;
     snippet: { title: string; channelId: string; channelTitle: string; publishedAt: string; categoryId: string; thumbnails?: Record<string, { url: string; width: number; height: number }> };
