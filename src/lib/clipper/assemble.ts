@@ -17,16 +17,43 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 
-/** Build one 1080×1920 vertical short from a 16:9 source. Center-crops to 9:16. */
-export async function makeShort(inputPath: string, outDir: string, label: string): Promise<string> {
+export type AttributionOpts = { channel: string; title: string };
+
+/** Escape a user-supplied string for ffmpeg's drawtext filter (colons, backslashes, commas, single
+ *  quotes all need special treatment). Returns a bare string, caller wraps in single quotes. */
+function escDrawtext(s: string): string {
+  return s
+    .replace(/\\/g, "\\\\\\\\")   // \ → \\\\
+    .replace(/:/g, "\\\\:")       // : → \\:
+    .replace(/'/g, "\\u2019")     // ' → right-single-quote (safer than escape for drawtext)
+    .replace(/,/g, "\\\\,")       // , → \\,
+    .replace(/%/g, "\\\\%")       // % → \\%
+    .slice(0, 100);               // cap length
+}
+
+/** Build one 1080×1920 vertical short from a 16:9 source. Center-crops to 9:16. If `attr` is
+ *  provided, burns in a channel + original-title attribution for the first 3 seconds (bottom
+ *  overlay with 60% dark backdrop so it's readable on any background). */
+export async function makeShort(inputPath: string, outDir: string, label: string, attr?: AttributionOpts): Promise<string> {
   await mkdir(outDir, { recursive: true });
   const output = path.join(outDir, `short_${label}.mp4`);
-  // crop filter: take a 9:16 slice from the center. For a 16:9 1080p source: target width = 1080 *
-  // (9/16) = 607.5 → use the full height, crop width to (ih*9/16). Then scale to 1080x1920.
+
+  let vf = "crop=ih*9/16:ih,scale=1080:1920:flags=lanczos";
+  if (attr) {
+    // 3s overlay at the bottom: dark semi-transparent bar + two lines of text.
+    // Font: use whatever ffmpeg can find on the runner (ubuntu: DejaVu). No bundled font because
+    // most ffmpeg builds have one on PATH; fallback: fontfile=default lets ffmpeg pick.
+    const channel = escDrawtext("@" + attr.channel);
+    const title = escDrawtext(attr.title);
+    vf += `,drawbox=y=ih-220:w=iw:h=220:color=black@0.55:t=fill:enable='lt(t,3)'`;
+    vf += `,drawtext=text='${channel}':fontcolor=white:fontsize=52:x=(w-text_w)/2:y=h-170:enable='lt(t,3)'`;
+    vf += `,drawtext=text='${title}':fontcolor=white@0.85:fontsize=36:x=(w-text_w)/2:y=h-100:enable='lt(t,3)'`;
+  }
+
   await exec("ffmpeg", [
     "-y", "-v", "error",
     "-i", inputPath,
-    "-vf", "crop=ih*9/16:ih,scale=1080:1920:flags=lanczos",
+    "-vf", vf,
     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
     "-c:a", "aac", "-ar", "48000", "-b:a", "160k",
     "-pix_fmt", "yuv420p", "-movflags", "+faststart",

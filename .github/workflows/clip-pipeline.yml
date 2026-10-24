@@ -1,27 +1,23 @@
 name: clip-pipeline
-# Four-job clipper pipeline. Discovery + polish + assemble run on free Ubuntu runners; the download
-# step runs on a self-hosted runner (your Mac, label `mac-downloader`) so YouTube serves your real
-# residential IP and skips the bot-check that blocks GitHub-hosted IPs.
+# 5-job pipeline — Mac does ONLY the download step; everything else runs on free Ubuntu.
 #
-# Dispatch (either):
-#   gh workflow run clip-pipeline.yml                           # auto-discover + process top-N
-#   gh workflow run clip-pipeline.yml -f url=https://youtu.be/X # process one specific URL
+# discover (ubuntu) → plan (ubuntu) → fetch (self-hosted mac) → process (ubuntu) → pending-review (ubuntu)
 #
-# Scheduled: runs daily at 03:17 UTC (08:47 IST) to catch overnight virals.
-#
-# One-time setup for the self-hosted runner (your Mac):
-#   bash scripts/mac-runner-install.sh
+# Trigger:
+#   gh workflow run clip-pipeline.yml                               # auto-discover top-1
+#   gh workflow run clip-pipeline.yml -f top_n=1
+#   gh workflow run clip-pipeline.yml -f url=https://youtu.be/X     # bypass discovery
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: "Specific YouTube URL to clip (overrides discovery)"
+        description: "Specific YouTube URL (overrides discovery)"
         required: false
       top_n:
-        description: "How many discovered picks to process (ignored if url is set)"
+        description: "How many picks to process when auto-discovering"
         required: false
-        default: "3"
+        default: "1"
       format:
         description: "Output format"
         type: choice
@@ -42,18 +38,18 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write     # need write to commit updated reviewed.json state
-  issues: write       # we open an issue listing clips pending human review
+  contents: write
+  issues: write
 
 jobs:
 
-  # ─────────────── Job 1: discover ───────────────────────────────────────────
+  # ────────────── Job 1: discover (ubuntu, free) ──────────────────────────────
   discover:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      urls: ${{ steps.pick.outputs.urls }}
-      hasPicks: ${{ steps.pick.outputs.hasPicks }}
+      url: ${{ steps.pick.outputs.url }}
+      hasPick: ${{ steps.pick.outputs.hasPick }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -61,66 +57,41 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --no-audit --no-fund
-
-      - name: Discover candidates (or use given URL)
+      - name: Pick URL
         id: pick
         env:
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
         run: |
           set -euo pipefail
           if [[ -n "${{ github.event.inputs.url }}" ]]; then
-            # Manual-URL path: skip discovery entirely, just queue the one URL.
-            mkdir -p data/clipper
-            echo "{\"picks\":[{\"id\":\"manual\",\"url\":\"${{ github.event.inputs.url }}\"}]}" > data/clipper/queue.json
-            echo "urls=${{ github.event.inputs.url }}" >> $GITHUB_OUTPUT
-            echo "hasPicks=1" >> $GITHUB_OUTPUT
+            echo "url=${{ github.event.inputs.url }}" >> $GITHUB_OUTPUT
+            echo "hasPick=1" >> $GITHUB_OUTPUT
           else
-            TOPN="${{ github.event.inputs.top_n || '3' }}"
+            TOPN="${{ github.event.inputs.top_n || '1' }}"
             npm run clip:discover -- --top-n "$TOPN"
-            # Emit newline-joined URL list for the download job.
-            URLS=$(node -e "const q=require('./data/clipper/queue.json');console.log((q.picks||[]).map(p=>'https://www.youtube.com/watch?v='+p.id).join('\n'))")
-            echo "urls<<EOF" >> $GITHUB_OUTPUT
-            echo "$URLS" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-            [[ -n "$URLS" ]] && echo "hasPicks=1" >> $GITHUB_OUTPUT || echo "hasPicks=0" >> $GITHUB_OUTPUT
+            URL=$(node --input-type=module -e "import {readFileSync} from 'node:fs';const q=JSON.parse(readFileSync('data/clipper/queue.json','utf8'));const first=(q.picks||[])[0];console.log(first ? 'https://www.youtube.com/watch?v='+first.id : '');")
+            if [[ -n "$URL" ]]; then
+              echo "url=$URL" >> $GITHUB_OUTPUT
+              echo "hasPick=1" >> $GITHUB_OUTPUT
+            else
+              echo "hasPick=0" >> $GITHUB_OUTPUT
+            fi
           fi
 
-      - name: Commit updated state
-        if: steps.pick.outputs.hasPicks == '1' && github.event.inputs.url == ''
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/clipper/reviewed.json data/clipper/queue.json 2>/dev/null || true
-          git diff --cached --quiet || git commit -m "clipper: discovery queued ${{ github.run_id }} [skip ci]"
-          git push || true
-
-      - name: Upload queue
-        if: steps.pick.outputs.hasPicks == '1'
-        uses: actions/upload-artifact@v4
-        with:
-          name: queue
-          path: data/clipper/queue.json
-
-  # ─────────────── Job 2: download (self-hosted mac) ─────────────────────────
-  download:
+  # ────────────── Job 2: plan — LLM pick (ubuntu, free) ───────────────────────
+  plan:
     needs: discover
-    if: needs.discover.outputs.hasPicks == '1'
-    runs-on: [self-hosted, mac-downloader]
-    timeout-minutes: 60
+    if: needs.discover.outputs.hasPick == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/setup-node@v4
         with:
-          name: queue
-          path: data/clipper
-
-      - name: Ensure Node 22 + deps
-        run: |
-          node --version
-          which yt-dlp || brew install yt-dlp
-          npm ci --no-audit --no-fund
-
-      - name: LLM picks candidate windows for each URL + yt-dlp downloads sections
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Plan clip windows
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -132,32 +103,87 @@ jobs:
           LLM_ROLE_WRITE: mistral
           LLM_ROLE_GATE: mistral
           LLM_ROLE_JUDGE: mistral
+          YT_COOKIES_B64: ${{ secrets.YT_COOKIES_B64 }}
         run: |
-          set -euo pipefail
-          mkdir -p work/clipper-pipeline
-          while IFS= read -r URL; do
-            [[ -z "$URL" ]] && continue
-            echo "::group::download+pick: $URL"
-            npm run clip:build -- "$URL" \
-              --format "${{ github.event.inputs.format || 'auto' }}" \
-              --max-height "${{ github.event.inputs.max_height || '1080' }}" \
-              --out work/clipper-pipeline || echo "  skipped (one URL failed, continuing)"
-            echo "::endgroup::"
-          done <<< "${{ needs.discover.outputs.urls }}"
+          mkdir -p work/clipper
+          npx tsx scripts/clip-plan.ts --url "${{ needs.discover.outputs.url }}" --out work/clipper/plan.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plan
+          path: work/clipper/plan.json
 
-      - name: Upload final clips + manifest
+  # ────────────── Job 3: fetch — Mac downloads sections ONLY ──────────────────
+  fetch:
+    needs: plan
+    runs-on: [self-hosted, mac-downloader]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan
+          path: work/clipper
+      - name: Deps (yt-dlp available via brew)
+        run: |
+          which yt-dlp || brew install yt-dlp
+          node --version
+      - run: npm ci --no-audit --no-fund
+      - name: Download sections (yt-dlp only — Mac does nothing else)
+        env:
+          YT_COOKIES_B64: ${{ secrets.YT_COOKIES_B64 }}
+        run: |
+          npx tsx scripts/clip-fetch.ts --plan work/clipper/plan.json --out work/clipper/sections --max-height ${{ github.event.inputs.max_height || '1080' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sections
+          path: work/clipper/sections
+
+  # ────────────── Job 4: process — polish/score/assemble (ubuntu, free) ───────
+  process:
+    needs: fetch
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+          pip install --upgrade auto-editor
+          ffmpeg -version | head -1
+      - run: npm ci --no-audit --no-fund
+      - uses: actions/download-artifact@v4
+        with:
+          name: sections
+          path: work/clipper/sections
+      - name: Process (snap, polish, score, decide, assemble)
+        run: |
+          npx tsx scripts/clip-process.ts --sections work/clipper/sections --out work/clipper --format "${{ github.event.inputs.format || 'auto' }}"
+      - name: Commit outcomes.json + state updates
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/clipper/outcomes.json data/clipper/reviewed.json 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "clipper: outcomes for run ${{ github.run_id }} [skip ci]"
+          git push || true
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
           name: clips-${{ github.run_id }}
-          path: work/clipper-pipeline/
+          path: work/clipper/
           retention-days: 7
           if-no-files-found: warn
 
-  # ─────────────── Job 3: open pending-review issue ──────────────────────────
+  # ────────────── Job 5: pending-review — open an issue (ubuntu) ──────────────
   pending-review:
-    needs: download
-    if: always() && needs.download.result == 'success'
+    needs: process
+    if: always() && needs.process.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -165,9 +191,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: clips-${{ github.run_id }}
-          path: work/clipper-pipeline
+          path: work/clipper
         continue-on-error: true
-
       - name: Open review issue
         env:
           GH_TOKEN: ${{ github.token }}
@@ -175,24 +200,23 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # Collect manifest(s) from each run dir and summarize.
-          # Use `node --input-type=module` since the project is ESM so bare `require` won't work.
-          LISTED=""
-          for mf in work/clipper-pipeline/*/manifest.json; do
-            [[ -f "$mf" ]] || continue
-            TITLE=$(node --input-type=module -e "import {readFileSync} from 'node:fs'; const m=JSON.parse(readFileSync('${mf}','utf8')); console.log(m.source?.title ?? '(unknown)');")
-            FMT=$(node --input-type=module -e "import {readFileSync} from 'node:fs'; const m=JSON.parse(readFileSync('${mf}','utf8')); console.log(m.decision?.format ?? '-');")
-            OUT=$(node --input-type=module -e "import {readFileSync} from 'node:fs'; const m=JSON.parse(readFileSync('${mf}','utf8')); console.log((m.outputs ?? []).length);")
-            LISTED+="- **$TITLE** → $FMT ($OUT files) · artifact clips-${RUN_ID}\n"
-          done
-          if [[ -z "$LISTED" ]]; then LISTED="(no clips produced — all candidates dropped by gates or download failed)"; fi
-          # Build body in a temp file so YAML parsing isn't confused by inline newlines.
+          MF="work/clipper/manifest.json"
           BODY=$(mktemp)
-          {
-            printf 'Pending clips are in artifact clips-%s (expires in 7 days). Download, review, then comment /approve or /reject with the videoIds to mark them in state.json.\n\n' "$RUN_ID"
-            printf '%b\n' "$LISTED"
-            printf 'Run: https://github.com/%s/actions/runs/%s\n' "$REPO" "$RUN_ID"
-          } > "$BODY"
-          # Create the label if missing (one-time per repo), then open the issue.
-          gh label create clipper-review --color "f5a623" --description "Clips awaiting human review before upload" 2>/dev/null || true
+          if [[ -f "$MF" ]]; then
+            TITLE=$(node --input-type=module -e "import {readFileSync} from 'node:fs';const m=JSON.parse(readFileSync('$MF','utf8'));console.log(m.source?.title ?? '(unknown)');")
+            FMT=$(node --input-type=module -e "import {readFileSync} from 'node:fs';const m=JSON.parse(readFileSync('$MF','utf8'));console.log(m.decision?.format ?? '-');")
+            OUT=$(node --input-type=module -e "import {readFileSync} from 'node:fs';const m=JSON.parse(readFileSync('$MF','utf8'));console.log((m.outputs ?? []).length);")
+            RAT=$(node --input-type=module -e "import {readFileSync} from 'node:fs';const m=JSON.parse(readFileSync('$MF','utf8'));console.log(m.decision?.rationale ?? '');")
+            {
+              printf 'Clips ready for review in artifact clips-%s.\n\n' "$RUN_ID"
+              printf '**Source:** %s\n' "$TITLE"
+              printf '**Format:** %s (%s output files)\n' "$FMT" "$OUT"
+              printf '**Reasoning:** %s\n\n' "$RAT"
+              printf 'Comment /approve or /reject with the videoId to update state.json.\n\n'
+              printf 'Run: https://github.com/%s/actions/runs/%s\n' "$REPO" "$RUN_ID"
+            } > "$BODY"
+          else
+            printf '(no clips produced — all candidates dropped by gates)\n\nRun: https://github.com/%s/actions/runs/%s\n' "$REPO" "$RUN_ID" > "$BODY"
+          fi
+          gh label create clipper-review --color "f5a623" --description "Clips awaiting human review" 2>/dev/null || true
           gh issue create --title "clipper: review clips from run ${RUN_ID}" --body-file "$BODY" --label "clipper-review"

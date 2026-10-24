@@ -49,7 +49,10 @@
     "clip": "tsx --env-file-if-exists=.env scripts/clip-from-url.ts",
     "clip:selftest": "tsx scripts/clip-selftest.ts",
     "clip:build": "tsx --env-file-if-exists=.env scripts/clip-build.ts",
-    "clip:discover": "tsx --env-file-if-exists=.env scripts/clip-discover.ts"
+    "clip:discover": "tsx --env-file-if-exists=.env scripts/clip-discover.ts",
+    "clip:plan": "tsx --env-file-if-exists=.env scripts/clip-plan.ts",
+    "clip:fetch": "tsx --env-file-if-exists=.env scripts/clip-fetch.ts",
+    "clip:process": "tsx --env-file-if-exists=.env scripts/clip-process.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

@@ -10,3 +10,4 @@ dryrun/
 # wiped at the start of the next. Not source.
 remotion-composer/public/run-*/
 remotion-composer/public/thumb-*/
+.DS_Store

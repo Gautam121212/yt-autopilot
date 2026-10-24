@@ -164,26 +164,48 @@ function daysSince(iso: string): number {
   return Math.max(0.1, (Date.now() - new Date(iso).getTime()) / 86_400_000);
 }
 
-/** Composite rank score. Higher = more viral-worthy for clipping:
- *    - views_per_day: fresh high-growth > old-but-stable
- *    - engagement:    (likes + 10*comments) / views, scaled
- *    - duration:      bonus if in the sweet 20-90 min interview/podcast band
- *    - category:      slight bonus for people&blogs (podcasts) — easiest to clip into coherent pieces
+/** Composite rank score. Higher = more clippability-worthy, not just view-count-worthy.
+ *
+ *  The 10 reference clips the user flagged (BBC children interrupt, Elon on Rogan, Lewin dotted
+ *  lines, Chipmunk, Charlie bit my finger, XQC/Asmongold reactions, streamer scared, Speed's
+ *  Ronaldo, Kai Cenat + Kevin Hart) all share: a long original (podcast / stream / lecture / live),
+ *  high engagement (viewer reactions in comments), and either chaptered structure or a known-
+ *  peak moment. We encode those as signals.
+ *
+ *    - views_per_day:   fresh high-growth > old-but-stable
+ *    - engagement:      (likes + 10*comments) / views, in per-million
+ *    - like_view:       likes / views — specifically rewards polarizing/memorable moments
+ *    - chapter_density: chapters per hour — segmented structure means natural clip boundaries
+ *    - duration bonus:  sweet band 20-90 min (interview/podcast length)
+ *    - category bonus:  People & Blogs (podcasts), Gaming (streams), Entertainment all boosted
+ *    - freshness:       the newer the better (within our 14-day cap)
  */
-export function rank(videos: DiscoveredVideo[]): DiscoveredVideo[] {
+export function rank(videos: DiscoveredVideo[], chaptersById: Record<string, number> = {}): DiscoveredVideo[] {
   return [...videos]
     .map((v) => {
-      const vpd = v.viewCount / daysSince(v.publishedAt);
+      const days = daysSince(v.publishedAt);
+      const vpd = v.viewCount / days;
       const eng = v.viewCount > 0 ? ((v.likeCount + 10 * v.commentCount) / v.viewCount) * 1_000_000 : 0;
-      const durBonus = v.durationSec >= 20 * 60 && v.durationSec <= 90 * 60 ? 1.0 : (v.durationSec >= 10 * 60 && v.durationSec <= 180 * 60 ? 0.5 : 0.2);
-      const catBonus = v.categoryId === "22" ? 1.2 : 1.0;
+      const likeView = v.viewCount > 0 ? (v.likeCount / v.viewCount) * 100 : 0; // % of viewers who liked
+      const chapters = chaptersById[v.id] ?? 0;
+      const chapterDensity = v.durationSec > 0 ? (chapters / (v.durationSec / 3600)) : 0; // per hour
+      const durBonus = v.durationSec >= 20 * 60 && v.durationSec <= 90 * 60 ? 1.2 : (v.durationSec >= 10 * 60 && v.durationSec <= 180 * 60 ? 0.6 : 0.2);
+      // People&Blogs (podcasts/interviews), Gaming (streams), Entertainment (variety) all clip well.
+      const catBonus = ({ "22": 1.3, "20": 1.2, "24": 1.15 } as Record<string, number>)[v.categoryId] ?? 1.0;
+      const freshness = Math.max(0.3, 1 - (days / 30)); // fades over a month
+      const chapterBonus = chapterDensity >= 3 ? 1.2 : (chapterDensity >= 1 ? 1.05 : 1.0);
       const signals = {
         views_per_day: Math.round(vpd),
         engagement_per_m: Math.round(eng),
+        like_view_pct: +likeView.toFixed(2),
+        chapter_density_per_h: +chapterDensity.toFixed(2),
         duration_min: Math.round(v.durationSec / 60),
+        days_old: +days.toFixed(1),
       };
-      // Compose: log-scaled vpd dominates, engagement is a tiebreaker.
-      const score = (Math.log10(1 + vpd) * 10) * durBonus * catBonus + (eng / 100);
+      // Base: log(views/day). Multipliers for clippability. Add engagement for ties.
+      const score = (Math.log10(1 + vpd) * 10) * durBonus * catBonus * freshness * chapterBonus
+                  + (eng / 100)
+                  + (likeView * 2);
       return { ...v, score, signals };
     })
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
