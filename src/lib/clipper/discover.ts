@@ -117,7 +117,7 @@ async function trendingInRegion(apiKey: string, regionCode: string, max: number,
   // cut off the actual Google error reason on past CI runs ("API key not valid", "referer blocked", etc.).
   const resp = await fetch(`https://www.googleapis.com/youtube/v3/videos?${parts}`, { method: "GET" });
   if (!resp.ok) {
-    const text = await resp.text();
+    const text = (await resp.text()).replace(/\s+/g, " ").slice(0, 400);
     throw new Error(`${resp.status}: ${text}`);
   }
   const r = resp;
