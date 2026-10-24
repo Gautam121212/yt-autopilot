@@ -35,25 +35,27 @@ import { decide } from "../src/lib/clipper/decide.js";
 import { makeShort, concatLong, writeManifest } from "../src/lib/clipper/assemble.js";
 
 type Format = "auto" | "shorts" | "long";
-function parseArgs(argv: string[]): { url: string; outRoot: string; format: Format; lang: string } {
+function parseArgs(argv: string[]): { url: string; outRoot: string; format: Format; lang: string; maxHeight: number } {
   let url = "";
   let outRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "work", "clipper");
   let format: Format = "auto";
   let lang = "en";
+  let maxHeight = 1080;
   const args = argv.slice(2);
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--out" && args[i + 1]) outRoot = path.resolve(args[++i]!);
     else if (a === "--format" && args[i + 1]) format = args[++i]! as Format;
     else if (a === "--lang" && args[i + 1]) lang = args[++i]!;
+    else if (a === "--max-height" && args[i + 1]) maxHeight = Number(args[++i]!);
     else if (!a.startsWith("--") && !url) url = a;
   }
-  if (!url) { console.error("usage: npm run clip:build -- <url> [--format auto|shorts|long] [--out dir] [--lang en]"); process.exit(2); }
-  return { url, outRoot, format, lang };
+  if (!url) { console.error("usage: npm run clip:build -- <url> [--format auto|shorts|long] [--max-height 1080|720|480] [--out dir] [--lang en]"); process.exit(2); }
+  return { url, outRoot, format, lang, maxHeight };
 }
 
 async function main() {
-  const { url, outRoot, format, lang } = parseArgs(process.argv);
+  const { url, outRoot, format, lang, maxHeight } = parseArgs(process.argv);
   const workDir = path.join(outRoot, Date.now().toString());
   await mkdir(workDir, { recursive: true });
   console.log(`[clip:build] work dir: ${workDir}`);
@@ -64,8 +66,8 @@ async function main() {
   const list = await pickCandidates(meta, cues);
   console.log(`  → ${list.candidates.length} candidates`);
 
-  console.log("[clip:build] step 2/9: extract (download + cut)");
-  const extracted = await extractAll(url, list.candidates, workDir);
+  console.log(`[clip:build] step 2/9: extract (section-only downloads, ≤${maxHeight}p)`);
+  const extracted = await extractAll(url, list.candidates, workDir, maxHeight);
   console.log(`  → ${extracted.length} raw clips`);
 
   console.log("[clip:build] step 3/9: polish (loudnorm + fade)");

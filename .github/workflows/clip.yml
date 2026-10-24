@@ -29,6 +29,10 @@ on:
         description: "Caption language (default: en)"
         required: false
         default: "en"
+      max_height:
+        description: "Max source resolution to download (1080, 720, 480)"
+        required: false
+        default: "1080"
 
 concurrency:
   group: clip
@@ -87,6 +91,7 @@ jobs:
           npm run clip:build -- "${{ github.event.inputs.url }}" \
             --format "${{ github.event.inputs.format }}" \
             --lang "${{ github.event.inputs.lang }}" \
+            --max-height "${{ github.event.inputs.max_height }}" \
             --out work/clipper
 
       - name: Collect outputs

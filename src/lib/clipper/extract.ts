@@ -1,10 +1,12 @@
 /**
  * Clipper M2 — extract.
  *
- * Downloads the source video via yt-dlp (480p by default — plenty for clipping, keeps bandwidth low)
- * and cuts each candidate window into its own mp4 using ffmpeg. We re-encode here (not stream-copy)
- * because stream-copy can't honor arbitrary start times accurately and would also skip the keyframe
- * boundary alignment that silence detection relies on.
+ * Downloads ONLY the candidate windows via yt-dlp's --download-sections, not the whole source
+ * video. For a 170-minute podcast with 4 × 45s picks that's ~3 min of actual video pulled instead
+ * of 170 min — ~50× smaller, ~50× faster, and keeps us inside YouTube's rate-limit window on CI.
+ *
+ * Default is 1080p (bumped from 480p now that we only pull slices). Section downloads produce
+ * natively-trimmed mp4s; we re-encode once in the polish step for consistent codec/bitrate.
  *
  * LEGAL: downloads a video the user did not necessarily create. The user has accepted copyright
  * responsibility for this project; the warning is kept in-code so a future reader sees it.
@@ -24,57 +26,56 @@ export type ExtractedClip = {
   durationSec: number;
 };
 
-/** Download the source video to the given directory at a reasonable quality. Returns the file path. */
-export async function downloadSource(url: string, outDir: string, maxHeight = 480): Promise<string> {
+/** Download ONE clip window using yt-dlp --download-sections. The output is already trimmed to the
+ *  requested range (keyframe-aligned, with --force-keyframes-at-cuts for frame-accurate boundaries).
+ *  Returns the mp4 path. */
+export async function downloadSection(
+  url: string,
+  c: ClipCandidate,
+  outDir: string,
+  maxHeight = 1080,
+): Promise<string> {
   await mkdir(outDir, { recursive: true });
-  const tmpl = path.join(outDir, "source.%(ext)s");
+  const name = `clip-${String(c.rank).padStart(2, "0")}_${Math.floor(c.startSec)}-${Math.floor(c.endSec)}`;
+  const tmpl = path.join(outDir, `${name}.%(ext)s`);
+  const section = `*${c.startSec.toFixed(2)}-${c.endSec.toFixed(2)}`;
   await exec("yt-dlp", [
     ...ytdlpCommon(),
     "-f", `bestvideo[height<=${maxHeight}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${maxHeight}][ext=mp4]/best[height<=${maxHeight}]`,
     "--merge-output-format", "mp4",
+    "--download-sections", section,
+    "--force-keyframes-at-cuts",
     "-o", tmpl,
     "--no-warnings", "--no-progress",
     url,
   ], { maxBuffer: 32 * 1024 * 1024 });
   const { readdir } = await import("node:fs/promises");
   const files = await readdir(outDir);
-  const mp4 = files.find((f) => f.startsWith("source.") && (f.endsWith(".mp4") || f.endsWith(".mkv") || f.endsWith(".webm")));
-  if (!mp4) throw new Error(`yt-dlp did not produce a source file in ${outDir}`);
+  const mp4 = files.find((f) => f.startsWith(name) && (f.endsWith(".mp4") || f.endsWith(".mkv") || f.endsWith(".webm")));
+  if (!mp4) throw new Error(`yt-dlp did not produce a section file for ${name} in ${outDir}`);
   return path.join(outDir, mp4);
 }
 
-/** Cut one candidate window out of the source. Re-encodes (keyframe-accurate), scales nothing (we
- *  do format work later). Suffixes with the rank + timecodes so the filename is readable. */
-export async function cutWindow(sourcePath: string, c: ClipCandidate, outDir: string): Promise<string> {
-  await mkdir(outDir, { recursive: true });
-  const name = `clip-${String(c.rank).padStart(2, "0")}_${Math.floor(c.startSec)}-${Math.floor(c.endSec)}.mp4`;
-  const out = path.join(outDir, name);
-  const duration = (c.endSec - c.startSec).toFixed(3);
-  // Input seek (-ss BEFORE -i) is fast but not frame-accurate; combined with -t and re-encode we
-  // get fast seek + accurate cut. Keep audio stereo 48kHz for consistency with the project standard.
-  await exec("ffmpeg", [
-    "-y", "-v", "error",
-    "-ss", c.startSec.toFixed(3), "-i", sourcePath, "-t", duration,
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-    "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "160k",
-    "-pix_fmt", "yuv420p",
-    "-movflags", "+faststart",
-    out,
-  ], { maxBuffer: 32 * 1024 * 1024 });
-  return out;
-}
-
-/** Convenience: download + cut all candidates in one call. */
-export async function extractAll(url: string, candidates: ClipCandidate[], workDir: string): Promise<ExtractedClip[]> {
-  const sourceDir = path.join(workDir, "source");
+/** Download every candidate as its own section. One yt-dlp call per candidate so a transient
+ *  failure on one doesn't poison the rest. */
+export async function extractAll(
+  url: string,
+  candidates: ClipCandidate[],
+  workDir: string,
+  maxHeight = 1080,
+): Promise<ExtractedClip[]> {
   const clipsDir = path.join(workDir, "clips");
-  console.log(`[extract] downloading source → ${sourceDir}`);
-  const src = await downloadSource(url, sourceDir);
-  console.log(`[extract] cutting ${candidates.length} windows → ${clipsDir}`);
+  console.log(`[extract] downloading ${candidates.length} windows at ≤${maxHeight}p → ${clipsDir}`);
   const out: ExtractedClip[] = [];
   for (const c of candidates) {
-    const p = await cutWindow(src, c, clipsDir);
-    out.push({ candidate: c, rawPath: p, durationSec: c.endSec - c.startSec });
+    try {
+      const p = await downloadSection(url, c, clipsDir, maxHeight);
+      out.push({ candidate: c, rawPath: p, durationSec: c.endSec - c.startSec });
+      console.log(`  ✓ clip ${c.rank} [${Math.floor(c.startSec)}-${Math.floor(c.endSec)}s] → ${path.basename(p)}`);
+    } catch (e) {
+      console.warn(`  ✗ clip ${c.rank} failed: ${(e as Error).message.split("\n")[0]}`);
+    }
   }
+  if (!out.length) throw new Error("extractAll: all candidate downloads failed");
   return out;
 }
