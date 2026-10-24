@@ -2,6 +2,57 @@
   "version": 1,
   "records": [
     {
+      "sourceVideoId": "p8bjVSK5Ov0",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "\"Yes Means No\" | The Cornell 7 & Consent",
+        "sourceChannel": "Shoe0nHead",
+        "clipScore": 75,
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "criticalFails": [],
+        "rejectReason": "score 75<80"
+      },
+      "recordedAt": "2026-10-24T22:13:35.276Z"
+    },
+    {
+      "sourceVideoId": "p8bjVSK5Ov0",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "\"Yes Means No\" | The Cornell 7 & Consent",
+        "sourceChannel": "Shoe0nHead",
+        "clipScore": 75,
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "criticalFails": [],
+        "rejectReason": "score 75<80"
+      },
+      "recordedAt": "2026-10-24T22:13:35.275Z"
+    },
+    {
+      "sourceVideoId": "p8bjVSK5Ov0",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "\"Yes Means No\" | The Cornell 7 & Consent",
+        "sourceChannel": "Shoe0nHead",
+        "clipScore": 65,
+        "gatesFailed": [
+          "loudness",
+          "true_peak",
+          "duration_band"
+        ],
+        "criticalFails": [
+          "true_peak"
+        ],
+        "rejectReason": "critical: true_peak"
+      },
+      "recordedAt": "2026-10-24T22:13:35.266Z"
+    },
+    {
       "sourceVideoId": "ttVTPu0bS4M",
       "kind": "rejected",
       "context": {
