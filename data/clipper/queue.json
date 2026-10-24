@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-24T11:33:28.558Z",
+  "generatedAt": "2026-10-24T11:51:40.605Z",
   "picks": [
     {
       "id": "ZOWrTNazZxM",
@@ -8,9 +8,9 @@
       "channelTitle": "Dantics",
       "publishedAt": "2026-10-23T15:00:39Z",
       "durationSec": 1124,
-      "viewCount": 276033,
-      "likeCount": 13330,
-      "commentCount": 4518,
+      "viewCount": 276917,
+      "likeCount": 13394,
+      "commentCount": 4540,
       "categoryId": "20",
       "regionSource": "US",
       "thumbnails": {
@@ -40,10 +40,10 @@
           "height": 720
         }
       },
-      "score": 2147.216212353016,
+      "score": 2150.680494915069,
       "signals": {
-        "views_per_day": 322420,
-        "engagement_per_m": 211967,
+        "views_per_day": 318747,
+        "engagement_per_m": 212316,
         "duration_min": 19
       }
     }
