@@ -57,7 +57,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
+        with:
+          node-version: 22
+          cache: npm
       - run: npm ci --no-audit --no-fund
 
       - name: Discover candidates (or use given URL)
@@ -108,7 +110,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: queue, path: data/clipper }
+        with:
+          name: queue
+          path: data/clipper
 
       - name: Ensure Node 22 + deps
         run: |
@@ -157,7 +161,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: clips-${{ github.run_id }}, path: work/clipper-pipeline, pattern: "clips-*" }
+        with:
+          name: clips-${{ github.run_id }}
+          path: work/clipper-pipeline
 
       - name: Open review issue
         env:
