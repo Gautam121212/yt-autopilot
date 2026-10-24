@@ -45,7 +45,10 @@
     "renderer:smoke": "tsx scripts/renderer-smoke.ts",
     "scores": "tsx --env-file-if-exists=.env scripts/scores.ts",
     "analyze": "tsx scripts/analyze-video.ts",
-    "adapter:smoke": "tsx scripts/remotion-props-smoke.ts"
+    "adapter:smoke": "tsx scripts/remotion-props-smoke.ts",
+    "clip": "tsx --env-file-if-exists=.env scripts/clip-from-url.ts",
+    "clip:selftest": "tsx scripts/clip-selftest.ts",
+    "clip:build": "tsx --env-file-if-exists=.env scripts/clip-build.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
