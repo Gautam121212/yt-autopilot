@@ -105,7 +105,7 @@ jobs:
           LLM_ROLE_WRITE: mistral
           LLM_ROLE_GATE: mistral
           LLM_ROLE_JUDGE: mistral
-          YT_DLP_COOKIES_BROWSER: safari
+          YT_DLP_COOKIES_BROWSER: firefox
         run: |
           mkdir -p work/clipper
           npx tsx scripts/clip-plan.ts --url "${{ needs.discover.outputs.url }}" --out work/clipper/plan.json
@@ -132,7 +132,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Download sections (yt-dlp only — Mac does nothing else)
         env:
-          YT_DLP_COOKIES_BROWSER: safari
+          YT_DLP_COOKIES_BROWSER: firefox
         run: |
           npx tsx scripts/clip-fetch.ts --plan work/clipper/plan.json --out work/clipper/sections --max-height ${{ github.event.inputs.max_height || '1080' }}
       - uses: actions/upload-artifact@v4
