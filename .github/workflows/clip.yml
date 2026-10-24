@@ -20,15 +20,22 @@ on:
       format:
         description: "Output format"
         type: choice
-        options: [auto, shorts, long]
+        options:
+          - auto
+          - shorts
+          - long
         default: auto
       lang:
         description: "Caption language (default: en)"
         required: false
         default: "en"
 
-concurrency: { group: clip-${{ github.event.inputs.url }}, cancel-in-progress: false }
-permissions: { contents: read }
+concurrency:
+  group: clip
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   clip:
