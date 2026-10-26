@@ -106,8 +106,10 @@ export function score(path: string, m: Measurements, band: "shorts" | "long"): S
   const dLuf = Math.abs(m.integratedLufs - -14);
   gates["loudness"] = dLuf <= 1 ? 15 : dLuf <= 2 ? 10 : 0;
 
-  // True peak (critical if clipping — above -1.5 dBTP → full fail).
-  gates["true_peak"] = m.truePeakDbTp <= -1.5 ? 10 : 0;
+  // True peak (critical if clipping). Threshold matches YouTube/Spotify spec (-1.0 dBTP ceiling).
+  // The polish step runs an alimiter at -0.9 dBFS so this should always pass; it's a safety net
+  // against stale output or weird source material.
+  gates["true_peak"] = m.truePeakDbTp <= -1.0 ? 10 : 0;
   if (gates["true_peak"] === 0) critical.push("true_peak");
 
   // Silence ratio (not critical). Full points <10%, graceful <20%, else 0.

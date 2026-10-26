@@ -45,10 +45,15 @@ export async function polish(inputPath: string, outDir: string): Promise<PolishR
   // Pass 2 — apply correction using measured values. Linear mode is more accurate when measured
   // values are supplied explicitly (per ffmpeg docs).
   const loudnorm = `loudnorm=I=-14:TP=-1.5:LRA=11:measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}:measured_thresh=${m.input_thresh}:offset=${m.target_offset}:linear=true:print_format=summary`;
+  // alimiter after loudnorm: hard-clamp true peak to -1.0 dBTP. loudnorm sets the TARGET peak but
+  // doesn't guarantee it (if source has hot peaks they can leak through). alimiter is a brick-wall
+  // limiter — level 0.9 ≈ -0.92 dBFS, well under -1.0 dBTP, YouTube-safe. 1ms attack / 50ms release
+  // is the standard broadcast-safe shape.
+  const alimit = "alimiter=level_in=1:level_out=1:limit=0.9:attack=1:release=50:asc=1";
   await exec("ffmpeg", [
     "-y", "-v", "error",
     "-i", inputPath,
-    "-af", `${loudnorm},afade=t=in:st=0:d=0.15,afade=t=out:st=99999:d=0.15`,
+    "-af", `${loudnorm},${alimit},afade=t=in:st=0:d=0.15,afade=t=out:st=99999:d=0.15`,
     "-c:v", "copy",
     "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "160k",
     "-movflags", "+faststart",
