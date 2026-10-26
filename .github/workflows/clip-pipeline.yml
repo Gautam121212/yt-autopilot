@@ -174,11 +174,16 @@ jobs:
           git add data/clipper/outcomes.json data/clipper/reviewed.json 2>/dev/null || true
           git diff --cached --quiet || git commit -m "clipper: outcomes for run ${{ github.run_id }} [skip ci]"
           git push || true
+      # Upload ONLY the final/ output + manifest.json — not the ~300 MB of intermediate
+      # clips/ + snapped/ + polished/ files that balloon artifact size and slow user downloads.
+      # The intermediates are still on the runner for debug; only ephemeral.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: clips-${{ github.run_id }}
-          path: work/clipper/
+          path: |
+            work/clipper/final/
+            work/clipper/manifest.json
           retention-days: 7
           if-no-files-found: warn
 
