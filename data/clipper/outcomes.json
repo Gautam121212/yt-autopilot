@@ -2,6 +2,82 @@
   "version": 1,
   "records": [
     {
+      "sourceVideoId": "ye5bc55_z28",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "My Wedding Day!!",
+        "sourceChannel": "tiffanythinks",
+        "clipScore": 65,
+        "gatesFailed": [
+          "loudness",
+          "true_peak",
+          "duration_band"
+        ],
+        "criticalFails": [
+          "true_peak"
+        ],
+        "rejectReason": "critical: true_peak"
+      },
+      "recordedAt": "2026-10-26T10:12:58.696Z"
+    },
+    {
+      "sourceVideoId": "ye5bc55_z28",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "My Wedding Day!!",
+        "sourceChannel": "tiffanythinks",
+        "clipScore": 65,
+        "gatesFailed": [
+          "loudness",
+          "true_peak",
+          "duration_band"
+        ],
+        "criticalFails": [
+          "true_peak"
+        ],
+        "rejectReason": "critical: true_peak"
+      },
+      "recordedAt": "2026-10-26T10:12:58.695Z"
+    },
+    {
+      "sourceVideoId": "ye5bc55_z28",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "My Wedding Day!!",
+        "sourceChannel": "tiffanythinks",
+        "clipScore": 65,
+        "gatesFailed": [
+          "loudness",
+          "true_peak",
+          "duration_band"
+        ],
+        "criticalFails": [
+          "true_peak"
+        ],
+        "rejectReason": "critical: true_peak"
+      },
+      "recordedAt": "2026-10-26T10:12:58.695Z"
+    },
+    {
+      "sourceVideoId": "ye5bc55_z28",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "My Wedding Day!!",
+        "sourceChannel": "tiffanythinks",
+        "clipScore": 65,
+        "gatesFailed": [
+          "loudness",
+          "true_peak",
+          "duration_band"
+        ],
+        "criticalFails": [
+          "true_peak"
+        ],
+        "rejectReason": "critical: true_peak"
+      },
+      "recordedAt": "2026-10-26T10:12:58.686Z"
+    },
+    {
       "sourceVideoId": "p8bjVSK5Ov0",
       "kind": "rejected",
       "context": {
