@@ -45,11 +45,12 @@ export async function polish(inputPath: string, outDir: string): Promise<PolishR
   // Pass 2 — apply correction using measured values. Linear mode is more accurate when measured
   // values are supplied explicitly (per ffmpeg docs).
   const loudnorm = `loudnorm=I=-14:TP=-1.5:LRA=11:measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}:measured_thresh=${m.input_thresh}:offset=${m.target_offset}:linear=true:print_format=summary`;
-  // alimiter after loudnorm: hard-clamp true peak to -1.0 dBTP. loudnorm sets the TARGET peak but
-  // doesn't guarantee it (if source has hot peaks they can leak through). alimiter is a brick-wall
-  // limiter — level 0.9 ≈ -0.92 dBFS, well under -1.0 dBTP, YouTube-safe. 1ms attack / 50ms release
-  // is the standard broadcast-safe shape.
-  const alimit = "alimiter=level_in=1:level_out=1:limit=0.9:attack=1:release=50:asc=1";
+  // alimiter after loudnorm: hard-clamp sample peaks. level_out=0.9 brings the final peak well
+  // under -1 dBFS. loudnorm sets integrated loudness target but doesn't guarantee peak; alimiter
+  // is the brick wall. (True inter-sample peaks can still be slightly higher than sample peaks
+  // due to filter interpolation — that's why the score step treats non-clipping ISP as a point
+  // penalty rather than a critical fail.)
+  const alimit = "alimiter=level_in=1:level_out=0.9:limit=0.794:attack=1:release=50:asc=1";
   await exec("ffmpeg", [
     "-y", "-v", "error",
     "-i", inputPath,

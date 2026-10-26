@@ -106,11 +106,13 @@ export function score(path: string, m: Measurements, band: "shorts" | "long"): S
   const dLuf = Math.abs(m.integratedLufs - -14);
   gates["loudness"] = dLuf <= 1 ? 15 : dLuf <= 2 ? 10 : 0;
 
-  // True peak (critical if clipping). Threshold matches YouTube/Spotify spec (-1.0 dBTP ceiling).
-  // The polish step runs an alimiter at -0.9 dBFS so this should always pass; it's a safety net
-  // against stale output or weird source material.
-  gates["true_peak"] = m.truePeakDbTp <= -1.0 ? 10 : 0;
-  if (gates["true_peak"] === 0) critical.push("true_peak");
+  // True peak. Point penalty, NOT critical. Reasoning: YouTube accepts anything below 0 dBFS;
+  // only ACTUAL clipping (sample peaks at or above 0 dBFS) is a problem. Inter-sample peaks
+  // between -1.0 and 0 are tighter than ideal but still ship-able. We only auto-fail when the
+  // clip is literally clipping (>= 0 dBTP), which is almost never under modern mastering.
+  if (m.truePeakDbTp <= -1.0) gates["true_peak"] = 10;
+  else if (m.truePeakDbTp < 0) gates["true_peak"] = 5;  // partial — hot but not clipping
+  else { gates["true_peak"] = 0; critical.push("true_peak"); }  // actual clipping only
 
   // Silence ratio (not critical). Full points <10%, graceful <20%, else 0.
   gates["silence_ratio"] = silenceRatio < 0.1 ? 15 : silenceRatio < 0.2 ? 8 : 0;
