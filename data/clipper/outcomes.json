@@ -2,6 +2,78 @@
   "version": 1,
   "records": [
     {
+      "sourceVideoId": "doAYhtLCORs",
+      "clipPath": "work/clipper/polished/clip-03_540-600.snapped.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "€18,000 for PLYWOOD?! Somehow It Is Cheaper to Use Solid Oak... 😳",
+        "sourceChannel": "The Chateau Diaries",
+        "clipScore": 80,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio",
+          "duration_band"
+        ],
+        "gatesFailed": [
+          "loudness"
+        ],
+        "decisionFormat": "shorts",
+        "decisionRationale": "3 passing clips totaling 3.2 min — under the 7 min long-form floor. Ship 3 shorts individually."
+      },
+      "recordedAt": "2026-10-26T16:15:01.655Z"
+    },
+    {
+      "sourceVideoId": "doAYhtLCORs",
+      "clipPath": "work/clipper/polished/clip-02_785-847.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "€18,000 for PLYWOOD?! Somehow It Is Cheaper to Use Solid Oak... 😳",
+        "sourceChannel": "The Chateau Diaries",
+        "clipScore": 70,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio"
+        ],
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "decisionFormat": "shorts",
+        "decisionRationale": "3 passing clips totaling 3.2 min — under the 7 min long-form floor. Ship 3 shorts individually."
+      },
+      "recordedAt": "2026-10-26T16:15:01.654Z"
+    },
+    {
+      "sourceVideoId": "doAYhtLCORs",
+      "clipPath": "work/clipper/polished/clip-01_715-785.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "€18,000 for PLYWOOD?! Somehow It Is Cheaper to Use Solid Oak... 😳",
+        "sourceChannel": "The Chateau Diaries",
+        "clipScore": 75,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio"
+        ],
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "decisionFormat": "shorts",
+        "decisionRationale": "3 passing clips totaling 3.2 min — under the 7 min long-form floor. Ship 3 shorts individually."
+      },
+      "recordedAt": "2026-10-26T16:15:01.648Z"
+    },
+    {
       "sourceVideoId": "WJAnJL8e8ws",
       "kind": "rejected",
       "context": {
