@@ -2,6 +2,25 @@
   "version": 1,
   "records": [
     {
+      "sourceVideoId": "WJAnJL8e8ws",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "I MOVED to the countryside! 🏡 NEW HOME REVEAL *I CAN'T BELIEVE IT!* (my first days)",
+        "sourceChannel": "Amber J Baldwin",
+        "clipScore": 65,
+        "gatesFailed": [
+          "loudness",
+          "true_peak",
+          "duration_band"
+        ],
+        "criticalFails": [
+          "true_peak"
+        ],
+        "rejectReason": "critical: true_peak"
+      },
+      "recordedAt": "2026-10-26T15:58:31.104Z"
+    },
+    {
       "sourceVideoId": "ye5bc55_z28",
       "kind": "rejected",
       "context": {
