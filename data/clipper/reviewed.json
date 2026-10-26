@@ -1,4 +1,16 @@
 {
   "version": 1,
-  "records": {}
+  "records": {
+    "ye5bc55_z28": {
+      "videoId": "ye5bc55_z28",
+      "title": "My Wedding Day!!",
+      "channelTitle": "tiffanythinks",
+      "status": "pending",
+      "firstSeenAt": "2026-10-26T19:49:41.111Z",
+      "updatedAt": "2026-10-26T19:49:41.111Z",
+      "clipPaths": [
+        "work/clipper/final/short_01.mp4"
+      ]
+    }
+  }
 }

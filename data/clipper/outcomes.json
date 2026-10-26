@@ -1,4 +1,29 @@
 {
   "version": 1,
-  "records": []
+  "records": [
+    {
+      "sourceVideoId": "ye5bc55_z28",
+      "clipPath": "work/clipper/polished/clip-01_290-530.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "My Wedding Day!!",
+        "sourceChannel": "tiffanythinks",
+        "clipScore": 70,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio"
+        ],
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "decisionFormat": "shorts",
+        "decisionRationale": "1 passing clips totaling 4.0 min — under the 7 min long-form floor. Ship 1 shorts individually."
+      },
+      "recordedAt": "2026-10-26T19:45:33.609Z"
+    }
+  ]
 }
