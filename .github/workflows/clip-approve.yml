@@ -1,0 +1,167 @@
+name: clip-approve
+# Listens for /approve or /reject comments on clipper-review issues and auto-publishes
+# approved clips to YouTube Studio (private by default). Only runs for repo collaborators
+# (prevents random issue commenters from triggering uploads).
+#
+# Comment grammar on a `clipper: review clips from run <RUN_ID>` issue:
+#   /approve 1               → upload short/long index 0 (1-based in UI)
+#   /approve 1,3             → upload indices 0 and 2
+#   /approve all             → upload every clip in the manifest
+#   /reject 2                → record a human-rejected outcome for index 1
+#   /approve 1 public        → upload as public (default is private)
+#
+# Reactions on the comment indicate state: +1 while processing, rocket when done, -1 on failure.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+  actions: read
+
+jobs:
+  approve:
+    if: contains(github.event.issue.labels.*.name, 'clipper-review') && (github.event.comment.author_association == 'OWNER' || github.event.comment.author_association == 'MEMBER' || github.event.comment.author_association == 'COLLABORATOR') && (startsWith(github.event.comment.body, '/approve') || startsWith(github.event.comment.body, '/reject'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+
+      - name: React (processing)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X POST "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content='+1' || true
+
+      - name: Parse comment + extract run id
+        id: parse
+        env:
+          BODY: ${{ github.event.comment.body }}
+          TITLE: ${{ github.event.issue.title }}
+        run: |
+          set -euo pipefail
+          # Issue title shape: "clipper: review clips from run <RUN_ID>"
+          RUN_ID=$(echo "$TITLE" | grep -oE '[0-9]{9,}' | head -1)
+          if [[ -z "$RUN_ID" ]]; then echo "cannot find run id in title: $TITLE"; exit 1; fi
+          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+
+          # Command: approve or reject
+          CMD=$(echo "$BODY" | awk 'NR==1' | grep -oE '^/(approve|reject)' | tr -d '/')
+          echo "cmd=$CMD" >> $GITHUB_OUTPUT
+
+          # Target: "all" or a comma-separated list of 1-based indices
+          TARGET=$(echo "$BODY" | awk 'NR==1' | sed -E 's/^\/(approve|reject)\s+//' | awk '{print $1}')
+          echo "target=$TARGET" >> $GITHUB_OUTPUT
+
+          # Privacy for approve: public|unlisted|private (default private)
+          PRIV=$(echo "$BODY" | awk 'NR==1' | grep -oE '\b(public|unlisted|private)\b' | head -1 || true)
+          echo "privacy=${PRIV:-private}" >> $GITHUB_OUTPUT
+
+      - name: Download clips artifact from source run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN_ID="${{ steps.parse.outputs.run_id }}"
+          mkdir -p work/clipper
+          gh run download "$RUN_ID" -n "clips-${RUN_ID}" -D work/clipper || {
+            echo "artifact clips-${RUN_ID} not found (may be past 7-day retention)"
+            exit 1
+          }
+          ls -la work/clipper/
+          # The clips-<id> artifact root contains final/ and manifest.json after M5 shrink.
+
+      - name: Resolve indices
+        id: idx
+        run: |
+          set -euo pipefail
+          CMD="${{ steps.parse.outputs.cmd }}"
+          TARGET="${{ steps.parse.outputs.target }}"
+          MF="work/clipper/manifest.json"
+          if [[ ! -f "$MF" ]]; then echo "manifest.json not in artifact"; exit 1; fi
+          OUT_COUNT=$(node --input-type=module -e "import {readFileSync} from 'node:fs';const m=JSON.parse(readFileSync('$MF','utf8'));console.log((m.outputs ?? []).length);")
+          echo "outputs in manifest: $OUT_COUNT"
+          if [[ "$TARGET" == "all" ]]; then
+            INDICES=$(seq 0 $((OUT_COUNT - 1)) | tr '\n' ' ')
+          else
+            # 1-based UI → 0-based code
+            INDICES=$(echo "$TARGET" | tr ',' ' ' | awk '{ for (i=1;i<=NF;i++) print $i - 1 }' | tr '\n' ' ')
+          fi
+          echo "indices=$INDICES" >> $GITHUB_OUTPUT
+
+      - name: Approve → upload each index
+        if: steps.parse.outputs.cmd == 'approve'
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: |
+          set -euo pipefail
+          PRIV="${{ steps.parse.outputs.privacy }}"
+          LINKS=""
+          for IDX in ${{ steps.idx.outputs.indices }}; do
+            echo "::group::upload index $IDX"
+            STUDIO=$(npm run --silent clip:upload -- --manifest work/clipper/manifest.json --index "$IDX" --privacy "$PRIV" 2>&1 | tail -5 | tee /dev/stderr | grep -oE 'https://studio.youtube.com/video/[^ ]+' | head -1 || true)
+            LINKS+="  - index $((IDX + 1)): ${STUDIO:-upload failed}\n"
+            echo "::endgroup::"
+          done
+          # Save to env for the next step to post as a comment.
+          {
+            echo "SUMMARY<<EOF"
+            printf '%b' "$LINKS"
+            echo "EOF"
+          } >> $GITHUB_ENV
+
+      - name: Reject → record outcomes
+        if: steps.parse.outputs.cmd == 'reject'
+        run: |
+          set -euo pipefail
+          for IDX in ${{ steps.idx.outputs.indices }}; do
+            echo "recording human-rejected outcome for index $IDX"
+            # Minimal direct JSON append; a full node runner would be cleaner but this is enough
+            # to flag the clip in outcomes.json so the ranker learns.
+            MF="work/clipper/manifest.json"
+            SRC_ID=$(node --input-type=module -e "import {readFileSync} from 'node:fs';const m=JSON.parse(readFileSync('$MF','utf8'));console.log(m.source?.url?.match(/v=([A-Za-z0-9_-]{11})/)?.[1] ?? '');")
+            SRC_TITLE=$(node --input-type=module -e "import {readFileSync} from 'node:fs';const m=JSON.parse(readFileSync('$MF','utf8'));console.log(m.source?.title ?? '');")
+            node --input-type=module -e "
+              import {readFileSync, writeFileSync} from 'node:fs';
+              const path='data/clipper/outcomes.json';
+              const f=JSON.parse(readFileSync(path,'utf8'));
+              f.records.push({
+                sourceVideoId: '$SRC_ID',
+                kind: 'rejected',
+                recordedAt: new Date().toISOString(),
+                context: { sourceTitle: '$SRC_TITLE', rejectReason: 'human rejected via /reject', rejectDetails: { index: $IDX } }
+              });
+              writeFileSync(path, JSON.stringify(f, null, 2) + '\n');
+            "
+          done
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/clipper/outcomes.json
+          git diff --cached --quiet || git commit -m "clipper: record human /reject on run ${{ steps.parse.outputs.run_id }} [skip ci]"
+          git push || true
+
+      - name: React + reply
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          STATE="${{ job.status }}"
+          REACTION="rocket"; [[ "$STATE" != "success" ]] && REACTION="-1"
+          gh api -X POST "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content="$REACTION" || true
+          BODY=$(mktemp)
+          if [[ "${{ steps.parse.outputs.cmd }}" == "approve" && "$STATE" == "success" ]]; then
+            printf 'Uploaded (privacy=%s):\n%s\n' "${{ steps.parse.outputs.privacy }}" "${SUMMARY:-(no uploads)}" > "$BODY"
+          elif [[ "${{ steps.parse.outputs.cmd }}" == "reject" && "$STATE" == "success" ]]; then
+            printf 'Recorded /reject for indices %s. Ranker will deprioritize this channel going forward.\n' "${{ steps.parse.outputs.target }}" > "$BODY"
+          else
+            printf 'Command failed. Check the run logs: https://github.com/%s/actions/runs/%s\n' "${{ github.repository }}" "${{ github.run_id }}" > "$BODY"
+          fi
+          gh issue comment "${{ github.event.issue.number }}" --body-file "$BODY"
