@@ -21,6 +21,12 @@
  */
 import { fetchOk } from "../http.js";
 import { isReviewed } from "./state.js";
+import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const OUTCOMES_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "data", "clipper", "outcomes.json");
 
 /** YouTube category IDs — the "attracted to" niches by default. See: https://developers.google.com/youtube/v3/docs/videoCategories/list */
 export const DEFAULT_CATEGORIES = {
@@ -46,6 +52,11 @@ export type DiscoverConfig = {
   maxAgeDays?: number;                            // default 14 (fresh virals only)
   minDurationSec?: number;                        // default 10 * 60 (10 min — long enough to clip)
   maxDurationSec?: number;                        // default 4 * 60 * 60 (4 hr cap)
+  /** M5: velocity-based discovery. When set, call search.list?order=viewCount&publishedAfter per
+   *  region to find "hot new" videos (velocity signal). The default (48h) catches MrBeast-style
+   *  overnight viral drops. */
+  velocityHours?: number;                         // default 48
+  velocityPerQuery?: number;                      // default 25
 };
 
 export type DiscoveredVideo = {
@@ -151,6 +162,36 @@ async function channelLatest(apiKey: string, channelId: string, max: number): Pr
   return data.items.map((it) => it.id.videoId);
 }
 
+/** M5 — velocity-based discovery. search.list?order=viewCount&publishedAfter=<N hours ago> per
+ *  region finds videos that got the most views in the recent window. Caught MrBeast / Dude Perfect
+ *  overnight explosions on the first test. 100 units/call. */
+async function searchByVelocity(apiKey: string, regionCode: string, hoursBack: number, max: number): Promise<string[]> {
+  const since = new Date(Date.now() - hoursBack * 3600_000).toISOString();
+  const url = `https://www.googleapis.com/youtube/v3/search?part=id&order=viewCount&publishedAfter=${since}&type=video&regionCode=${regionCode}&maxResults=${Math.min(50, max)}&videoDuration=long&relevanceLanguage=en&key=${apiKey}`;
+  const r = await fetchOk(url, { method: "GET" });
+  const data = await r.json() as { items?: Array<{ id?: { videoId?: string } }> };
+  return (data.items ?? []).map((it) => it.id?.videoId).filter((x): x is string => !!x);
+}
+
+/** Load videoIds that previously FAILED gates. Used to penalize channels of underperformers. */
+async function loadFailedChannels(): Promise<Set<string>> {
+  if (!existsSync(OUTCOMES_FILE)) return new Set();
+  try {
+    const raw = JSON.parse(await readFile(OUTCOMES_FILE, "utf8")) as { records?: Array<{ kind: string; context?: { sourceChannel?: string; sourceVideoId?: string } }> };
+    const out = new Set<string>();
+    const failed = new Map<string, number>();
+    for (const r of raw.records ?? []) {
+      if (r.kind === "rejected" || r.kind === "dropped") {
+        const ch = r.context?.sourceChannel;
+        if (ch) failed.set(ch, (failed.get(ch) ?? 0) + 1);
+      }
+    }
+    // A channel is penalized if ≥3 clips from it dropped. One-offs are noise.
+    for (const [ch, n] of failed) if (n >= 3) out.add(ch);
+    return out;
+  } catch { return new Set(); }
+}
+
 // ---------- Rank + filter ----------
 
 /** Parse ISO 8601 duration (PT1H23M45S) to seconds. */
@@ -180,30 +221,40 @@ function daysSince(iso: string): number {
  *    - category bonus:  People & Blogs (podcasts), Gaming (streams), Entertainment all boosted
  *    - freshness:       the newer the better (within our 14-day cap)
  */
-export function rank(videos: DiscoveredVideo[], chaptersById: Record<string, number> = {}): DiscoveredVideo[] {
+export function rank(videos: DiscoveredVideo[], chaptersById: Record<string, number> = {}, failedChannels: Set<string> = new Set()): DiscoveredVideo[] {
   return [...videos]
     .map((v) => {
       const days = daysSince(v.publishedAt);
+      const hoursOld = Math.max(0.1, days * 24);
       const vpd = v.viewCount / days;
+      const vph = v.viewCount / hoursOld;                              // M5: velocity (views/hr)
       const eng = v.viewCount > 0 ? ((v.likeCount + 10 * v.commentCount) / v.viewCount) * 1_000_000 : 0;
-      const likeView = v.viewCount > 0 ? (v.likeCount / v.viewCount) * 100 : 0; // % of viewers who liked
+      const likeView = v.viewCount > 0 ? (v.likeCount / v.viewCount) * 100 : 0;
       const chapters = chaptersById[v.id] ?? 0;
-      const chapterDensity = v.durationSec > 0 ? (chapters / (v.durationSec / 3600)) : 0; // per hour
+      const chapterDensity = v.durationSec > 0 ? (chapters / (v.durationSec / 3600)) : 0;
       const durBonus = v.durationSec >= 20 * 60 && v.durationSec <= 90 * 60 ? 1.2 : (v.durationSec >= 10 * 60 && v.durationSec <= 180 * 60 ? 0.6 : 0.2);
-      // People&Blogs (podcasts/interviews), Gaming (streams), Entertainment (variety) all clip well.
       const catBonus = ({ "22": 1.3, "20": 1.2, "24": 1.15 } as Record<string, number>)[v.categoryId] ?? 1.0;
-      const freshness = Math.max(0.3, 1 - (days / 30)); // fades over a month
+      const freshness = Math.max(0.3, 1 - (days / 30));
       const chapterBonus = chapterDensity >= 3 ? 1.2 : (chapterDensity >= 1 ? 1.05 : 1.0);
+      // M5: velocity bonus — the dominant signal for "hot right now". A 1M-view video 6h old
+      // (vph=166k) should outrank a 1M-view video 2 days old (vph=21k), per user's "MrBeast
+      // overnight viral" criterion.
+      const velocityScore = Math.log10(1 + vph) * 15;
+      // M5: outcome-informed penalty. Channels whose clips have failed ≥3 times are tagged in
+      // outcomes.json; penalize them without excluding entirely (one of their videos might still
+      // be clippable; just rank lower).
+      const outcomePenalty = failedChannels.has(v.channelTitle) ? 0.4 : 1.0;
       const signals = {
         views_per_day: Math.round(vpd),
+        views_per_hour: Math.round(vph),
         engagement_per_m: Math.round(eng),
         like_view_pct: +likeView.toFixed(2),
         chapter_density_per_h: +chapterDensity.toFixed(2),
         duration_min: Math.round(v.durationSec / 60),
-        days_old: +days.toFixed(1),
+        hours_old: +hoursOld.toFixed(1),
+        channel_penalized: failedChannels.has(v.channelTitle) ? 1 : 0,
       };
-      // Base: log(views/day). Multipliers for clippability. Add engagement for ties.
-      const score = (Math.log10(1 + vpd) * 10) * durBonus * catBonus * freshness * chapterBonus
+      const score = (velocityScore + Math.log10(1 + vpd) * 5) * durBonus * catBonus * freshness * chapterBonus * outcomePenalty
                   + (eng / 100)
                   + (likeView * 2);
       return { ...v, score, signals };
@@ -236,6 +287,8 @@ export async function discover(cfg: DiscoverConfig, topN = 20): Promise<Discover
   const perRegion = cfg.perRegionTrending ?? 25;
   const perCat = cfg.perCategory ?? 15;
   const perCh = cfg.perChannel ?? 5;
+  const velocityHours = cfg.velocityHours ?? 48;
+  const velocityPer = cfg.velocityPerQuery ?? 25;
   const bucket: DiscoveredVideo[] = [];
 
   for (const region of cfg.regionCodes) {
@@ -244,6 +297,17 @@ export async function discover(cfg: DiscoverConfig, topN = 20): Promise<Discover
       console.log(`[discover] trending[${region}]: ${vs.length}`);
       bucket.push(...vs);
     } catch (e) { console.warn(`[discover] trending[${region}] failed: ${(e as Error).message.split("\n")[0]}`); }
+
+    // M5: velocity-based search — "hot new" in last N hours. 100 units per region per call;
+    // only run on explicit regions, not per-category (quota).
+    try {
+      const velIds = await searchByVelocity(cfg.apiKey, region, velocityHours, velocityPer);
+      if (velIds.length) {
+        const vs = await videosList(cfg.apiKey, velIds);
+        console.log(`[discover] velocity[${region}, ${velocityHours}h]: ${vs.length}`);
+        bucket.push(...vs.map((v) => ({ ...v, regionSource: region })));
+      }
+    } catch (e) { console.warn(`[discover] velocity[${region}] failed: ${(e as Error).message.split("\n")[0]}`); }
 
     for (const catId of cfg.categoryIds ?? []) {
       try {
@@ -269,8 +333,10 @@ export async function discover(cfg: DiscoverConfig, topN = 20): Promise<Discover
     }
   }
 
+  const failedChannels = await loadFailedChannels();
+  if (failedChannels.size) console.log(`[discover] penalizing ${failedChannels.size} previously-failing channels: ${[...failedChannels].slice(0, 5).join(", ")}${failedChannels.size > 5 ? "…" : ""}`);
   const filtered = await filter(bucket, cfg);
-  const ranked = rank(filtered);
+  const ranked = rank(filtered, {}, failedChannels);
   console.log(`[discover] ${bucket.length} raw → ${filtered.length} after filter → top ${Math.min(topN, ranked.length)}`);
   return ranked.slice(0, topN);
 }

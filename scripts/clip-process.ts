@@ -17,6 +17,7 @@ import { decide } from "../src/lib/clipper/decide.js";
 import { makeShort, concatLong, writeManifest } from "../src/lib/clipper/assemble.js";
 import { recordProduced, recordRejected } from "../src/lib/clipper/outcomes.js";
 import { upsert } from "../src/lib/clipper/state.js";
+import { checkCropSafety } from "../src/lib/clipper/crop-safety.js";
 import type { ClipCandidate } from "../src/lib/yt-clipper.js";
 
 type SectionsFile = {
@@ -24,6 +25,11 @@ type SectionsFile = {
   meta: { id: string; title: string; uploader: string; durationSec: number };
   picks: ClipCandidate[];
   sections: Array<{ rank: number; path: string }>;
+  /** M5: format hint from retention-planner — "shorts" or "long". When present the decider respects
+   *  it rather than running the sum-based auto rule. */
+  format?: "shorts" | "long";
+  source?: "retention" | "llm-fallback";
+  curveSignals?: string[];
 };
 
 function parseArgs(argv: string[]): { sections: string; out: string; format: "auto"|"shorts"|"long" } {
@@ -72,10 +78,12 @@ async function main() {
   }
 
   const scored = scoredByPick.map((s) => s.score);
-  const decision = format === "auto" ? decide(scored) : (() => {
-    const d = decide(scored); d.format = format; return d;
+  // M5: plan.format from retention-planner wins over "auto". Only --format=shorts/long overrides it.
+  const effectiveFormat = format !== "auto" ? format : (sf.format ?? "auto");
+  const decision = effectiveFormat === "auto" ? decide(scored) : (() => {
+    const d = decide(scored); d.format = effectiveFormat; return d;
   })();
-  console.log(`[clip:process] decision: ${decision.format} — ${decision.rationale}`);
+  console.log(`[clip:process] decision: ${decision.format} — ${decision.rationale} (hint from plan: ${sf.format ?? "none"})`);
 
   // Record every scored clip's outcome — passed or rejected — so the learning loop has data.
   for (const { pick: _pick, score: s } of scoredByPick) {
@@ -106,6 +114,31 @@ async function main() {
     await writeManifest(out, { source: { url: sf.url, title: sf.meta.title, uploader: sf.meta.uploader, durationSec: sf.meta.durationSec }, decision, scoredAll: scored, outputs: [] });
     await upsert(sf.meta.id, { title: sf.meta.title, channelTitle: sf.meta.uploader, status: "dropped", notes: decision.rationale });
     process.exit(0);
+  }
+
+  // M5 — crop-safety: shorts only. Reject any clip whose active content drifts outside the 9:16
+  // center stripe, so faces/subjects don't get sliced off when vertical-cropped.
+  if (decision.format === "shorts") {
+    const safe: typeof decision.chosen = [];
+    for (const s of decision.chosen) {
+      const cs = await checkCropSafety(s.path);
+      console.log(`  crop-safety ${path.basename(s.path)}: ${cs.safeForCrop ? "SAFE" : "UNSAFE"} — ${cs.reason}`);
+      if (cs.safeForCrop) safe.push(s);
+      else {
+        await recordRejected(sf.meta.id, {
+          sourceTitle: sf.meta.title, sourceChannel: sf.meta.uploader,
+          clipScore: s.score, rejectReason: `crop-unsafe: ${cs.reason}`,
+          rejectDetails: { centeredRatio: cs.centeredRatio, sceneCuts: cs.sceneCuts },
+        });
+      }
+    }
+    if (!safe.length) {
+      console.error("\n✗ all passing clips failed crop-safety. Dropping source.");
+      await writeManifest(out, { source: { url: sf.url, title: sf.meta.title, uploader: sf.meta.uploader, durationSec: sf.meta.durationSec }, decision: { ...decision, format: "none", chosen: [], rationale: decision.rationale + " [all failed crop-safety]" }, scoredAll: scored, outputs: [] });
+      await upsert(sf.meta.id, { title: sf.meta.title, channelTitle: sf.meta.uploader, status: "dropped", notes: "all passing clips failed crop-safety" });
+      process.exit(0);
+    }
+    decision.chosen = safe;
   }
 
   // Assemble with attribution overlay.

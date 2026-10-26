@@ -52,7 +52,9 @@
     "clip:discover": "tsx --env-file-if-exists=.env scripts/clip-discover.ts",
     "clip:plan": "tsx --env-file-if-exists=.env scripts/clip-plan.ts",
     "clip:fetch": "tsx --env-file-if-exists=.env scripts/clip-fetch.ts",
-    "clip:process": "tsx --env-file-if-exists=.env scripts/clip-process.ts"
+    "clip:process": "tsx --env-file-if-exists=.env scripts/clip-process.ts",
+    "clip:upload": "tsx --env-file-if-exists=.env scripts/clip-upload.ts",
+    "clip:wipe": "tsx scripts/clip-wipe-learning.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
