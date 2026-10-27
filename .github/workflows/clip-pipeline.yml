@@ -180,7 +180,9 @@ jobs:
           # in testing. opencv-python-headless skips the GUI libs we don't need on CI.
           pip install --upgrade auto-editor
           pip install 'mediapipe==0.10.14' 'opencv-python-headless==4.10.0.84' 'numpy<2'
-          pip install 'faster-whisper==1.0.3'
+          # faster-whisper 1.0.3 imports `requests` in its utils but doesn't list it in its
+          # wheel dependencies (confirmed via a failing CI import). Install it explicitly.
+          pip install 'faster-whisper==1.0.3' 'requests'
           ffmpeg -version | head -1
           python3 -c "import mediapipe, cv2, faster_whisper; print('mediapipe', mediapipe.__version__, 'cv2', cv2.__version__, 'faster-whisper OK')"
       - run: npm ci --no-audit --no-fund
