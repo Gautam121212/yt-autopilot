@@ -32,6 +32,8 @@ type SectionsFile = {
   format?: "shorts" | "long";
   source?: "retention" | "llm-fallback";
   curveSignals?: string[];
+  /** M8.4: source provenance (yt-dlp -J snapshot at fetch time, honest about rights). */
+  provenance?: Record<string, unknown>;
 };
 
 function parseArgs(argv: string[]): { sections: string; out: string; format: "auto"|"shorts"|"long" } {
@@ -62,8 +64,12 @@ async function main() {
     const rawPath = path.join(sectionsDir, s.path);
     const pick = sf.picks.find((p) => p.rank === s.rank);
     if (!pick) { console.warn(`  no pick for rank ${s.rank}, skipping`); continue; }
-    console.log(`  rank ${s.rank}: snap → polish → score`);
-    const snapped = await snapToSilence(rawPath, snappedDir);
+    console.log(`  rank ${s.rank}: transcribe-raw → snap → polish → score`);
+    // M8.5: transcribe RAW section first with tiny model so snap-to-silence can prefer silences
+    // that fall at sentence endings. Non-fatal if whisper unavailable; snap falls back to pure
+    // silence detection.
+    const rawSrt = await transcribeToSRT(rawPath, "tiny");
+    const snapped = await snapToSilence(rawPath, snappedDir, rawSrt ?? undefined);
     const polished = await polish(snapped, polishedDir);
     const probeBand = format === "long" ? "long" : "shorts";
     let scored = await measureAndScore(polished.outputPath, probeBand);
@@ -219,7 +225,13 @@ async function main() {
     console.log(`  long → ${path.basename(o)}`);
   }
 
-  await writeManifest(out, { source: { url: sf.url, title: sf.meta.title, uploader: sf.meta.uploader, durationSec: sf.meta.durationSec }, picks: sf.picks, scoredAll: scored, decision, outputs });
+  // M8.4: emit full provenance in the manifest so human review (and the upload step) can see
+  // license, review flags, and attribution requirements per spec section 9.
+  await writeManifest(out, {
+    source: { url: sf.url, title: sf.meta.title, uploader: sf.meta.uploader, durationSec: sf.meta.durationSec },
+    provenance: sf.provenance ?? null,
+    picks: sf.picks, scoredAll: scored, decision, outputs,
+  });
   await upsert(sf.meta.id, { title: sf.meta.title, channelTitle: sf.meta.uploader, status: "pending", clipPaths: outputs });
   console.log(`\n✓ clip:process done — ${outputs.length} ${decision.format}`);
 }

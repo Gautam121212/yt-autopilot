@@ -58,6 +58,8 @@ def main() -> int:
     faces_total = 0
     face_centers_x = []
     centered = 0
+    multi_face_frames = 0        # frames with ≥2 faces separated by width/4+ (interacting pair)
+    opposite_third_frames = 0    # frames with faces at both the left and right outer thirds
 
     frame_idx = 0
     while True:
@@ -75,6 +77,7 @@ def main() -> int:
         faces = []
         if result.detections:
             frames_with_face += 1
+            frame_face_centers = []
             for det in result.detections:
                 rb = det.location_data.relative_bounding_box
                 fx, fy, fw, fh = rb.xmin * width, rb.ymin * height, rb.width * width, rb.height * height
@@ -82,9 +85,21 @@ def main() -> int:
                 faces.append({"x": round(fx, 1), "y": round(fy, 1), "w": round(fw, 1), "h": round(fh, 1), "score": round(score, 3)})
                 cx = fx + fw / 2
                 face_centers_x.append(cx)
+                frame_face_centers.append(cx)
                 faces_total += 1
                 if stripe_x0 <= cx <= stripe_x1:
                     centered += 1
+            # M8.6 — multi-subject detection. If this frame has ≥2 faces separated by at least
+            # width/4, we have an interaction shot that center-crop would slice. If one face is in
+            # the left outer third AND another in the right outer third, it's definitely opposite
+            # — a two-way conversation or confrontation where both must stay visible.
+            if len(frame_face_centers) >= 2:
+                left = min(frame_face_centers)
+                right = max(frame_face_centers)
+                if right - left >= width / 4:
+                    multi_face_frames += 1
+                if left < width / 3 and right > 2 * width / 3:
+                    opposite_third_frames += 1
         print(json.dumps({"t": round(t, 2), "w": width, "h": height, "faces": faces}), flush=True)
         frame_idx += 1
 
@@ -103,6 +118,10 @@ def main() -> int:
         "face_center_x_mean_norm": round(mean_x, 3),
         "face_center_x_std_norm": round(std_x, 3),
         "centered_ratio": round(centered_ratio, 3),
+        "multi_face_frames": multi_face_frames,
+        "opposite_third_frames": opposite_third_frames,
+        "multi_face_ratio": round(multi_face_frames / samples, 3) if samples else 0.0,
+        "opposite_third_ratio": round(opposite_third_frames / samples, 3) if samples else 0.0,
         "width": width, "height": height,
     }), flush=True)
     return 0

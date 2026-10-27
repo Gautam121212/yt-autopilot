@@ -54,7 +54,8 @@
     "clip:fetch": "tsx --env-file-if-exists=.env scripts/clip-fetch.ts",
     "clip:process": "tsx --env-file-if-exists=.env scripts/clip-process.ts",
     "clip:upload": "tsx --env-file-if-exists=.env scripts/clip-upload.ts",
-    "clip:wipe": "tsx scripts/clip-wipe-learning.ts"
+    "clip:wipe": "tsx scripts/clip-wipe-learning.ts",
+    "clip:regression": "tsx --env-file-if-exists=.env scripts/clip-regression.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

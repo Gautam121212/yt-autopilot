@@ -9,6 +9,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { downloadSection } from "../src/lib/clipper/extract.js";
+import { fetchProvenance } from "../src/lib/clipper/provenance.js";
 
 function parseArgs(argv: string[]): { plan: string; out: string; maxHeight: number } {
   let plan = "work/clipper/plan.json", out = "work/clipper/sections", maxHeight = 1080;
@@ -46,9 +47,17 @@ async function main() {
       console.warn(`  ✗ rank ${pick.rank}: ${(e as Error).message.split("\n")[0]}`);
     }
   }
+  // M8.4: capture source provenance at fetch time (we have yt-dlp warm anyway). The processor
+  // writes this into manifest.json. Non-fatal if provenance fetch fails — the clip still ships
+  // with the metadata the planner already captured.
+  const provenance = await fetchProvenance(p.url);
+  if (provenance?.reviewFlags.length) {
+    console.log(`  ⚠ provenance review flags: ${provenance.reviewFlags.join(", ")}`);
+  }
   await writeFile(path.join(out, "sections.json"), JSON.stringify({
     url: p.url, meta: p.meta, sections, picks: p.picks,
     format: p.format, source: p.source, curveSignals: p.curveSignals,
+    provenance,
   }, null, 2));
   console.log(`✓ wrote ${sections.length} sections + sections.json → ${out}`);
 }

@@ -88,6 +88,11 @@ type FaceScanSummary = {
   face_center_x_mean_norm: number;
   face_center_x_std_norm: number;
   centered_ratio: number;
+  /** M8.6: multi-subject signals. */
+  multi_face_frames?: number;
+  opposite_third_frames?: number;
+  multi_face_ratio?: number;
+  opposite_third_ratio?: number;
   width: number;
   height: number;
 };
@@ -157,6 +162,20 @@ export async function checkCropSafety(inputPath: string): Promise<CropSafetyResu
   if (face && face.samples > 0) {
     const presence = face.frames_with_face / face.samples;
     if (presence >= MIN_FACE_PRESENCE) {
+      // M8.6 — multi-subject check. If ≥30% of frames show 2 faces separated by width/4+, or
+      // ≥20% show faces at opposite thirds, center-crop WILL slice one of them. Force
+      // blurred-bg so both stay visible, regardless of center-stripe ratio.
+      const multiSubject = (face.multi_face_ratio ?? 0) >= 0.3 || (face.opposite_third_ratio ?? 0) >= 0.2;
+      if (multiSubject) {
+        return {
+          safeForCrop: false, layout: "blurred-bg",
+          reason: `multi-subject shot (${((face.multi_face_ratio ?? 0) * 100).toFixed(0)}% multi-face, ${((face.opposite_third_ratio ?? 0) * 100).toFixed(0)}% opposite-thirds); blurred-bg keeps both visible`,
+          samples: face.samples, centeredSamples: Math.round(face.centered_ratio * face.faces_total),
+          centeredRatio: face.centered_ratio, sceneCuts: cuts,
+          framesWithFace: face.frames_with_face, facesTotal: face.faces_total,
+          facePresenceRatio: presence, dominantCenterXNorm: face.face_center_x_mean_norm,
+        };
+      }
       // Face-containing clip — the only honest signal is face position vs the center stripe.
       const centerSafe = face.centered_ratio >= CENTER_STRIPE_SAFE_RATIO;
       const notTooCutty = cuts <= MAX_SCENE_CUTS;

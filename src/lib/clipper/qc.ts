@@ -29,16 +29,25 @@ const EXPECTED_HEIGHT = 1920;
 const EDGE_SLICE_MARGIN = 20;            // pixels — face bbox touching inside this is "sliced"
 const MAX_BLACK_FRAMES_RATIO = 0.15;     // >15% all-black = title card / dead space
 const MIN_FACE_FRAMES_WHEN_EXPECTED = 0.4; // 40% of samples must have a face if source had any
+const AV_SYNC_DRIFT_MAX_MS = 150;        // >150ms drift between video and audio stream duration
+const FROZEN_FRAME_MIN_SEC = 1.0;        // ≥1s stretch of near-identical frames = frozen
+const FROZEN_SSIM_THRESHOLD = 0.995;     // SSIM between adjacent samples ≥ this = "same frame"
+const MIN_SOURCE_HEIGHT_WARN = 720;      // source <720p records a reviewFlag
 
 export type QCVerdict = {
   passed: boolean;
   reasons: string[];                     // empty when passed
+  warnings: string[];                    // M8.7 — non-blocking issues worth logging
   dimensions: { width: number; height: number };
   durationSec: number;
+  videoDurationSec: number;              // M8.7
+  audioDurationSec: number;              // M8.7
+  avSyncDriftMs: number;                 // M8.7 — absolute drift between video/audio durations
   blackFrameRatio: number;
   framesWithFace: number;
   totalFrames: number;
   slicedFaceSamples: number;             // count of samples where a face touches a frame edge
+  frozenRunsSec: number[];               // M8.7 — list of frozen-stretch durations
 };
 
 async function runCapture(cmd: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
@@ -64,20 +73,67 @@ async function dimsAndDuration(file: string): Promise<{ width: number; height: n
   return { width: w ?? 0, height: h ?? 0, durationSec: dur || 0 };
 }
 
-/** Count all-black frames via ffmpeg's blackdetect. One line is emitted per black run; we sum
- *  the black duration and divide by total. */
+/** M8.7 — per-stream durations. Returns both video and audio stream duration so caller can
+ *  check A/V sync drift. ffprobe sometimes reports stream duration as empty for stream-copied
+ *  mp4; we fall back to format duration. */
+async function streamDurations(file: string): Promise<{ video: number; audio: number }> {
+  const vq = await exec("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=duration", "-of", "csv=p=0", file]);
+  const aq = await exec("ffprobe", ["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=duration", "-of", "csv=p=0", file]);
+  const video = Number(vq.stdout.trim() || 0);
+  const audio = Number(aq.stdout.trim() || 0);
+  return { video, audio };
+}
+
+/** M8.7 — frozen-frame detector. Sample 1 fps and run SSIM between adjacent frames. Any run of
+ *  consecutive samples where SSIM >= FROZEN_SSIM_THRESHOLD lasting >= FROZEN_FRAME_MIN_SEC is a
+ *  frozen stretch (accidental freeze, muxing glitch, or source corruption). Returns durations
+ *  (in seconds) of each stretch; empty = healthy. We use ffmpeg's freezedetect filter — it's
+ *  cheaper than SSIM-per-pair and emits start/duration directly. */
+async function detectFrozen(file: string): Promise<number[]> {
+  const { stderr } = await runCapture("ffmpeg", [
+    "-nostats", "-i", file,
+    "-vf", `freezedetect=n=0.001:d=${FROZEN_FRAME_MIN_SEC}`,
+    "-map", "0:v:0", "-f", "null", "-",
+  ]);
+  // freezedetect emits lines like:
+  //   [freezedetect @ 0x…] lavfi.freezedetect.freeze_duration: 2.183
+  const re = /freeze_duration:\s*([\d.]+)/g;
+  const out: number[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(stderr))) out.push(Number(m[1]));
+  return out;
+}
+
+/** Count mostly-black frames. M4-short_01 taught us that `blackdetect` only catches 100%-black
+ *  frames; a title card ("À mardi" in white on black) has non-black text pixels and sneaks
+ *  through. So we use TWO detectors and take the max:
+ *   - blackdetect: strict pure-black (title card without text, end-card fade, actual black)
+ *   - blackframe: counts frames where ≥95% of pixels are below luma threshold — catches
+ *     title/end cards with text
+ *  blackframe emits one line per frame; we count frames and divide by fps-estimated total. */
 async function blackRatio(file: string, totalSec: number): Promise<number> {
   if (totalSec <= 0) return 1;
   const { stderr } = await runCapture("ffmpeg", [
     "-nostats", "-i", file,
-    "-vf", "blackdetect=d=0.2:pix_th=0.1",
+    "-vf", "blackdetect=d=0.2:pix_th=0.1,blackframe=amount=95:threshold=32",
     "-f", "null", "-",
   ]);
+  // blackdetect: pure-black duration per run
   const re = /black_duration:(\d+(?:\.\d+)?)/g;
   let m: RegExpExecArray | null;
-  let blackSec = 0;
-  while ((m = re.exec(stderr))) blackSec += Number(m[1]);
-  return Math.min(1, blackSec / totalSec);
+  let strictBlackSec = 0;
+  while ((m = re.exec(stderr))) strictBlackSec += Number(m[1]);
+  const strictRatio = Math.min(1, strictBlackSec / totalSec);
+
+  // blackframe: one line per "mostly-black" frame — "[Parsed_blackframe_1 @ 0x…] frame:N pblack:N t:T.T"
+  const fpsRe = /(\d+(?:\.\d+)?)\s*fps/;
+  const fpsM = stderr.match(fpsRe);
+  const fps = fpsM ? Number(fpsM[1]) : 30;
+  const blackframeHits = (stderr.match(/\[Parsed_blackframe_\d+ @[^\]]+\]\s+frame:/g) ?? []).length;
+  const mostlyBlackSec = blackframeHits / Math.max(1, fps);
+  const mostlyRatio = Math.min(1, mostlyBlackSec / totalSec);
+
+  return Math.max(strictRatio, mostlyRatio);
 }
 
 type FaceLine = { t: number; w: number; h: number; faces: Array<{ x: number; y: number; w: number; h: number; score: number }> };
@@ -117,6 +173,7 @@ function countSlicedFaces(lines: FaceLine[]): number {
 
 export async function qcCheck(finalPath: string, opts: { expectFaces?: boolean } = {}): Promise<QCVerdict> {
   const reasons: string[] = [];
+  const warnings: string[] = [];
   const { width, height, durationSec } = await dimsAndDuration(finalPath);
 
   if (width !== EXPECTED_WIDTH || height !== EXPECTED_HEIGHT) {
@@ -126,9 +183,28 @@ export async function qcCheck(finalPath: string, opts: { expectFaces?: boolean }
     reasons.push(`duration ${durationSec.toFixed(1)}s < 5s (truncated or empty)`);
   }
 
+  // M8.7 — A/V sync drift check (spec section 7+8). We compare the v:0 and a:0 stream durations
+  // reported by ffprobe. ffmpeg handles sync during encode, but a bad concat / xfade can leave
+  // audio ending early. >150ms drift is audible on short-form; we flag it.
+  const streams = await streamDurations(finalPath);
+  const avDriftMs = Math.round(Math.abs((streams.video || durationSec) - (streams.audio || durationSec)) * 1000);
+  if (avDriftMs > AV_SYNC_DRIFT_MAX_MS) {
+    reasons.push(`A/V sync drift ${avDriftMs}ms > ${AV_SYNC_DRIFT_MAX_MS}ms (video=${streams.video.toFixed(2)}s audio=${streams.audio.toFixed(2)}s)`);
+  } else if (avDriftMs > 50) {
+    warnings.push(`A/V sync drift ${avDriftMs}ms (within tolerance but notable)`);
+  }
+
   const black = await blackRatio(finalPath, durationSec);
   if (black > MAX_BLACK_FRAMES_RATIO) {
     reasons.push(`${(black * 100).toFixed(0)}% black frames (likely title/end card)`);
+  }
+
+  // M8.7 — frozen-frame detection (spec section 8 "frozen sections"). Any ≥1s run of frozen
+  // frames in a short-form clip is a glitch and worth rejecting.
+  const frozen = await detectFrozen(finalPath);
+  if (frozen.length) {
+    const totalFrozen = frozen.reduce((a, b) => a + b, 0);
+    reasons.push(`frozen frames: ${frozen.length} stretch(es) totaling ${totalFrozen.toFixed(1)}s`);
   }
 
   const { lines, summary } = await faceScanLines(finalPath);
@@ -148,13 +224,25 @@ export async function qcCheck(finalPath: string, opts: { expectFaces?: boolean }
 
   return {
     passed: reasons.length === 0,
-    reasons,
+    reasons, warnings,
     dimensions: { width, height },
     durationSec,
+    videoDurationSec: streams.video,
+    audioDurationSec: streams.audio,
+    avSyncDriftMs: avDriftMs,
     blackFrameRatio: black,
     framesWithFace, totalFrames,
     slicedFaceSamples: sliced,
+    frozenRunsSec: frozen,
   };
+}
+
+/** M8.7 — source-resolution flag. Called at fetch time, not QC time; adds a reviewFlag when
+ *  source is below 720p so the user knows upscaling was NOT applied (spec section 7: "report
+ *  the limitation rather than pretending that lost detail has been recovered"). */
+export function sourceResolutionFlag(height: number): string | null {
+  if (height <= 0) return null;
+  return height < MIN_SOURCE_HEIGHT_WARN ? `source-${height}p-below-${MIN_SOURCE_HEIGHT_WARN}p` : null;
 }
 
 /** Clean up extracted temp frames if any — currently we don't persist them, but reserved for

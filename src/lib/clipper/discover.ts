@@ -22,6 +22,7 @@
 import { fetchOk } from "../http.js";
 import { isReviewed } from "./state.js";
 import { agentReachAvailable, mentionSignal } from "./agent-reach.js";
+import { classifyNarrative, type NarrativeVerdict } from "./narrative-classifier.js";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -161,6 +162,28 @@ async function channelLatest(apiKey: string, channelId: string, max: number): Pr
   const r = await fetchOk(url, { method: "GET" });
   const data = await r.json() as { items: Array<{ id: { videoId: string } }> };
   return data.items.map((it) => it.id.videoId);
+}
+
+/** M8.3 — fetch a channel's recent upload view counts for baseline comparison. 100 units for the
+ *  search call + 1 for the videos.list. Cached per channel for the discover run (one call per
+ *  channel per run, regardless of how many of their videos are candidates). */
+const CHANNEL_BASELINE_CACHE = new Map<string, number>();
+async function channelMedianViews(apiKey: string, channelId: string): Promise<number | null> {
+  if (CHANNEL_BASELINE_CACHE.has(channelId)) return CHANNEL_BASELINE_CACHE.get(channelId)!;
+  try {
+    const ids = await channelLatest(apiKey, channelId, 10);
+    if (ids.length < 3) { CHANNEL_BASELINE_CACHE.set(channelId, 0); return null; }
+    const videos = await videosList(apiKey, ids);
+    const views = videos.map((v) => v.viewCount).filter((n) => n > 0).sort((a, b) => a - b);
+    if (!views.length) { CHANNEL_BASELINE_CACHE.set(channelId, 0); return null; }
+    const median = views[Math.floor(views.length / 2)]!;
+    CHANNEL_BASELINE_CACHE.set(channelId, median);
+    return median;
+  } catch (e) {
+    console.warn(`[discover] channelMedianViews(${channelId}) failed: ${(e as Error).message.split("\n")[0]}`);
+    CHANNEL_BASELINE_CACHE.set(channelId, 0);
+    return null;
+  }
 }
 
 /** M5 — velocity-based discovery. search.list?order=viewCount&publishedAfter=<N hours ago> per
@@ -407,6 +430,7 @@ export async function filter(videos: DiscoveredVideo[], cfg: DiscoverConfig): Pr
  *  if agent-reach is not on PATH. */
 const MENTION_ENRICH_TOP = 5;
 const MENTION_SCORE_WEIGHT = 12;              // log10(1 + hits) * this → added to score
+const BASELINE_MULTIPLE_WEIGHT = 8;           // log2(multiple) * this → added to score
 
 async function enrichWithMentions(ranked: DiscoveredVideo[]): Promise<DiscoveredVideo[]> {
   if (!(await agentReachAvailable())) {
@@ -427,6 +451,30 @@ async function enrichWithMentions(ranked: DiscoveredVideo[]): Promise<Discovered
     }
   }
   // Re-sort because the boosts may have reshuffled the top.
+  return [...ranked].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+}
+
+/** M8.3 — channel-baseline multiple. For each top-K candidate, fetch the channel's recent-upload
+ *  median views and compute multiple = thisVideoViews / medianViews. A value >1 means the video
+ *  is overperforming its channel's own baseline — the "smaller channel with a breakout video" the
+ *  spec explicitly asks us to prefer over "old video with millions of accumulated views". Boost
+ *  score by log2(multiple) * BASELINE_MULTIPLE_WEIGHT. Null baseline → score unchanged
+ *  (signal="unavailable", per spec rule "mark unavailable rather than invent"). */
+async function enrichWithBaseline(ranked: DiscoveredVideo[], apiKey: string, k = MENTION_ENRICH_TOP): Promise<DiscoveredVideo[]> {
+  const topK = ranked.slice(0, k);
+  console.log(`[discover] computing channel baselines for top ${topK.length}...`);
+  for (const v of topK) {
+    const median = await channelMedianViews(apiKey, v.channelId);
+    if (median === null || median <= 0) {
+      v.signals = { ...(v.signals ?? {}), baseline_median_views: 0, baseline_multiple: 0, baseline_status: 1 /* 1=unavailable */ };
+      continue;
+    }
+    const multiple = v.viewCount / median;
+    const boost = multiple > 1 ? Math.log2(multiple) * BASELINE_MULTIPLE_WEIGHT : -Math.log2(1 / Math.max(0.1, multiple)) * BASELINE_MULTIPLE_WEIGHT / 2;
+    v.score = (v.score ?? 0) + boost;
+    v.signals = { ...(v.signals ?? {}), baseline_median_views: median, baseline_multiple: +multiple.toFixed(2), baseline_boost: +boost.toFixed(1) };
+    console.log(`  ${v.id} baseline median=${median.toLocaleString()}, multiple=${multiple.toFixed(2)}x, +${boost.toFixed(1)}pts`);
+  }
   return [...ranked].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 }
 
@@ -486,7 +534,61 @@ export async function discover(cfg: DiscoverConfig, topN = 20): Promise<Discover
   const filtered = await filter(bucket, cfg);
   const ranked = rank(filtered, {}, failedChannels);
   console.log(`[discover] ${bucket.length} raw → ${filtered.length} after filter → top ${Math.min(topN, ranked.length)}`);
-  // M7.3: enrich with Agent-Reach cross-platform mention counts. Only re-ranks the head.
-  const enriched = await enrichWithMentions(ranked.slice(0, Math.max(topN, MENTION_ENRICH_TOP)));
-  return enriched.slice(0, topN);
+  // M8.3: channel-baseline multiple first (spec section 3: "prioritize exceptional performance
+  // relative to comparable videos") — this rewrites scores for the head.
+  const withBaseline = await enrichWithBaseline(ranked.slice(0, Math.max(topN, MENTION_ENRICH_TOP)), cfg.apiKey);
+  // M7.3: Agent-Reach cross-platform mention counts on top of that.
+  const enriched = await enrichWithMentions(withBaseline);
+  // M8.2: LLM narrative-type classifier on the top-K. Rejects "filler" verdicts outright, boosts
+  // high viralRating. Null (LLM unavailable) → signal marked "unavailable" and score unchanged.
+  const classified = await enrichWithNarrative(enriched);
+  return classified.slice(0, topN);
+}
+
+/** M8.2 — LLM narrative classifier for top candidates. Spec section 4 scoring: hook / novelty /
+ *  payoff / standalone-clarity / emotional-intensity. Hard-rejects "filler" type (daily vlog,
+ *  GRWM, decor tour) regardless of channel size. Rewrites scores for the head. Null verdict →
+ *  signal marked unavailable (NEVER fabricated) and score unchanged. */
+const NARRATIVE_CLASSIFIER_TOP = 5;
+const NARRATIVE_SCORE_WEIGHT = 0.6;           // viralRating * this (so 100 → +60 pts)
+
+async function enrichWithNarrative(ranked: DiscoveredVideo[]): Promise<DiscoveredVideo[]> {
+  const topK = ranked.slice(0, NARRATIVE_CLASSIFIER_TOP);
+  console.log(`[discover] narrative-classifying top ${topK.length}...`);
+  const kept: DiscoveredVideo[] = [...ranked];
+  for (const v of topK) {
+    const verdict = await classifyNarrative({
+      title: v.title,
+      channel: v.channelTitle,
+      description: "",                        // description not fetched in M3 — a future pass can add it
+      durationSec: v.durationSec,
+      viewCount: v.viewCount,
+    });
+    if (!verdict) {
+      v.signals = { ...(v.signals ?? {}), narrative_status: 1 /* unavailable */ };
+      continue;
+    }
+    // signals is Record<string,number> by convention; encode the type label as a stable index.
+    const typeIndex = ["filler", "challenge", "experiment", "competition", "reaction", "skill-demo", "storytelling", "reveal", "comedy", "stunt"].indexOf(verdict.type);
+    v.signals = {
+      ...(v.signals ?? {}),
+      narrative_type_idx: typeIndex,
+      narrative_hook: verdict.hookStrength,
+      narrative_novelty: verdict.novelty,
+      narrative_payoff: verdict.payoff,
+      narrative_clarity: verdict.standaloneClarity,
+      narrative_viral: verdict.viralRating,
+      narrative_should_clip: verdict.shouldClip ? 1 : 0,
+    };
+    // Hard-reject filler + anything the judge says shouldn't be clipped, no matter the channel.
+    if (verdict.type === "filler" || !verdict.shouldClip) {
+      v.score = -1;                           // sorts to the bottom
+      console.log(`  ${v.id} "${v.title.slice(0, 60)}" → type=${verdict.type} viral=${verdict.viralRating} REJECTED: ${verdict.rationale.slice(0, 80)}`);
+      continue;
+    }
+    const boost = verdict.viralRating * NARRATIVE_SCORE_WEIGHT;
+    v.score = (v.score ?? 0) + boost;
+    console.log(`  ${v.id} "${v.title.slice(0, 60)}" → type=${verdict.type} viral=${verdict.viralRating} +${boost.toFixed(1)}pts (${verdict.rationale.slice(0, 60)})`);
+  }
+  return [...kept].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).filter((v) => (v.score ?? 0) > -1);
 }
