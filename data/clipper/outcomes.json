@@ -2,6 +2,126 @@
   "version": 1,
   "records": [
     {
+      "sourceVideoId": "wZKlhqTjrZo",
+      "clipPath": "work/clipper/polished/clip-05_925-955.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "‘Incredibly DARK Secret!’ Thomas Markle Sr Allegations | Piers Morgan Says “Questions MUST Be Asked”",
+        "sourceChannel": "Piers Morgan Uncensored",
+        "clipScore": 73,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio",
+          "duration_band"
+        ],
+        "gatesFailed": [
+          "loudness"
+        ],
+        "decisionFormat": "shorts",
+        "decisionRationale": "5 passing clips totaling 2.4 min — under the 7 min long-form floor. Ship 5 shorts individually."
+      },
+      "recordedAt": "2026-10-27T21:06:11.176Z"
+    },
+    {
+      "sourceVideoId": "wZKlhqTjrZo",
+      "clipPath": "work/clipper/polished/clip-03_540-570.snapped.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "‘Incredibly DARK Secret!’ Thomas Markle Sr Allegations | Piers Morgan Says “Questions MUST Be Asked”",
+        "sourceChannel": "Piers Morgan Uncensored",
+        "clipScore": 73,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio",
+          "duration_band"
+        ],
+        "gatesFailed": [
+          "loudness"
+        ],
+        "decisionFormat": "shorts",
+        "decisionRationale": "5 passing clips totaling 2.4 min — under the 7 min long-form floor. Ship 5 shorts individually."
+      },
+      "recordedAt": "2026-10-27T21:06:11.175Z"
+    },
+    {
+      "sourceVideoId": "wZKlhqTjrZo",
+      "clipPath": "work/clipper/polished/clip-04_755-785.snapped.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "‘Incredibly DARK Secret!’ Thomas Markle Sr Allegations | Piers Morgan Says “Questions MUST Be Asked”",
+        "sourceChannel": "Piers Morgan Uncensored",
+        "clipScore": 80,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio",
+          "duration_band"
+        ],
+        "gatesFailed": [
+          "loudness"
+        ],
+        "decisionFormat": "shorts",
+        "decisionRationale": "5 passing clips totaling 2.4 min — under the 7 min long-form floor. Ship 5 shorts individually."
+      },
+      "recordedAt": "2026-10-27T21:06:11.175Z"
+    },
+    {
+      "sourceVideoId": "wZKlhqTjrZo",
+      "clipPath": "work/clipper/polished/clip-02_278-308.snapped.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "‘Incredibly DARK Secret!’ Thomas Markle Sr Allegations | Piers Morgan Says “Questions MUST Be Asked”",
+        "sourceChannel": "Piers Morgan Uncensored",
+        "clipScore": 80,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio",
+          "duration_band"
+        ],
+        "gatesFailed": [
+          "loudness"
+        ],
+        "decisionFormat": "shorts",
+        "decisionRationale": "5 passing clips totaling 2.4 min — under the 7 min long-form floor. Ship 5 shorts individually."
+      },
+      "recordedAt": "2026-10-27T21:06:11.174Z"
+    },
+    {
+      "sourceVideoId": "wZKlhqTjrZo",
+      "clipPath": "work/clipper/polished/clip-01_0-30.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "‘Incredibly DARK Secret!’ Thomas Markle Sr Allegations | Piers Morgan Says “Questions MUST Be Asked”",
+        "sourceChannel": "Piers Morgan Uncensored",
+        "clipScore": 80,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio",
+          "duration_band"
+        ],
+        "gatesFailed": [
+          "loudness"
+        ],
+        "decisionFormat": "shorts",
+        "decisionRationale": "5 passing clips totaling 2.4 min — under the 7 min long-form floor. Ship 5 shorts individually."
+      },
+      "recordedAt": "2026-10-27T21:06:11.166Z"
+    },
+    {
       "sourceVideoId": "ye5bc55_z28",
       "clipPath": "work/clipper/polished/clip-01_290-530.polished.mp4",
       "kind": "produced",
