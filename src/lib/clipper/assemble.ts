@@ -40,14 +40,21 @@ function escDrawtext(s: string, maxChars = 100): string {
  *  used when a center crop would slice a subject). */
 export type ShortLayout = "center-crop" | "blurred-bg";
 
+/** M7.4 — optional caption burn-in. SRT path from whisper_captions.py. Captions are placed at
+ *  y=h*0.62 (lower-third) so they don't cover faces (which typically sit in the upper two-thirds
+ *  of a 9:16 crop) and don't overlap the attribution bar at the very bottom. */
+export type CaptionOpts = { srtPath: string };
+
 /** Build one 1080×1920 vertical short from a 16:9 source. By default center-crops to 9:16; pass
  *  layout="blurred-bg" when crop-safety said the subject would be sliced — the full landscape
  *  frame is scaled to fit inside the vertical canvas, with a large blurred copy filling the
  *  letterbox area so the clip reads as a native vertical. If `attr` is provided, burns in a
- *  channel + original-title attribution for the first 3 seconds. */
+ *  channel + original-title attribution for the first 3 seconds. If `captions` is provided,
+ *  burns in SRT subtitles at the lower-third throughout. */
 export async function makeShort(
   inputPath: string, outDir: string, label: string,
   attr?: AttributionOpts, layout: ShortLayout = "center-crop",
+  captions?: CaptionOpts,
 ): Promise<string> {
   await mkdir(outDir, { recursive: true });
   const output = path.join(outDir, `short_${label}.mp4`);
@@ -96,6 +103,22 @@ export async function makeShort(
     } else {
       vf = vf + chainTail;
     }
+  }
+
+  // M7.4: append SRT subtitles filter if captions provided. We burn in on the OUTPUT canvas
+  // (post-crop/scale) so font sizing is correct for 1080x1920. Style:
+  //   - Lower-third anchor (Alignment=2, MarginV=360px up from bottom)
+  //   - Readable: 56pt bold, white text, semi-opaque black outline + box
+  //   - DejaVu Sans (installed in CI via fonts-dejavu-core)
+  // The subtitles filter escape: : must become \: and ' must be dropped from path.
+  if (captions?.srtPath) {
+    const srtEsc = captions.srtPath.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "");
+    const style =
+      "FontName=DejaVu Sans,FontSize=22,Bold=1," +
+      "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000," +
+      "BorderStyle=1,Outline=3,Shadow=0," +
+      "Alignment=2,MarginV=360";
+    vf = vf + `,subtitles='${srtEsc}':force_style='${style}'`;
   }
 
   // For blurred-bg we use -filter_complex because the graph has multiple branches; for

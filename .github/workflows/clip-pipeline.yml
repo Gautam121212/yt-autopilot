@@ -46,7 +46,7 @@ jobs:
   # ────────────── Job 1: discover (ubuntu, free) ──────────────────────────────
   discover:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     outputs:
       url: ${{ steps.pick.outputs.url }}
       hasPick: ${{ steps.pick.outputs.hasPick }}
@@ -57,6 +57,22 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --no-audit --no-fund
+      # M7.2: Agent-Reach (Panniantong/Agent-Reach) — cross-platform mention signals (Reddit + web)
+      # that boost the ranker for videos being discussed outside YouTube. Install is best-effort:
+      # if any step fails the discover.ts helper (agent-reach.ts) degrades to zero mentions
+      # (ENOENT on spawn) rather than failing the build.
+      - name: Install uv + Agent-Reach
+        continue-on-error: true
+        run: |
+          set -e
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+          uv tool install https://github.com/Panniantong/Agent-Reach/releases/latest/download/agent-reach.zip || {
+            echo "Agent-Reach install failed; discover will skip cross-platform enrichment"
+            exit 0
+          }
+          agent-reach --help 2>&1 | head -5 || true
       - name: Pick URL
         id: pick
         env:
@@ -158,12 +174,15 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
           # M6: mediapipe + opencv-headless for face-aware crop-safety and post-render QC.
+          # M7.4: faster-whisper for burned-in speech captions. CPU int8 "base" model, ~30s per
+          # 60s of audio on a 4-core runner. Model weights download on first use (~150MB).
           # Pinned mediapipe version avoids the brittle "latest" dependency conflicts we saw
           # in testing. opencv-python-headless skips the GUI libs we don't need on CI.
           pip install --upgrade auto-editor
           pip install 'mediapipe==0.10.14' 'opencv-python-headless==4.10.0.84' 'numpy<2'
+          pip install 'faster-whisper==1.0.3'
           ffmpeg -version | head -1
-          python3 -c "import mediapipe, cv2; print('mediapipe', mediapipe.__version__, 'cv2', cv2.__version__)"
+          python3 -c "import mediapipe, cv2, faster_whisper; print('mediapipe', mediapipe.__version__, 'cv2', cv2.__version__, 'faster-whisper OK')"
       - run: npm ci --no-audit --no-fund
       - uses: actions/download-artifact@v4
         with:

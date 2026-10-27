@@ -19,6 +19,7 @@ import { recordProduced, recordRejected } from "../src/lib/clipper/outcomes.js";
 import { upsert } from "../src/lib/clipper/state.js";
 import { checkCropSafety } from "../src/lib/clipper/crop-safety.js";
 import { qcCheck } from "../src/lib/clipper/qc.js";
+import { transcribeToSRT } from "../src/lib/clipper/captions.js";
 import type { ClipCandidate } from "../src/lib/yt-clipper.js";
 
 type SectionsFile = {
@@ -181,7 +182,12 @@ async function main() {
     for (let i = 0; i < decision.chosen.length; i++) {
       const s = decision.chosen[i]!;
       const layout = layoutByPath.get(s.path) ?? "center-crop";
-      const o = await makeShort(s.path, finalDir, String(i + 1).padStart(2, "0"), attr, layout);
+      // M7.4: whisper transcribe this clip's polished audio → SRT. If it fails, we still ship
+      // the clip without captions rather than block the render.
+      const srtPath = await transcribeToSRT(s.path);
+      if (srtPath) console.log(`  short ${i + 1}: captions → ${path.basename(srtPath)}`);
+      else console.log(`  short ${i + 1}: captions skipped (whisper unavailable or failed)`);
+      const o = await makeShort(s.path, finalDir, String(i + 1).padStart(2, "0"), attr, layout, srtPath ? { srtPath } : undefined);
       const q = await qcCheck(o, { expectFaces: expectFacesByPath.get(s.path) ?? false });
       if (q.passed) {
         outputs.push(o);

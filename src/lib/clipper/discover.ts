@@ -21,6 +21,7 @@
  */
 import { fetchOk } from "../http.js";
 import { isReviewed } from "./state.js";
+import { agentReachAvailable, mentionSignal } from "./agent-reach.js";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -244,6 +245,12 @@ export function rank(videos: DiscoveredVideo[], chaptersById: Record<string, num
       // outcomes.json; penalize them without excluding entirely (one of their videos might still
       // be clippable; just rank lower).
       const outcomePenalty = failedChannels.has(v.channelTitle) ? 0.4 : 1.0;
+      // M7.1: creator allowlist + genre-keyword boosts. Explicitly spec'd creators
+      // (MrBeast / Dude Perfect / etc.) multiply by CREATOR_BONUS. Challenge/experiment/stunt
+      // keywords add flat points, capped so title-stuffing can't game it.
+      const creatorBonus = CREATOR_ALLOWLIST.has(v.channelTitle.toLowerCase()) ? CREATOR_BONUS : 1.0;
+      const genreHits = countGenreHits(v.title);
+      const genrePoints = genreHits * GENRE_KEYWORD_POINTS;
       const signals = {
         views_per_day: Math.round(vpd),
         views_per_hour: Math.round(vph),
@@ -253,13 +260,93 @@ export function rank(videos: DiscoveredVideo[], chaptersById: Record<string, num
         duration_min: Math.round(v.durationSec / 60),
         hours_old: +hoursOld.toFixed(1),
         channel_penalized: failedChannels.has(v.channelTitle) ? 1 : 0,
+        creator_allowlisted: creatorBonus > 1 ? 1 : 0,
+        genre_keyword_hits: genreHits,
       };
-      const score = (velocityScore + Math.log10(1 + vpd) * 5) * durBonus * catBonus * freshness * chapterBonus * outcomePenalty
+      const score = (velocityScore + Math.log10(1 + vpd) * 5) * durBonus * catBonus * freshness * chapterBonus * outcomePenalty * creatorBonus
                   + (eng / 100)
-                  + (likeView * 2);
+                  + (likeView * 2)
+                  + genrePoints;
       return { ...v, score, signals };
     })
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+}
+
+/** M7.1 — creator allowlist. Channels explicitly called out as the target genre ("MrBeast, Dude
+ *  Perfect, and other established creators known for high-view challenges, experiments,
+ *  competitions, surprising moments, comedy, reactions, stunts, and entertaining storytelling"
+ *  per the user's spec). Match on channelTitle lowercase. Any match multiplies the rank score
+ *  by CREATOR_BONUS so these dominate the top of the picks list even when a smaller channel's
+ *  velocity happens to be higher that hour. */
+const CREATOR_ALLOWLIST = new Set<string>([
+  "mrbeast",
+  "beast reacts",
+  "mrbeast gaming",
+  "mrbeast 2",
+  "dude perfect",
+  "mark rober",
+  "michelle khare",
+  "ryan trahan",
+  "airrack",
+  "hangtime",
+  "zach king",
+  "danny gonzalez",
+  "kurtis conner",
+  "drew gooden",
+  "jubilee",
+  "ishowspeed",
+  "kai cenat",
+  "mrwhosetheboss",
+  "linus tech tips",
+  "veritasium",
+  "mark angel comedy",
+  "sidemen",
+  "ksi",
+  "miniminter",
+  "logan paul",
+  "jake paul",
+  "nelk",
+  "full send podcast",
+  "jesser",
+  "2hype",
+  "typical gamer",
+]);
+const CREATOR_BONUS = 1.5;
+
+/** M7.1 — genre keywords that signal viral-worthy content. Each hit adds flat points to score.
+ *  Chosen to match the spec's "challenges, experiments, competitions, stunts, reactions". */
+const GENRE_KEYWORDS = [
+  // Challenge framings
+  "challenge", "challenged", "challenging",
+  "100 vs ", "1 vs ", "vs 100", "vs 10", "world's ", "worlds ",
+  "last to leave", "last one standing", "survive", "surviving", "survived",
+  // Experiment / money
+  "i tried", "i spent", "i gave", "i bought", "i built", "i made", "i ate",
+  "$10000", "$100000", "$1000000", "$1,000,000", "$1 vs ", "cheapest vs ",
+  "most expensive", "trillion", "billion dollar",
+  // Competition / stunt
+  "tournament", "competition", "championship", "world record",
+  "impossible", "extreme", "insane", "crazy", "stunt", "trick shot", "no scope",
+  // Reaction / surprise
+  "reaction", "reacts to", "reacting to", "surprised", "surprise ",
+  "shocked", "unexpected", "plot twist",
+  // Entertainment storytelling
+  "story time", "went wrong", "we did it", "finally", "first time",
+] as const;
+const GENRE_KEYWORD_POINTS = 8;              // per hit, up to 3 hits counted (anti-stuffing)
+const GENRE_KEYWORD_CAP = 3;
+
+/** Count distinct genre-keyword matches in a title, capped at GENRE_KEYWORD_CAP so a stuffed
+ *  title ("CHALLENGE EXPERIMENT STUNT REACTION IMPOSSIBLE") can't game the ranker. */
+function countGenreHits(title: string): number {
+  const hay = title.toLowerCase();
+  let n = 0;
+  const seen = new Set<string>();
+  for (const kw of GENRE_KEYWORDS) {
+    if (seen.has(kw)) continue;
+    if (hay.includes(kw)) { n++; seen.add(kw); if (n >= GENRE_KEYWORD_CAP) break; }
+  }
+  return n;
 }
 
 /** M6.2 — lifestyle/vlog blocklist. The M4 run shipped three clips of a French chateau daily-vlog
@@ -311,6 +398,36 @@ export async function filter(videos: DiscoveredVideo[], cfg: DiscoverConfig): Pr
   }
   if (blockedByLifestyle) console.log(`[discover] rejected ${blockedByLifestyle} lifestyle/vlog videos (title/channel match)`);
   return out;
+}
+
+/** M7.3 — enrich the top-K candidates with cross-platform mention counts from Agent-Reach
+ *  (Reddit + web). Adds a `cross_platform_hits` signal and boosts score by log10(1 + hits) * 12.
+ *  Quota-aware: only enriches top MENTION_ENRICH_TOP picks (default 5) so we don't blow
+ *  discover-job runtime hitting Reddit for every one of 200 raw candidates. Falls back silently
+ *  if agent-reach is not on PATH. */
+const MENTION_ENRICH_TOP = 5;
+const MENTION_SCORE_WEIGHT = 12;              // log10(1 + hits) * this → added to score
+
+async function enrichWithMentions(ranked: DiscoveredVideo[]): Promise<DiscoveredVideo[]> {
+  if (!(await agentReachAvailable())) {
+    console.log(`[discover] agent-reach not on PATH; skipping cross-platform enrichment`);
+    return ranked;
+  }
+  const topK = ranked.slice(0, MENTION_ENRICH_TOP);
+  console.log(`[discover] enriching top ${topK.length} with Agent-Reach mentions...`);
+  for (const v of topK) {
+    try {
+      const sig = await mentionSignal(v.title, v.channelTitle);
+      const boost = Math.log10(1 + sig.totalHits) * MENTION_SCORE_WEIGHT;
+      v.score = (v.score ?? 0) + boost;
+      v.signals = { ...(v.signals ?? {}), cross_platform_hits: sig.totalHits, mention_boost: +boost.toFixed(1) };
+      console.log(`  ${v.id} "${v.title.slice(0, 50)}" → reddit=${sig.reddit.hits}${sig.reddit.skipped ? "(skip:" + sig.reddit.skipped + ")" : ""} web=${sig.web.hits}${sig.web.skipped ? "(skip:" + sig.web.skipped + ")" : ""} +${boost.toFixed(1)}pts`);
+    } catch (e) {
+      console.warn(`  ${v.id} mention-enrich failed: ${(e as Error).message.split("\n")[0]}`);
+    }
+  }
+  // Re-sort because the boosts may have reshuffled the top.
+  return [...ranked].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 }
 
 /** Main entry: run every source, union, filter, rank, return top N. */
@@ -369,5 +486,7 @@ export async function discover(cfg: DiscoverConfig, topN = 20): Promise<Discover
   const filtered = await filter(bucket, cfg);
   const ranked = rank(filtered, {}, failedChannels);
   console.log(`[discover] ${bucket.length} raw → ${filtered.length} after filter → top ${Math.min(topN, ranked.length)}`);
-  return ranked.slice(0, topN);
+  // M7.3: enrich with Agent-Reach cross-platform mention counts. Only re-ranks the head.
+  const enriched = await enrichWithMentions(ranked.slice(0, Math.max(topN, MENTION_ENRICH_TOP)));
+  return enriched.slice(0, topN);
 }
