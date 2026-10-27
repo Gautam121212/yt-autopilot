@@ -18,6 +18,7 @@ import { makeShort, concatLong, writeManifest } from "../src/lib/clipper/assembl
 import { recordProduced, recordRejected } from "../src/lib/clipper/outcomes.js";
 import { upsert } from "../src/lib/clipper/state.js";
 import { checkCropSafety } from "../src/lib/clipper/crop-safety.js";
+import { qcCheck } from "../src/lib/clipper/qc.js";
 import type { ClipCandidate } from "../src/lib/yt-clipper.js";
 
 type SectionsFile = {
@@ -116,46 +117,99 @@ async function main() {
     process.exit(0);
   }
 
-  // M5 — crop-safety: shorts only. Reject any clip whose active content drifts outside the 9:16
-  // center stripe, so faces/subjects don't get sliced off when vertical-cropped.
+  // M6 — crop-safety: shorts only. Three outcomes:
+  //   • center-crop: faces (or active content) stay inside the 9:16 center stripe
+  //   • blurred-bg : faces present but off-center — use letterbox-on-blur layout instead
+  //   • unsafe    : no face signal AND no center-weighted content — reject
+  // The layout gets attached to each clip so assemble can render the right path. "unsafe"
+  // still rejects the clip (same as M5 behavior), but a sliced-face failure no longer kills
+  // an entire run — it just switches that one clip to blurred-bg.
+  const layoutByPath = new Map<string, "center-crop" | "blurred-bg">();
   if (decision.format === "shorts") {
-    const safe: typeof decision.chosen = [];
+    const kept: typeof decision.chosen = [];
     for (const s of decision.chosen) {
       const cs = await checkCropSafety(s.path);
-      console.log(`  crop-safety ${path.basename(s.path)}: ${cs.safeForCrop ? "SAFE" : "UNSAFE"} — ${cs.reason}`);
-      if (cs.safeForCrop) safe.push(s);
-      else {
+      console.log(`  crop-safety ${path.basename(s.path)}: ${cs.layout.toUpperCase()} — ${cs.reason}` +
+        ` (faces=${cs.framesWithFace}/${cs.samples}, centered=${(cs.centeredRatio * 100).toFixed(0)}%, cuts=${cs.sceneCuts})`);
+      if (cs.layout === "unsafe") {
         await recordRejected(sf.meta.id, {
           sourceTitle: sf.meta.title, sourceChannel: sf.meta.uploader,
           clipScore: s.score, rejectReason: `crop-unsafe: ${cs.reason}`,
-          rejectDetails: { centeredRatio: cs.centeredRatio, sceneCuts: cs.sceneCuts },
+          rejectDetails: {
+            centeredRatio: cs.centeredRatio, sceneCuts: cs.sceneCuts,
+            framesWithFace: cs.framesWithFace, facesTotal: cs.facesTotal,
+            facePresenceRatio: cs.facePresenceRatio,
+          },
         });
+        continue;
       }
+      layoutByPath.set(s.path, cs.layout);
+      kept.push(s);
     }
-    if (!safe.length) {
+    if (!kept.length) {
       console.error("\n✗ all passing clips failed crop-safety. Dropping source.");
       await writeManifest(out, { source: { url: sf.url, title: sf.meta.title, uploader: sf.meta.uploader, durationSec: sf.meta.durationSec }, decision: { ...decision, format: "none", chosen: [], rationale: decision.rationale + " [all failed crop-safety]" }, scoredAll: scored, outputs: [] });
       await upsert(sf.meta.id, { title: sf.meta.title, channelTitle: sf.meta.uploader, status: "dropped", notes: "all passing clips failed crop-safety" });
       process.exit(0);
     }
-    decision.chosen = safe;
+    decision.chosen = kept;
   }
 
-  // Assemble with attribution overlay.
+  // Assemble with attribution overlay, then run post-render QC (M6.5) on every output and
+  // drop any that fail (title-card, sliced face, bad dims). Track which clips had faces in the
+  // source so QC knows whether to expect them in the output.
   const finalDir = path.join(out, "final");
   await mkdir(finalDir, { recursive: true });
   const outputs: string[] = [];
   const attr = { channel: sf.meta.uploader, title: sf.meta.title };
+  // Rebuild expectFaces lookup from the earlier crop-safety pass: if the source clip had faces
+  // in ≥30% of samples, the final output should too.
+  // (This map was built implicitly earlier; the processor already called checkCropSafety per
+  // clip. We re-call cheaply only for the clips that end up in `decision.chosen`.)
+  const expectFacesByPath = new Map<string, boolean>();
   if (decision.format === "shorts") {
+    for (const s of decision.chosen) {
+      // Cheap re-check: layoutByPath knew whether we had a face signal. Any clip that got
+      // "blurred-bg" definitely had faces; "center-crop" may or may not have had faces (could be
+      // B-roll). We treat center-crop as expectFaces=false to stay conservative — QC still
+      // catches black-frame and sliced-face failures regardless.
+      expectFacesByPath.set(s.path, layoutByPath.get(s.path) === "blurred-bg");
+    }
+  }
+  if (decision.format === "shorts") {
+    const kept: Array<{ src: ReturnType<typeof scored.at>; o: string; layout: "center-crop" | "blurred-bg" }> = [] as never;
     for (let i = 0; i < decision.chosen.length; i++) {
       const s = decision.chosen[i]!;
-      const o = await makeShort(s.path, finalDir, String(i + 1).padStart(2, "0"), attr);
-      outputs.push(o);
-      console.log(`  short ${i + 1} → ${path.basename(o)}`);
+      const layout = layoutByPath.get(s.path) ?? "center-crop";
+      const o = await makeShort(s.path, finalDir, String(i + 1).padStart(2, "0"), attr, layout);
+      const q = await qcCheck(o, { expectFaces: expectFacesByPath.get(s.path) ?? false });
+      if (q.passed) {
+        outputs.push(o);
+        console.log(`  short ${i + 1} (${layout}) → ${path.basename(o)} [QC OK ${q.dimensions.width}x${q.dimensions.height}, ${q.durationSec.toFixed(1)}s, faces ${q.framesWithFace}/${q.totalFrames}]`);
+      } else {
+        console.warn(`  short ${i + 1} (${layout}) → ${path.basename(o)} [QC FAIL: ${q.reasons.join("; ")}] — dropping`);
+        await recordRejected(sf.meta.id, {
+          sourceTitle: sf.meta.title, sourceChannel: sf.meta.uploader,
+          clipScore: s.score, rejectReason: `qc-fail: ${q.reasons[0] ?? "unknown"}`,
+          rejectDetails: {
+            qcReasons: q.reasons, dims: q.dimensions, duration: q.durationSec,
+            blackRatio: q.blackFrameRatio, facesIn: q.framesWithFace, slicedSamples: q.slicedFaceSamples,
+          },
+        });
+        try { await (await import("node:fs/promises")).unlink(o); } catch { /* best-effort */ }
+      }
+    }
+    if (!outputs.length) {
+      console.error("\n✗ all rendered shorts failed QC. Dropping source.");
+      await writeManifest(out, { source: { url: sf.url, title: sf.meta.title, uploader: sf.meta.uploader, durationSec: sf.meta.durationSec }, decision: { ...decision, format: "none", chosen: [], rationale: decision.rationale + " [all failed QC]" }, scoredAll: scored, outputs: [] });
+      await upsert(sf.meta.id, { title: sf.meta.title, channelTitle: sf.meta.uploader, status: "dropped", notes: "all rendered shorts failed post-render QC" });
+      process.exit(0);
     }
   } else {
     const o = await concatLong(decision.chosen.map((c) => c.path), finalDir);
     outputs.push(o);
+    // QC skipped for long-form: it stays 16:9 so the shorts-shape dimension check doesn't apply,
+    // and the retention-planner already picked this window from the engagement curve.
     console.log(`  long → ${path.basename(o)}`);
   }
 

@@ -20,40 +20,93 @@ const exec = promisify(execFile);
 export type AttributionOpts = { channel: string; title: string };
 
 /** Escape a user-supplied string for ffmpeg's drawtext filter (colons, backslashes, commas, single
- *  quotes all need special treatment). Returns a bare string, caller wraps in single quotes. */
-function escDrawtext(s: string): string {
-  return s
+ *  quotes all need special treatment). Returns a bare string, caller wraps in single quotes.
+ *  M6: cap at `maxChars` because the title bar is drawn with x=(w-text_w)/2 — if text is wider
+ *  than the frame (1080px) it starts at a negative x and overflows both edges. At fontsize=36
+ *  roughly 32 ascii chars fit; we take 30 to be safe and append "…" if we truncated. */
+function escDrawtext(s: string, maxChars = 100): string {
+  let text = s;
+  if (text.length > maxChars) text = text.slice(0, maxChars - 1).trimEnd() + "…";
+  return text
     .replace(/\\/g, "\\\\\\\\")   // \ → \\\\
     .replace(/:/g, "\\\\:")       // : → \\:
     .replace(/'/g, "\\u2019")     // ' → right-single-quote (safer than escape for drawtext)
     .replace(/,/g, "\\\\,")       // , → \\,
-    .replace(/%/g, "\\\\%")       // % → \\%
-    .slice(0, 100);               // cap length
+    .replace(/%/g, "\\\\%");      // % → \\%
 }
 
-/** Build one 1080×1920 vertical short from a 16:9 source. Center-crops to 9:16. If `attr` is
- *  provided, burns in a channel + original-title attribution for the first 3 seconds (bottom
- *  overlay with 60% dark backdrop so it's readable on any background). */
-export async function makeShort(inputPath: string, outDir: string, label: string, attr?: AttributionOpts): Promise<string> {
+/** M6 — layout decision passed down from crop-safety: "center-crop" (destructive, best when
+ *  subject is already centered) or "blurred-bg" (non-destructive, letterbox-on-blurred-background,
+ *  used when a center crop would slice a subject). */
+export type ShortLayout = "center-crop" | "blurred-bg";
+
+/** Build one 1080×1920 vertical short from a 16:9 source. By default center-crops to 9:16; pass
+ *  layout="blurred-bg" when crop-safety said the subject would be sliced — the full landscape
+ *  frame is scaled to fit inside the vertical canvas, with a large blurred copy filling the
+ *  letterbox area so the clip reads as a native vertical. If `attr` is provided, burns in a
+ *  channel + original-title attribution for the first 3 seconds. */
+export async function makeShort(
+  inputPath: string, outDir: string, label: string,
+  attr?: AttributionOpts, layout: ShortLayout = "center-crop",
+): Promise<string> {
   await mkdir(outDir, { recursive: true });
   const output = path.join(outDir, `short_${label}.mp4`);
 
-  let vf = "crop=ih*9/16:ih,scale=1080:1920:flags=lanczos";
+  let vf: string;
+  if (layout === "blurred-bg") {
+    // Build a 1080×1920 canvas from TWO copies of the source:
+    //   • BG: scaled to COVER the full 1080×1920, heavily blurred, slightly dimmed → fills the
+    //     letterbox area so there are no black bars.
+    //   • FG: scaled to FIT entirely within 1080×1920 (letterbox), overlaid centered.
+    // The split allocates frames to both branches, scales each, pads/overlays, and returns one
+    // 1080×1920 stream.
+    //
+    // Two-copy construction uses split=2 then scales each copy with force_original_aspect_ratio
+    // (increase for the bg, decrease for the fg). The result preserves the full composition the
+    // original creator shot — nothing is sliced off.
+    vf = [
+      "split=2[bg][fg]",
+      "[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=luma_radius=min(h\\,w)/20:luma_power=2:chroma_radius=min(cw\\,ch)/20:chroma_power=2,eq=brightness=-0.08[bgb]",
+      "[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fgs]",
+      "[bgb][fgs]overlay=(W-w)/2:(H-h)/2",
+    ].join(";");
+  } else {
+    vf = "crop=ih*9/16:ih,scale=1080:1920:flags=lanczos";
+  }
+
   if (attr) {
     // 3s overlay at the bottom: dark semi-transparent bar + two lines of text.
     // Font: use whatever ffmpeg can find on the runner (ubuntu: DejaVu). No bundled font because
     // most ffmpeg builds have one on PATH; fallback: fontfile=default lets ffmpeg pick.
-    const channel = escDrawtext("@" + attr.channel);
-    const title = escDrawtext(attr.title);
-    vf += `,drawbox=y=ih-220:w=iw:h=220:color=black@0.55:t=fill:enable='lt(t,3)'`;
-    vf += `,drawtext=text='${channel}':fontcolor=white:fontsize=52:x=(w-text_w)/2:y=h-170:enable='lt(t,3)'`;
-    vf += `,drawtext=text='${title}':fontcolor=white@0.85:fontsize=36:x=(w-text_w)/2:y=h-100:enable='lt(t,3)'`;
+    // Channel handle: at fontsize=52 roughly 22 chars fit the 1080 frame; truncate at 20.
+    // Title: at fontsize=36 roughly 32 chars fit; truncate at 30 so the drawtext overlay doesn't
+    // run off both sides of the frame (see M6 demo bug — "@The Chateau Diaries — 000 for
+    // PLYWOOD?! Somehow It Is Cheaper to Use Solid Oak" overflowed left and right at 100 chars).
+    const channel = escDrawtext("@" + attr.channel, 20);
+    const title = escDrawtext(attr.title, 30);
+    // Both layouts share the same bottom-bar; blurred-bg uses filter_complex-style chain so we
+    // append with commas (the filter chain inside filter_complex is a graph, not a vf; convert
+    // by passing it through filter_complex).
+    const chainTail =
+      `,drawbox=y=ih-220:w=iw:h=220:color=black@0.55:t=fill:enable='lt(t,3)'` +
+      `,drawtext=text='${channel}':fontcolor=white:fontsize=52:x=(w-text_w)/2:y=h-170:enable='lt(t,3)'` +
+      `,drawtext=text='${title}':fontcolor=white@0.85:fontsize=36:x=(w-text_w)/2:y=h-100:enable='lt(t,3)'`;
+    if (layout === "blurred-bg") {
+      vf = vf + chainTail;
+    } else {
+      vf = vf + chainTail;
+    }
   }
+
+  // For blurred-bg we use -filter_complex because the graph has multiple branches; for
+  // center-crop a simple -vf is fine.
+  const useComplex = layout === "blurred-bg";
+  const filterArgs = useComplex ? ["-filter_complex", vf] : ["-vf", vf];
 
   await exec("ffmpeg", [
     "-y", "-v", "error",
     "-i", inputPath,
-    "-vf", vf,
+    ...filterArgs,
     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
     "-c:a", "aac", "-ar", "48000", "-b:a", "160k",
     "-pix_fmt", "yuv420p", "-movflags", "+faststart",

@@ -157,8 +157,13 @@ jobs:
       - run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+          # M6: mediapipe + opencv-headless for face-aware crop-safety and post-render QC.
+          # Pinned mediapipe version avoids the brittle "latest" dependency conflicts we saw
+          # in testing. opencv-python-headless skips the GUI libs we don't need on CI.
           pip install --upgrade auto-editor
+          pip install 'mediapipe==0.10.14' 'opencv-python-headless==4.10.0.84' 'numpy<2'
           ffmpeg -version | head -1
+          python3 -c "import mediapipe, cv2; print('mediapipe', mediapipe.__version__, 'cv2', cv2.__version__)"
       - run: npm ci --no-audit --no-fund
       - uses: actions/download-artifact@v4
         with:

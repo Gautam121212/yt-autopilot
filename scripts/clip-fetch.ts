@@ -23,8 +23,17 @@ function parseArgs(argv: string[]): { plan: string; out: string; maxHeight: numb
 
 async function main() {
   const { plan: planPath, out, maxHeight } = parseArgs(process.argv);
-  const p = JSON.parse(await readFile(planPath, "utf8")) as { url: string; meta: unknown; picks: Array<{ rank: number; startSec: number; endSec: number }> };
-  console.log(`[clip:fetch] ${p.picks.length} sections, ≤${maxHeight}p`);
+  // M6.1: pass through the planner's `format` / `source` / `curveSignals` — the processor needs
+  // the format hint; without it the decider silently falls back to "auto" and ignored a 4-min
+  // long-form peak on the M5 trial run (shipped as a short).
+  const p = JSON.parse(await readFile(planPath, "utf8")) as {
+    url: string; meta: unknown;
+    picks: Array<{ rank: number; startSec: number; endSec: number }>;
+    format?: "shorts" | "long";
+    source?: "retention" | "llm-fallback";
+    curveSignals?: string[];
+  };
+  console.log(`[clip:fetch] ${p.picks.length} sections, ≤${maxHeight}p, format=${p.format ?? "(none)"}`);
   await mkdir(out, { recursive: true });
   const sections: Array<{ rank: number; path: string }> = [];
   for (const pick of p.picks) {
@@ -37,7 +46,10 @@ async function main() {
       console.warn(`  ✗ rank ${pick.rank}: ${(e as Error).message.split("\n")[0]}`);
     }
   }
-  await writeFile(path.join(out, "sections.json"), JSON.stringify({ url: p.url, meta: p.meta, sections, picks: p.picks }, null, 2));
+  await writeFile(path.join(out, "sections.json"), JSON.stringify({
+    url: p.url, meta: p.meta, sections, picks: p.picks,
+    format: p.format, source: p.source, curveSignals: p.curveSignals,
+  }, null, 2));
   console.log(`✓ wrote ${sections.length} sections + sections.json → ${out}`);
 }
 

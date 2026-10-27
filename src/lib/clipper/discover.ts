@@ -262,7 +262,34 @@ export function rank(videos: DiscoveredVideo[], chaptersById: Record<string, num
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 }
 
-/** Hard filters applied before ranking: duration band, min views, dedupe, blacklist. */
+/** M6.2 — lifestyle/vlog blocklist. The M4 run shipped three clips of a French chateau daily-vlog
+ *  (title cards, wall decor, sliced faces). None of these are "challenge/skill/reveal/surprise".
+ *  We hard-reject videos whose title or channel name matches these patterns, case-insensitively.
+ *  Not every match is bad (a cooking channel does "chateau life" sometimes), but the user's rule
+ *  was explicit: no daily routines, no ordinary person's day. */
+const LIFESTYLE_BLOCKLIST = [
+  // Routine / vlog phrases
+  "day in my life", "day in the life", "a day with", "morning routine", "night routine",
+  "evening routine", "weekly vlog", "daily vlog", "my routine", "my day", "my week",
+  // Lifestyle framings
+  "chateau life", "chateau diary", "chateau diaries", "my chateau", "cottage life",
+  "farm life", "homestead", "slow living", "cozy", "aesthetic morning", "grwm",
+  "get ready with me", "haul", "unboxing my", "what i eat in a day",
+  "what i wore", "shop with me", "clean with me", "cook with me", "come with me",
+  "self care sunday", "sunday reset", "weekend reset",
+  // French equivalents (clip 1 was French)
+  "ma journée", "ma semaine", "ma vie", "chez moi", "ma routine",
+  "une journée", "vlog quotidien", "notre maison",
+] as const;
+
+/** Returns the first blocklist term the title/channel matched, or null. */
+function matchesLifestyleBlocklist(title: string, channel: string): string | null {
+  const hay = (title + " || " + channel).toLowerCase();
+  for (const term of LIFESTYLE_BLOCKLIST) if (hay.includes(term)) return term;
+  return null;
+}
+
+/** Hard filters applied before ranking: duration band, min views, dedupe, blacklist, lifestyle. */
 export async function filter(videos: DiscoveredVideo[], cfg: DiscoverConfig): Promise<DiscoveredVideo[]> {
   const minViews = cfg.minViews ?? 100_000;
   const maxAgeDays = cfg.maxAgeDays ?? 14;
@@ -270,15 +297,19 @@ export async function filter(videos: DiscoveredVideo[], cfg: DiscoverConfig): Pr
   const maxD = cfg.maxDurationSec ?? 4 * 60 * 60;
   const seen = new Set<string>();
   const out: DiscoveredVideo[] = [];
+  let blockedByLifestyle = 0;
   for (const v of videos) {
     if (seen.has(v.id)) continue;
     if (v.viewCount < minViews) continue;
     if (daysSince(v.publishedAt) > maxAgeDays) continue;
     if (v.durationSec < minD || v.durationSec > maxD) continue;
     if (await isReviewed(v.id)) continue;
+    const match = matchesLifestyleBlocklist(v.title, v.channelTitle);
+    if (match) { blockedByLifestyle++; continue; }
     seen.add(v.id);
     out.push(v);
   }
+  if (blockedByLifestyle) console.log(`[discover] rejected ${blockedByLifestyle} lifestyle/vlog videos (title/channel match)`);
   return out;
 }
 
