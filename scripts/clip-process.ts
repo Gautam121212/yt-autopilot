@@ -124,20 +124,19 @@ async function main() {
     process.exit(0);
   }
 
-  // M6 — crop-safety: shorts only. Three outcomes:
-  //   • center-crop: faces (or active content) stay inside the 9:16 center stripe
-  //   • blurred-bg : faces present but off-center — use letterbox-on-blur layout instead
-  //   • unsafe    : no face signal AND no center-weighted content — reject
-  // The layout gets attached to each clip so assemble can render the right path. "unsafe"
-  // still rejects the clip (same as M5 behavior), but a sliced-face failure no longer kills
-  // an entire run — it just switches that one clip to blurred-bg.
-  const layoutByPath = new Map<string, "center-crop" | "blurred-bg">();
+  // M6 — crop-safety: shorts only. Four outcomes (M9.1 adds shifted-crop):
+  //   • center-crop:  faces centered in the 9:16 stripe → classic destructive crop
+  //   • shifted-crop: faces STABLE but off-center → shift the stripe to match (M9.1)
+  //   • blurred-bg:   faces off-center & moving, or multi-subject → letterbox on blur
+  //   • unsafe:       no face signal AND no center-weighted content → reject
+  const layoutByPath = new Map<string, "center-crop" | "shifted-crop" | "blurred-bg">();
+  const cropCenterByPath = new Map<string, number>();   // M9.1 — carries normalized x for shifted-crop
   if (decision.format === "shorts") {
     const kept: typeof decision.chosen = [];
     for (const s of decision.chosen) {
       const cs = await checkCropSafety(s.path);
       console.log(`  crop-safety ${path.basename(s.path)}: ${cs.layout.toUpperCase()} — ${cs.reason}` +
-        ` (faces=${cs.framesWithFace}/${cs.samples}, centered=${(cs.centeredRatio * 100).toFixed(0)}%, cuts=${cs.sceneCuts})`);
+        ` (faces=${cs.framesWithFace}/${cs.samples}, centered=${(cs.centeredRatio * 100).toFixed(0)}%, cuts=${cs.sceneCuts}, cropX=${(cs.cropCenterXNorm * 100).toFixed(0)}%)`);
       if (cs.layout === "unsafe") {
         await recordRejected(sf.meta.id, {
           sourceTitle: sf.meta.title, sourceChannel: sf.meta.uploader,
@@ -151,6 +150,7 @@ async function main() {
         continue;
       }
       layoutByPath.set(s.path, cs.layout);
+      cropCenterByPath.set(s.path, cs.cropCenterXNorm);
       kept.push(s);
     }
     if (!kept.length) {
@@ -176,11 +176,11 @@ async function main() {
   const expectFacesByPath = new Map<string, boolean>();
   if (decision.format === "shorts") {
     for (const s of decision.chosen) {
-      // Cheap re-check: layoutByPath knew whether we had a face signal. Any clip that got
-      // "blurred-bg" definitely had faces; "center-crop" may or may not have had faces (could be
-      // B-roll). We treat center-crop as expectFaces=false to stay conservative — QC still
-      // catches black-frame and sliced-face failures regardless.
-      expectFacesByPath.set(s.path, layoutByPath.get(s.path) === "blurred-bg");
+      // M9.1: blurred-bg AND shifted-crop both prove faces were detected (they only exist as
+      // decisions when face_scan returned face data). center-crop may or may not have had
+      // faces — treat as expectFaces=false to stay conservative.
+      const l = layoutByPath.get(s.path);
+      expectFacesByPath.set(s.path, l === "blurred-bg" || l === "shifted-crop");
     }
   }
   if (decision.format === "shorts") {
@@ -193,7 +193,8 @@ async function main() {
       const srtPath = await transcribeToSRT(s.path);
       if (srtPath) console.log(`  short ${i + 1}: captions → ${path.basename(srtPath)}`);
       else console.log(`  short ${i + 1}: captions skipped (whisper unavailable or failed)`);
-      const o = await makeShort(s.path, finalDir, String(i + 1).padStart(2, "0"), attr, layout, srtPath ? { srtPath } : undefined);
+      const cropCenter = cropCenterByPath.get(s.path) ?? 0.5;
+      const o = await makeShort(s.path, finalDir, String(i + 1).padStart(2, "0"), attr, layout, srtPath ? { srtPath } : undefined, cropCenter);
       const q = await qcCheck(o, { expectFaces: expectFacesByPath.get(s.path) ?? false });
       if (q.passed) {
         outputs.push(o);

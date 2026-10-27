@@ -17,6 +17,11 @@ LINE_CHAR_MAX = 32
 LINES_MAX = 2
 CUE_MAX_SEC = 3.0
 CUE_MIN_SEC = 0.5
+# M9.2 — silence gap in seconds that we treat as a speaker-change / paragraph boundary. When
+# the gap between the end of one word and the start of the next exceeds this, we force a cue
+# break so the viewer sees the caption clear visually. Proxy for speaker diarization without
+# pulling in pyannote.audio (which needs an HF token + model download).
+SPEAKER_GAP_SEC = 1.0
 
 def fmt_ts(sec: float) -> str:
     if sec < 0: sec = 0
@@ -47,7 +52,13 @@ def wrap_two_lines(words: list[str]) -> str:
 
 def chunk_words_to_cues(word_segments: list[dict]) -> list[tuple[float, float, str]]:
     """word_segments is a flat list of {word, start, end} from faster-whisper. Group them into
-    cues of at most CUE_MAX_SEC and at most LINE_CHAR_MAX * LINES_MAX characters."""
+    cues of at most CUE_MAX_SEC and at most LINE_CHAR_MAX * LINES_MAX characters.
+
+    M9.2: when the gap between the previous word's end and the next word's start exceeds
+    SPEAKER_GAP_SEC, we force-break the current cue BEFORE adding the new word. The result is
+    that captions visibly clear between speakers / paragraphs instead of running words from
+    different speakers into one line.
+    """
     cues: list[tuple[float, float, str]] = []
     cur_words: list[str] = []
     cur_start = None
@@ -57,12 +68,16 @@ def chunk_words_to_cues(word_segments: list[dict]) -> list[tuple[float, float, s
         if not word: continue
         start = float(w.get("start") or 0)
         end = float(w.get("end") or start + 0.2)
+        # M9.2 — speaker-gap break: if there's a long silence between the previous word and this
+        # one, close out the current cue immediately so viewers see a clear gap.
+        gap = (start - cur_last_end) if cur_last_end is not None else 0
+        force_break = cur_words and gap >= SPEAKER_GAP_SEC
         if cur_start is None:
             cur_start = start
         projected = wrap_two_lines(cur_words + [word])
         projected_len = sum(len(l) for l in projected.split("\n"))
         dur = end - cur_start
-        if (dur > CUE_MAX_SEC or projected_len > LINE_CHAR_MAX * LINES_MAX) and cur_words:
+        if (force_break or dur > CUE_MAX_SEC or projected_len > LINE_CHAR_MAX * LINES_MAX) and cur_words:
             cues.append((cur_start, cur_last_end or end, wrap_two_lines(cur_words)))
             cur_words = [word]
             cur_start = start

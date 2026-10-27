@@ -109,6 +109,12 @@ def main() -> int:
     mean_x = (sum(face_centers_x) / len(face_centers_x) / width) if face_centers_x else 0.0
     var_x = (sum(((c / width) - mean_x) ** 2 for c in face_centers_x) / len(face_centers_x)) if face_centers_x else 0.0
     std_x = var_x ** 0.5
+    # M9.1 — median x (robust to outliers) + where that falls as a fraction of width. Used by
+    # crop-safety.ts to decide whether to SHIFT the crop stripe to the subject rather than
+    # falling back to blurred-bg. A face at median_x_norm=0.3 means a center-crop misses them
+    # by 20% of the frame width.
+    sorted_x = sorted(face_centers_x)
+    median_x_norm = (sorted_x[len(sorted_x) // 2] / width) if sorted_x else 0.5
     print(json.dumps({
         "summary": True,
         "src_fps": round(src_fps, 2),
@@ -116,6 +122,7 @@ def main() -> int:
         "frames_with_face": frames_with_face,
         "faces_total": faces_total,
         "face_center_x_mean_norm": round(mean_x, 3),
+        "face_center_x_median_norm": round(median_x_norm, 3),
         "face_center_x_std_norm": round(std_x, 3),
         "centered_ratio": round(centered_ratio, 3),
         "multi_face_frames": multi_face_frames,

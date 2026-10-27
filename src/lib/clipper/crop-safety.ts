@@ -32,10 +32,13 @@ const SAMPLE_FPS = 1;                   // one frame per second — matches face
 const CENTER_STRIPE_SAFE_RATIO = 0.75;  // ≥75% of face samples inside stripe → safe center-crop
 const MAX_SCENE_CUTS = 5;               // more than this and tracking will jitter badly
 const MIN_FACE_PRESENCE = 0.3;          // if <30% of samples have a face, treat as "no faces" clip
+const SHIFTED_CROP_MAX_STD = 0.08;      // M9.1 — face x-std normalized ≤8% of width → safe to shift
+const SHIFTED_CROP_MIN_OFFSET = 0.05;   // only shift if the median is >5% off center
+const SHIFTED_CROP_MAX_OFFSET = 0.30;   // never shift so far the stripe falls off the frame edge
 
 const PY_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "py", "face_scan.py");
 
-export type CropLayout = "center-crop" | "blurred-bg" | "unsafe";
+export type CropLayout = "center-crop" | "shifted-crop" | "blurred-bg" | "unsafe";
 
 export type CropSafetyResult = {
   safeForCrop: boolean;                 // kept for API compat with M5 processor
@@ -50,6 +53,8 @@ export type CropSafetyResult = {
   facesTotal: number;
   facePresenceRatio: number;
   dominantCenterXNorm: number;          // mean face-center x / width (0..1)
+  /** M9.1 — crop x-center as a fraction of source width. 0.5 = center-crop, otherwise shift. */
+  cropCenterXNorm: number;
 };
 
 async function dims(file: string): Promise<{ width: number; height: number }> {
@@ -86,6 +91,7 @@ type FaceScanSummary = {
   frames_with_face: number;
   faces_total: number;
   face_center_x_mean_norm: number;
+  face_center_x_median_norm?: number;      // M9.1 — robust center estimate for shifted-crop
   face_center_x_std_norm: number;
   centered_ratio: number;
   /** M8.6: multi-subject signals. */
@@ -143,7 +149,7 @@ export async function checkCropSafety(inputPath: string): Promise<CropSafetyResu
     return {
       safeForCrop: false, layout: "unsafe", reason: "could not probe dimensions",
       samples: 0, centeredSamples: 0, centeredRatio: 0, sceneCuts: 0,
-      framesWithFace: 0, facesTotal: 0, facePresenceRatio: 0, dominantCenterXNorm: 0,
+      framesWithFace: 0, facesTotal: 0, facePresenceRatio: 0, dominantCenterXNorm: 0, cropCenterXNorm: 0.5,
     };
   }
 
@@ -152,7 +158,7 @@ export async function checkCropSafety(inputPath: string): Promise<CropSafetyResu
     return {
       safeForCrop: true, layout: "center-crop", reason: "source already portrait",
       samples: 0, centeredSamples: 0, centeredRatio: 1, sceneCuts: 0,
-      framesWithFace: 0, facesTotal: 0, facePresenceRatio: 0, dominantCenterXNorm: 0.5,
+      framesWithFace: 0, facesTotal: 0, facePresenceRatio: 0, dominantCenterXNorm: 0.5, cropCenterXNorm: 0.5,
     };
   }
 
@@ -173,7 +179,7 @@ export async function checkCropSafety(inputPath: string): Promise<CropSafetyResu
           samples: face.samples, centeredSamples: Math.round(face.centered_ratio * face.faces_total),
           centeredRatio: face.centered_ratio, sceneCuts: cuts,
           framesWithFace: face.frames_with_face, facesTotal: face.faces_total,
-          facePresenceRatio: presence, dominantCenterXNorm: face.face_center_x_mean_norm,
+          facePresenceRatio: presence, dominantCenterXNorm: face.face_center_x_mean_norm, cropCenterXNorm: 0.5,
         };
       }
       // Face-containing clip — the only honest signal is face position vs the center stripe.
@@ -186,17 +192,37 @@ export async function checkCropSafety(inputPath: string): Promise<CropSafetyResu
           samples: face.samples, centeredSamples: Math.round(face.centered_ratio * face.faces_total),
           centeredRatio: face.centered_ratio, sceneCuts: cuts,
           framesWithFace: face.frames_with_face, facesTotal: face.faces_total,
-          facePresenceRatio: presence, dominantCenterXNorm: face.face_center_x_mean_norm,
+          facePresenceRatio: presence, dominantCenterXNorm: face.face_center_x_mean_norm, cropCenterXNorm: 0.5,
         };
       }
-      // Faces present but outside the stripe — use blurred-bg layout rather than reject.
+      // M9.1 — SHIFTED CROP. Faces are off-center-stripe BUT their median position is stable
+      // (low x-std). We can shift the 9:16 crop stripe to the median x instead of width/2
+      // and keep the subject centered without destroying anything. This handles the "subject
+      // consistently off-center but not moving" case without needing dynamic pan-tracking.
+      const medianX = face.face_center_x_median_norm ?? face.face_center_x_mean_norm;
+      const stdX = face.face_center_x_std_norm;
+      const offsetFromCenter = Math.abs(medianX - 0.5);
+      const stable = stdX <= SHIFTED_CROP_MAX_STD;
+      const shiftWorthIt = offsetFromCenter >= SHIFTED_CROP_MIN_OFFSET;
+      const shiftFits = offsetFromCenter <= SHIFTED_CROP_MAX_OFFSET;
+      if (stable && shiftWorthIt && shiftFits && notTooCutty) {
+        return {
+          safeForCrop: true, layout: "shifted-crop",
+          reason: `faces stable at x≈${(medianX * 100).toFixed(0)}% (std ${(stdX * 100).toFixed(1)}%); shift crop stripe to match`,
+          samples: face.samples, centeredSamples: Math.round(face.centered_ratio * face.faces_total),
+          centeredRatio: face.centered_ratio, sceneCuts: cuts,
+          framesWithFace: face.frames_with_face, facesTotal: face.faces_total,
+          facePresenceRatio: presence, dominantCenterXNorm: face.face_center_x_mean_norm, cropCenterXNorm: medianX,
+        };
+      }
+      // Faces present but neither centered nor stable-off-center — use blurred-bg layout.
       return {
         safeForCrop: false, layout: "blurred-bg",
-        reason: `faces off-center (${(face.centered_ratio * 100).toFixed(0)}% in stripe); use blurred-bg layout`,
+        reason: `faces off-center and ${stable ? "shift too large/small" : `moving (std ${(stdX * 100).toFixed(1)}%)`}; blurred-bg preserves composition`,
         samples: face.samples, centeredSamples: Math.round(face.centered_ratio * face.faces_total),
         centeredRatio: face.centered_ratio, sceneCuts: cuts,
         framesWithFace: face.frames_with_face, facesTotal: face.faces_total,
-        facePresenceRatio: presence, dominantCenterXNorm: face.face_center_x_mean_norm,
+        facePresenceRatio: presence, dominantCenterXNorm: face.face_center_x_mean_norm, cropCenterXNorm: 0.5,
       };
     }
   }
@@ -211,7 +237,7 @@ export async function checkCropSafety(inputPath: string): Promise<CropSafetyResu
       reason: "no faces detected, cropdetect produced no samples",
       samples: 0, centeredSamples: 0, centeredRatio: 0, sceneCuts: cuts,
       framesWithFace: face?.frames_with_face ?? 0, facesTotal: face?.faces_total ?? 0,
-      facePresenceRatio: 0, dominantCenterXNorm: 0,
+      facePresenceRatio: 0, dominantCenterXNorm: 0, cropCenterXNorm: 0.5,
     };
   }
   const centerSafe = cd.centeredRatio >= CENTER_STRIPE_SAFE_RATIO;
@@ -220,13 +246,13 @@ export async function checkCropSafety(inputPath: string): Promise<CropSafetyResu
       safeForCrop: true, layout: "center-crop",
       reason: `no faces but active content centered in ${(cd.centeredRatio * 100).toFixed(0)}% of samples`,
       samples: cd.samples, centeredSamples: cd.centeredSamples, centeredRatio: cd.centeredRatio, sceneCuts: cuts,
-      framesWithFace: 0, facesTotal: 0, facePresenceRatio: 0, dominantCenterXNorm: 0.5,
+      framesWithFace: 0, facesTotal: 0, facePresenceRatio: 0, dominantCenterXNorm: 0.5, cropCenterXNorm: 0.5,
     };
   }
   return {
     safeForCrop: false, layout: "blurred-bg",
     reason: `no faces and active content off-center; use blurred-bg layout`,
     samples: cd.samples, centeredSamples: cd.centeredSamples, centeredRatio: cd.centeredRatio, sceneCuts: cuts,
-    framesWithFace: 0, facesTotal: 0, facePresenceRatio: 0, dominantCenterXNorm: 0,
+    framesWithFace: 0, facesTotal: 0, facePresenceRatio: 0, dominantCenterXNorm: 0, cropCenterXNorm: 0.5,
   };
 }

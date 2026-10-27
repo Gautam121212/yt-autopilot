@@ -35,10 +35,13 @@ function escDrawtext(s: string, maxChars = 100): string {
     .replace(/%/g, "\\\\%");      // % → \\%
 }
 
-/** M6 — layout decision passed down from crop-safety: "center-crop" (destructive, best when
- *  subject is already centered) or "blurred-bg" (non-destructive, letterbox-on-blurred-background,
- *  used when a center crop would slice a subject). */
-export type ShortLayout = "center-crop" | "blurred-bg";
+/** M6 — layout decision passed down from crop-safety:
+ *  - "center-crop": destructive, 9:16 stripe at the frame center. Best when subject is centered.
+ *  - "shifted-crop" (M9.1): same as center-crop but the stripe is shifted so a subject whose
+ *    median x is off-center but STABLE stays visible. Caller passes cropCenterXNorm (0..1).
+ *  - "blurred-bg": non-destructive letterbox-on-blurred-background. Used when crop would slice
+ *    a subject (face off-stripe + unstable, or multi-subject at opposite thirds). */
+export type ShortLayout = "center-crop" | "shifted-crop" | "blurred-bg";
 
 /** M7.4 — optional caption burn-in. SRT path from whisper_captions.py. Captions are placed at
  *  y=h*0.62 (lower-third) so they don't cover faces (which typically sit in the upper two-thirds
@@ -55,6 +58,7 @@ export async function makeShort(
   inputPath: string, outDir: string, label: string,
   attr?: AttributionOpts, layout: ShortLayout = "center-crop",
   captions?: CaptionOpts,
+  cropCenterXNorm = 0.5,
 ): Promise<string> {
   await mkdir(outDir, { recursive: true });
   const output = path.join(outDir, `short_${label}.mp4`);
@@ -77,6 +81,15 @@ export async function makeShort(
       "[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fgs]",
       "[bgb][fgs]overlay=(W-w)/2:(H-h)/2",
     ].join(";");
+  } else if (layout === "shifted-crop") {
+    // M9.1 — shifted crop. The 9:16 stripe is width=ih*9/16, placed so its CENTER sits at
+    // cropCenterXNorm * iw. Clamp to [0, iw-stripeWidth] so the stripe never falls off the frame.
+    //   stripeWidth = ih*9/16
+    //   centerX     = iw * cropCenterXNorm
+    //   x           = clamp(centerX - stripeWidth/2, 0, iw - stripeWidth)
+    // We pass the ffmpeg expression directly so it's evaluated against this clip's actual iw/ih.
+    const cx = cropCenterXNorm.toFixed(3);
+    vf = `crop=ih*9/16:ih:max(0\\,min(iw-ih*9/16\\,iw*${cx}-ih*9/32)):0,scale=1080:1920:flags=lanczos`;
   } else {
     vf = "crop=ih*9/16:ih,scale=1080:1920:flags=lanczos";
   }
