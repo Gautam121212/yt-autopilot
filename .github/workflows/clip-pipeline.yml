@@ -77,6 +77,12 @@ jobs:
         id: pick
         env:
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
+          # M10.1 — narrative-classifier LLM. Without these the enrichWithNarrative call
+          # silently fails and the ranker ships tabloid gossip (observed on run 40581990748).
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          MISTRAL_MODEL_HEAVY: mistral-large-2512
+          MISTRAL_MODEL_LIGHT: ministral-14b-2512
         run: |
           set -euo pipefail
           if [[ -n "${{ github.event.inputs.url }}" ]]; then

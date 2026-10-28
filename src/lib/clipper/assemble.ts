@@ -125,13 +125,19 @@ export async function makeShort(
   //   - DejaVu Sans (installed in CI via fonts-dejavu-core)
   // The subtitles filter escape: : must become \: and ' must be dropped from path.
   if (captions?.srtPath) {
+    // M10.2 — libass font lookup. Run #2 shipped captioned clips with EMPTY lower-third because
+    // `FontName=DejaVu Sans` fell back silently (fc-cache not refreshed after apt-install on CI).
+    // Fix: pass fontsdir pointing at the DejaVu TTF directory so libass loads the font directly
+    // without touching fontconfig. Also raise FontSize because 22pt was too small for a 1080-wide
+    // frame — bumping to 42pt (ASS point-size, roughly equivalent to 56-62 pixels at this scale).
     const srtEsc = captions.srtPath.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "");
     const style =
-      "FontName=DejaVu Sans,FontSize=22,Bold=1," +
-      "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000," +
-      "BorderStyle=1,Outline=3,Shadow=0," +
+      "FontName=DejaVu Sans,FontSize=42,Bold=1," +
+      "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&HAA000000," +
+      "BorderStyle=1,Outline=4,Shadow=0," +
       "Alignment=2,MarginV=360";
-    vf = vf + `,subtitles='${srtEsc}':force_style='${style}'`;
+    // fontsdir points at the dir where DejaVu is installed by `fonts-dejavu-core` on Ubuntu.
+    vf = vf + `,subtitles='${srtEsc}':fontsdir=/usr/share/fonts/truetype/dejavu:force_style='${style}'`;
   }
 
   // For blurred-bg we use -filter_complex because the graph has multiple branches; for

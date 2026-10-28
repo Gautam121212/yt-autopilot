@@ -21,17 +21,20 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 
-const SEARCH_WINDOW_SEC = 2.0;      // ± how far from the picked boundary we'll look
+const SEARCH_WINDOW_SEC = 5.0;      // M10.4: widened 2→5s so we can REACH a real sentence
 const SILENCE_NOISE_DB = -30;       // what we count as "silence"
 const SILENCE_MIN_SEC = 0.25;       // ignore clicks; need at least 250ms of continuous silence
 const SENTENCE_END_RE = /[.!?](["')\]]*)\s*$/;
+// M10.4: hook-starter cues — a cue begins a strong hook if its text starts with one of these.
+// We prefer them for the start boundary over a plain sentence-start.
+const HOOK_STARTER_RE = /^(so|now|watch|look|here|this|wait|okay|and then|first|if you|imagine|what if|the thing is|the problem|here['’]s|let me|guess what|you['’]ll never|turns out)\b/i;
 
 type SilenceRange = { start: number; end: number };
-type Cue = { startSec: number; endSec: number; endsAtSentence: boolean };
+type Cue = { startSec: number; endSec: number; text: string; endsAtSentence: boolean; isHookStart: boolean };
 
-/** M8.5 — parse a whisper SRT file to extract per-cue time ranges and whether each cue ends
- *  mid-sentence or at a clause boundary. Used to prefer "silence AT a sentence end" over just
- *  "any silence". */
+/** M8.5 + M10.4 — parse a whisper SRT file. Extract per-cue time ranges, sentence-end flag, and
+ *  "is this cue a strong hook starter" flag (title-cased open, question start, or hook phrase).
+ *  Used by snap to find clip boundaries that let a cold viewer understand the clip. */
 async function parseSrt(srtPath: string): Promise<Cue[]> {
   if (!existsSync(srtPath)) return [];
   const raw = await readFile(srtPath, "utf8");
@@ -46,9 +49,47 @@ async function parseSrt(srtPath: string): Promise<Cue[]> {
     const start = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(m[4]) / 1000;
     const end = Number(m[5]) * 3600 + Number(m[6]) * 60 + Number(m[7]) + Number(m[8]) / 1000;
     const text = lines.slice(2).join(" ").trim();
-    out.push({ startSec: start, endSec: end, endsAtSentence: SENTENCE_END_RE.test(text) });
+    out.push({
+      startSec: start, endSec: end, text,
+      endsAtSentence: SENTENCE_END_RE.test(text),
+      isHookStart: HOOK_STARTER_RE.test(text) || /^[A-Z]/.test(text),
+    });
   }
   return out;
+}
+
+/** M10.4 — given the SRT, find candidate CLIP-START times within [earliest, latest]. A good
+ *  start is where the current cue BEGINS a sentence AND is a hook-starter: a cold viewer walks
+ *  in on a complete thought. If no hook-starters exist, we fall back to any sentence-start.
+ *  Returns the LATEST such time (so we trim the most dead space without losing context). */
+function pickSentenceStart(cues: Cue[], earliest: number, latest: number): number | null {
+  // A cue "starts a sentence" if the previous cue ended with punctuation (or this is the first).
+  const sentenceStarts: Array<{ t: number; isHook: boolean }> = [];
+  for (let i = 0; i < cues.length; i++) {
+    const prev = cues[i - 1];
+    const cur = cues[i]!;
+    const startsSentence = !prev || prev.endsAtSentence;
+    if (startsSentence && cur.startSec >= earliest && cur.startSec <= latest) {
+      sentenceStarts.push({ t: cur.startSec, isHook: cur.isHookStart });
+    }
+  }
+  if (!sentenceStarts.length) return null;
+  // Prefer hook-starters; among those (or all if none), take the LATEST — trims the most intro
+  // without truncating meaning.
+  const hooks = sentenceStarts.filter((s) => s.isHook);
+  const pool = hooks.length ? hooks : sentenceStarts;
+  return Math.max(...pool.map((s) => s.t));
+}
+
+/** M10.4 — pick the clip END within [earliest, latest]. A good end is where a cue ENDS a
+ *  sentence — the viewer leaves on a complete thought, no mid-word cut, no dangling conjunction.
+ *  Returns the EARLIEST valid end (so we don't tack on dead space after the payoff). */
+function pickSentenceEnd(cues: Cue[], earliest: number, latest: number): number | null {
+  const ends = cues
+    .filter((c) => c.endsAtSentence && c.endSec >= earliest && c.endSec <= latest)
+    .map((c) => c.endSec);
+  if (!ends.length) return null;
+  return Math.min(...ends);
 }
 
 async function detectSilences(inputPath: string): Promise<SilenceRange[]> {
@@ -67,42 +108,60 @@ async function detectSilences(inputPath: string): Promise<SilenceRange[]> {
   });
 }
 
-/** Snap the clip's boundaries to the nearest silence within ±2s. Writes the snapped version to
- *  `${base}.snapped.mp4` and returns its path. On no silence found, returns inputPath unchanged.
- *  M8.5 — if `srtPath` is provided and exists, prefer silence boundaries that fall at the end of
- *  a sentence over arbitrary silences. */
+/** Snap the clip's boundaries. Writes `${base}.snapped.mp4` and returns its path.
+ *  Returns inputPath unchanged when snapping would hurt (no silence, too tight, etc).
+ *
+ *  M10.4 strategy — standalone-understanding first:
+ *    1. If a whisper SRT exists: HARD-SNAP to sentence boundaries within ±5s. Start is picked
+ *       as the LATEST sentence-start inside the window (trims intro fluff), preferring one that
+ *       begins with a hook phrase. End is the EARLIEST sentence-end inside the window (lands on
+ *       a complete thought, no trailing fluff).
+ *    2. If no SRT (dense speech / music / missing whisper): fall back to the M8.5 silence-snap
+ *       which prefers sentence-aligned silences.
+ *    3. If neither works: return inputPath unchanged — no snap is better than a bad snap. */
 export async function snapToSilence(inputPath: string, outDir: string, srtPath?: string): Promise<string> {
   const silences = await detectSilences(inputPath);
-  // Current clip's real duration (from ffprobe — don't trust fine math).
   const probe = await exec("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", inputPath]);
   const dur = parseFloat(probe.stdout.trim());
-  if (!dur || silences.length === 0) return inputPath;
+  if (!dur) return inputPath;
 
-  // M8.5 — parse sentence-end timestamps from the whisper SRT if we have one. A sentence-end
-  // silence at the boundary is strictly preferable to a mid-sentence silence; we filter the
-  // candidates to sentence-ends first and fall back to any silence if that set is empty.
   const cues = srtPath ? await parseSrt(srtPath) : [];
-  const sentenceEnds = cues.filter((c) => c.endsAtSentence).map((c) => c.endSec);
-  const sentenceStarts = cues.filter((c) => c.endsAtSentence).map((c) => c.endSec); // next cue starts after a sentence-end
+  let startSec = 0;
+  let endSec = dur;
+  let strategy = "silence-only";
 
-  // Start-snap: the END of a silence range that's within [0, SEARCH_WINDOW_SEC].
-  // That silence ended → speech began → good start point.
-  let startCandidates = silences.filter((s) => s.end <= SEARCH_WINDOW_SEC).map((s) => s.end);
-  // M8.5: prefer silences that align with a sentence boundary (within 0.3s).
-  if (sentenceStarts.length) {
-    const sentenceAligned = startCandidates.filter((t) => sentenceStarts.some((se) => Math.abs(se - t) < 0.3));
-    if (sentenceAligned.length) startCandidates = sentenceAligned;
+  // M10.4 — PRIMARY path: cue-driven sentence boundaries. Only engages when the SRT is
+  // informative (≥3 cues, ≥1 sentence-end in each half of the search window).
+  if (cues.length >= 3) {
+    const startPick = pickSentenceStart(cues, 0, SEARCH_WINDOW_SEC);
+    const endPick = pickSentenceEnd(cues, dur - SEARCH_WINDOW_SEC, dur);
+    if (startPick !== null && endPick !== null && endPick - startPick >= 10) {
+      startSec = startPick;
+      endSec = endPick;
+      strategy = "sentence-hard-snap";
+    }
   }
-  const startSec = startCandidates.length ? Math.max(...startCandidates) : 0;
 
-  // End-snap: the START of a silence range that's within [dur - SEARCH_WINDOW_SEC, dur].
-  // That silence started → speech ended → good end point.
-  let endCandidates = silences.filter((s) => s.start >= dur - SEARCH_WINDOW_SEC).map((s) => s.start);
-  if (sentenceEnds.length) {
-    const sentenceAligned = endCandidates.filter((t) => sentenceEnds.some((se) => Math.abs(se - t) < 0.3));
-    if (sentenceAligned.length) endCandidates = sentenceAligned;
+  // FALLBACK — M8.5 silence snap biased toward sentence boundaries.
+  if (strategy === "silence-only" && silences.length) {
+    const sentenceEnds = cues.filter((c) => c.endsAtSentence).map((c) => c.endSec);
+    const sentenceStarts = cues.filter((c, i) => (i === 0 || cues[i - 1]!.endsAtSentence)).map((c) => c.startSec);
+    let startCandidates = silences.filter((s) => s.end <= SEARCH_WINDOW_SEC).map((s) => s.end);
+    if (sentenceStarts.length) {
+      const aligned = startCandidates.filter((t) => sentenceStarts.some((se) => Math.abs(se - t) < 0.3));
+      if (aligned.length) startCandidates = aligned;
+    }
+    startSec = startCandidates.length ? Math.max(...startCandidates) : 0;
+    let endCandidates = silences.filter((s) => s.start >= dur - SEARCH_WINDOW_SEC).map((s) => s.start);
+    if (sentenceEnds.length) {
+      const aligned = endCandidates.filter((t) => sentenceEnds.some((se) => Math.abs(se - t) < 0.3));
+      if (aligned.length) endCandidates = aligned;
+    }
+    endSec = endCandidates.length ? Math.min(...endCandidates) : dur;
+    strategy = "silence-biased";
   }
-  const endSec = endCandidates.length ? Math.min(...endCandidates) : dur;
+
+  console.log(`    [snap] strategy=${strategy} ${startSec.toFixed(2)}s → ${endSec.toFixed(2)}s (orig ${dur.toFixed(2)}s)`);
 
   // If snapped window is too tiny (e.g. silence consumed most of the clip), bail.
   const snappedDur = endSec - startSec;

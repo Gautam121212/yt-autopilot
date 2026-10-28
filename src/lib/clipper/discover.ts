@@ -257,7 +257,19 @@ export function rank(videos: DiscoveredVideo[], chaptersById: Record<string, num
       const chapters = chaptersById[v.id] ?? 0;
       const chapterDensity = v.durationSec > 0 ? (chapters / (v.durationSec / 3600)) : 0;
       const durBonus = v.durationSec >= 20 * 60 && v.durationSec <= 90 * 60 ? 1.2 : (v.durationSec >= 10 * 60 && v.durationSec <= 180 * 60 ? 0.6 : 0.2);
-      const catBonus = ({ "22": 1.3, "20": 1.2, "24": 1.15 } as Record<string, number>)[v.categoryId] ?? 1.0;
+      // M10.3 — refined category bonuses: Entertainment/Gaming/Comedy/Sports STRONGLY boosted;
+      // News & Politics (25) heavily penalized unless a genre keyword rescues it.
+      const baseCat = ({
+        "24": 1.4,   // Entertainment (MrBeast, Mark Rober)
+        "20": 1.3,   // Gaming (streamer clips, challenge games)
+        "17": 1.3,   // Sports (Dude Perfect, trick shots)
+        "23": 1.25,  // Comedy
+        "22": 1.1,   // People & Blogs (podcasts/interviews, but can be lifestyle so smaller boost)
+      } as Record<string, number>)[v.categoryId] ?? 1.0;
+      const penalty = PENALIZED_CATEGORIES[v.categoryId] ?? 1.0;
+      // A genre keyword in the title cancels most of a category penalty — a "challenge" video
+      // in News (unlikely but possible) shouldn't be nuked.
+      const catBonus = penalty < 1.0 && countGenreHits(v.title) > 0 ? Math.max(penalty, 0.85) : baseCat * penalty;
       const freshness = Math.max(0.3, 1 - (days / 30));
       const chapterBonus = chapterDensity >= 3 ? 1.2 : (chapterDensity >= 1 ? 1.05 : 1.0);
       // M5: velocity bonus — the dominant signal for "hot right now". A 1M-view video 6h old
@@ -356,8 +368,34 @@ const GENRE_KEYWORDS = [
   // Entertainment storytelling
   "story time", "went wrong", "we did it", "finally", "first time",
 ] as const;
-const GENRE_KEYWORD_POINTS = 8;              // per hit, up to 3 hits counted (anti-stuffing)
+const GENRE_KEYWORD_POINTS = 20;             // M10.3 raised 8→20 — spec explicitly asks for these genres
 const GENRE_KEYWORD_CAP = 3;
+
+/** M10.3 — celebrity-gossip blocklist. Trial run #2 shipped Piers Morgan tabloid coverage of
+ *  Thomas Markle because News & Politics (category 25) + viral news + no narrative classifier
+ *  = top rank. These terms, in a title, flag celebrity-drama content. Rejected UNLESS the title
+ *  also contains an explicit genre keyword (so e.g. a "100 celebrities in a challenge" video
+ *  isn't blocked). */
+const CELEBRITY_GOSSIP_TERMS = [
+  "markle", "royal family", "royal", "duchess", "prince ", "princess ", "duke of",
+  "allegations", "scandal", "scandalous", "exposed", "leaked", "cheating", "affair",
+  "divorce", "feud", "slam", "slams", "clap back", "drags ", "dragged for",
+  "shocking confession", "confesses", "comes clean", "breaks silence",
+  "accuser", "accusers", "accused", "accusation",
+  "piers morgan", "tucker carlson", "jimmy kimmel", "ellen degeneres",
+  "kardashian", "jenner", "oprah", "diddy", "chrisley", "kanye", "ye ",
+] as const;
+
+/** M10.3 — categories where VIRAL ≠ CLIP-WORTHY. News & Politics (25) gets a strong penalty
+ *  unless the title has a genre keyword. Film & Animation (1) same. Autos (2), Pets (15),
+ *  Travel (19) get smaller penalties. */
+const PENALIZED_CATEGORIES: Record<string, number> = {
+  "25": 0.35,   // News & Politics
+  "1":  0.5,    // Film & Animation (movie trailers, clips)
+  "15": 0.7,    // Pets & Animals
+  "2":  0.7,    // Autos & Vehicles
+  "19": 0.8,    // Travel & Events
+};
 
 /** Count distinct genre-keyword matches in a title, capped at GENRE_KEYWORD_CAP so a stuffed
  *  title ("CHALLENGE EXPERIMENT STUNT REACTION IMPOSSIBLE") can't game the ranker. */
@@ -408,6 +446,7 @@ export async function filter(videos: DiscoveredVideo[], cfg: DiscoverConfig): Pr
   const seen = new Set<string>();
   const out: DiscoveredVideo[] = [];
   let blockedByLifestyle = 0;
+  let blockedByGossip = 0;
   for (const v of videos) {
     if (seen.has(v.id)) continue;
     if (v.viewCount < minViews) continue;
@@ -416,10 +455,17 @@ export async function filter(videos: DiscoveredVideo[], cfg: DiscoverConfig): Pr
     if (await isReviewed(v.id)) continue;
     const match = matchesLifestyleBlocklist(v.title, v.channelTitle);
     if (match) { blockedByLifestyle++; continue; }
+    // M10.3 — celebrity-gossip gate. Reject if ANY gossip term matches AND no genre keyword
+    // rescues it. ("100 celebrities VS Mr. Beast" is a challenge; "Markle allegations" is gossip.)
+    const hay = (v.title + " || " + v.channelTitle).toLowerCase();
+    const hasGossipTerm = CELEBRITY_GOSSIP_TERMS.some((t) => hay.includes(t));
+    const hasGenreKeyword = countGenreHits(v.title) > 0;
+    if (hasGossipTerm && !hasGenreKeyword) { blockedByGossip++; continue; }
     seen.add(v.id);
     out.push(v);
   }
   if (blockedByLifestyle) console.log(`[discover] rejected ${blockedByLifestyle} lifestyle/vlog videos (title/channel match)`);
+  if (blockedByGossip) console.log(`[discover] rejected ${blockedByGossip} celebrity-gossip videos (gossip term, no genre keyword)`);
   return out;
 }
 
