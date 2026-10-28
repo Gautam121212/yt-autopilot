@@ -609,6 +609,7 @@ async function enrichWithNarrative(ranked: DiscoveredVideo[]): Promise<Discovere
       description: "",                        // description not fetched in M3 — a future pass can add it
       durationSec: v.durationSec,
       viewCount: v.viewCount,
+      publishedAt: v.publishedAt,             // M12.2 — pass publish date so classifier can judge topicality
     });
     if (!verdict) {
       v.signals = { ...(v.signals ?? {}), narrative_status: 1 /* unavailable */ };
@@ -623,6 +624,7 @@ async function enrichWithNarrative(ranked: DiscoveredVideo[]): Promise<Discovere
       narrative_novelty: verdict.novelty,
       narrative_payoff: verdict.payoff,
       narrative_clarity: verdict.standaloneClarity,
+      narrative_topicality: verdict.topicality,
       narrative_viral: verdict.viralRating,
       narrative_should_clip: verdict.shouldClip ? 1 : 0,
     };

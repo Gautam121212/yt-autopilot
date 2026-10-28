@@ -157,17 +157,54 @@ export async function makeShort(
   return output;
 }
 
+/** M12.1 — attribution + captions filter string for the LONG (16:9) format. Font sizes are
+ *  roughly 1.4× the shorts sizes because the output is 1920×1080 instead of 1080×1920 and the
+ *  reader is further from the screen. The attribution bar sits at the TOP of a 16:9 frame
+ *  (shorts put it at bottom; long videos look better with top credit so the player's control
+ *  overlay doesn't hide it). */
+function longOverlayChain(attr?: AttributionOpts, srtPath?: string): string {
+  let tail = "";
+  if (attr) {
+    const channel = escDrawtext("@" + attr.channel, 24);
+    const title = escDrawtext(attr.title, 40);
+    tail +=
+      `,drawbox=y=0:w=iw:h=150:color=black@0.55:t=fill:enable='lt(t,3)'` +
+      `,drawtext=text='${channel}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=20:enable='lt(t,3)'` +
+      `,drawtext=text='${title}':fontcolor=white@0.85:fontsize=34:x=(w-text_w)/2:y=78:enable='lt(t,3)'`;
+  }
+  if (srtPath) {
+    const srtEsc = srtPath.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "");
+    // Lower-third anchor, MarginV smaller than shorts because 1080 vertical space < 1920.
+    const style =
+      "FontName=DejaVu Sans,FontSize=28,Bold=1," +
+      "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&HAA000000," +
+      "BorderStyle=1,Outline=3,Shadow=0," +
+      "Alignment=2,MarginV=90";
+    tail += `,subtitles='${srtEsc}':fontsdir=/usr/share/fonts/truetype/dejavu:force_style='${style}'`;
+  }
+  return tail;
+}
+
 /** Concatenate clips with 400ms xfade + afade transitions into one long-form 16:9 mp4. The source
- *  clips should all be the same resolution/fps (they are — our extract step encoded them uniformly). */
-export async function concatLong(clipPaths: string[], outDir: string, label = "long"): Promise<string> {
+ *  clips should all be the same resolution/fps (they are — our extract step encoded them
+ *  uniformly). M12.1 — now also accepts attribution + captions, applied as a trailing filter
+ *  chain on the final video output. */
+export async function concatLong(
+  clipPaths: string[], outDir: string, label = "long",
+  attr?: AttributionOpts, captions?: CaptionOpts,
+): Promise<string> {
   if (clipPaths.length === 0) throw new Error("concatLong: no clips");
   await mkdir(outDir, { recursive: true });
   const output = path.join(outDir, `long_${label}.mp4`);
+  const overlayTail = longOverlayChain(attr, captions?.srtPath);
 
-  // Trivial case: one clip → just re-mux to standard container settings.
+  // Trivial case: one clip → re-mux with the overlay chain applied.
   if (clipPaths.length === 1) {
+    const vfBase = "null";          // no transform; the overlay chain adds the overlays
+    const vf = overlayTail ? `${vfBase}${overlayTail}` : vfBase;
     await exec("ffmpeg", [
       "-y", "-v", "error", "-i", clipPaths[0]!,
+      "-vf", vf,
       "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
       "-c:a", "aac", "-ar", "48000", "-b:a", "160k",
       "-pix_fmt", "yuv420p", "-movflags", "+faststart",
@@ -202,12 +239,17 @@ export async function concatLong(clipPaths: string[], outDir: string, label = "l
     vLabel = `vx${i}`;
     aLabel = `ax${i}`;
   }
+  // M12.1 — apply overlays as a final filter after the xfade chain.
+  const finalVLabel = overlayTail ? "vout" : vLabel;
+  if (overlayTail) {
+    parts.push(`[${vLabel}]${overlayTail.slice(1) /* drop leading comma */}[vout]`);
+  }
 
   await exec("ffmpeg", [
     "-y", "-v", "error",
     ...inputs,
     "-filter_complex", parts.join(";"),
-    "-map", `[${vLabel}]`, "-map", `[${aLabel}]`,
+    "-map", `[${finalVLabel}]`, "-map", `[${aLabel}]`,
     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
     "-c:a", "aac", "-ar", "48000", "-b:a", "160k",
     "-pix_fmt", "yuv420p", "-movflags", "+faststart",

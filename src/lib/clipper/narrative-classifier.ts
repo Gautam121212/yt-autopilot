@@ -24,6 +24,10 @@ export const NarrativeVerdict = z.object({
   payoff: z.number().min(0).max(10),
   standaloneClarity: z.number().min(0).max(10),
   emotionalIntensity: z.number().min(0).max(10),
+  /** M12.2 — topicality: is the content still fresh TODAY? Breakdowns, previews, predictions,
+   *  reactions to upcoming events (movie trailers, award shows, elections) decay fast. A trailer
+   *  breakdown for a film that already released is near-worthless to a short-form viewer. */
+  topicality: z.number().min(0).max(10),
   viralRating: z.number().min(0).max(100),
   shouldClip: z.boolean(),
   rationale: z.string().max(400),
@@ -31,7 +35,7 @@ export const NarrativeVerdict = z.object({
 export type NarrativeVerdict = z.infer<typeof NarrativeVerdict>;
 
 const SYSTEM = `You are a short-form video editor evaluating whether a long-form YouTube video is worth clipping.
-You score across 7 narrative dimensions and give a single composite viralRating (0-100).
+You score across 8 narrative dimensions and give a single composite viralRating (0-100).
 
 Scoring rubric:
 - hookStrength: does the opening 10 seconds grab attention? (0 = inert; 10 = can't stop watching)
@@ -39,8 +43,16 @@ Scoring rubric:
 - payoff: is there a clear reward (reveal, outcome, punchline) within clip range?
 - standaloneClarity: can a stranger understand this without the surrounding video?
 - emotionalIntensity: joy, shock, anger, suspense, triumph — any strong feeling?
-- viralRating: 0-100 composite; penalize lifestyle-vlog filler regardless of channel size
-- shouldClip: your binary call — would YOU make a short out of this?
+- topicality: is the content still fresh TODAY (date given in the prompt)? A trailer breakdown for
+  a movie that already released is topicality=1. A reaction to a news event from 6 months ago is
+  topicality=1-2. A preview of something still upcoming next month is topicality=9-10. Also:
+  election coverage after the election, award predictions after the ceremony, "what to expect
+  from X" where X already happened — all topicality 1-3. REDUCE viralRating substantially for
+  low topicality — a stale take is worthless on short-form.
+- viralRating: 0-100 composite; penalize lifestyle-vlog filler regardless of channel size, and
+  penalize low topicality heavily. A technically strong clip with topicality<=3 should not score
+  above 50.
+- shouldClip: your binary call — would YOU make a short out of this? Set FALSE if topicality<=3.
 
 Content type labels — pick the dominant one:
   challenge | experiment | competition | reaction | skill-demo | storytelling | reveal | comedy | stunt | filler
@@ -55,9 +67,13 @@ function userPrompt(input: {
   description: string;
   durationSec: number;
   viewCount: number;
+  publishedAt?: string;
   commentSample?: string[];
 }): string {
+  const today = new Date().toISOString().slice(0, 10);
   return [
+    `TODAY'S DATE: ${today}`,
+    input.publishedAt ? `Video published: ${input.publishedAt.slice(0, 10)}` : "",
     `Title: ${input.title}`,
     `Channel: ${input.channel}`,
     `Duration: ${(input.durationSec / 60).toFixed(1)} min`,
@@ -65,7 +81,8 @@ function userPrompt(input: {
     `Description (first 500 chars): ${input.description.slice(0, 500)}`,
     input.commentSample?.length ? `Top comments:\n${input.commentSample.slice(0, 5).map((c) => "  - " + c.slice(0, 160)).join("\n")}` : "",
     ``,
-    `Score the above against the rubric. Return JSON matching the schema.`,
+    `Score the above against the rubric. Pay EXPLICIT attention to topicality given TODAY'S DATE above.`,
+    `Return JSON matching the schema.`,
   ].filter(Boolean).join("\n");
 }
 
@@ -77,6 +94,7 @@ export async function classifyNarrative(input: {
   description: string;
   durationSec: number;
   viewCount: number;
+  publishedAt?: string;
   commentSample?: string[];
 }): Promise<NarrativeVerdict | null> {
   try {

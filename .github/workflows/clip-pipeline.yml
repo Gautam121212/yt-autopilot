@@ -205,7 +205,22 @@ jobs:
         with:
           name: sections
           path: work/clipper/sections
-      - name: Process (snap, polish, score, decide, assemble)
+      - name: Process (snap, polish, score, decide, assemble, pre-ship score, auto-ship ≥8/10)
+        env:
+          # M12.3 — HARSH pre-ship scorer needs the same LLM env as discover. judge role → Mistral.
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          MISTRAL_MODEL_HEAVY: ministral-14b-2512
+          MISTRAL_MODEL_LIGHT: ministral-8b-2512
+          GEMINI_MODEL_HEAVY: gemini-2.5-flash
+          GEMINI_MODEL_LIGHT: gemini-2.5-flash
+          LLM_PROVIDER: gemini
+          LLM_ROLE_JUDGE: mistral
+          # M12.3 — auto-ship creds. When a clip scores ≥8/10 it uploads to YT Studio as unlisted.
+          # Without these the scorer still runs and records verdicts; just skips the upload.
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: |
           npx tsx scripts/clip-process.ts --sections work/clipper/sections --out work/clipper --format "${{ github.event.inputs.format || 'auto' }}"
       - name: Commit outcomes.json + state updates
