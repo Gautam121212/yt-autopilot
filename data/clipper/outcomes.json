@@ -2,6 +2,90 @@
   "version": 1,
   "records": [
     {
+      "sourceVideoId": "4jhbUTuZnBs",
+      "clipPath": "work/clipper/polished/clip-01_441-681.snapped.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "Dune 3 FINAL Trailer Breakdown (THIS IS CRAZY!) | Quinns Ideas",
+        "sourceChannel": "Quinn's Ideas",
+        "clipScore": 70,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio"
+        ],
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "decisionFormat": "long",
+        "decisionRationale": "1 passing clips totaling 3.9 min — under the 7 min long-form floor. Ship 1 shorts individually."
+      },
+      "recordedAt": "2026-10-28T16:08:24.522Z"
+    },
+    {
+      "sourceVideoId": "wZKlhqTjrZo",
+      "kind": "rejected",
+      "recordedAt": "2026-10-28T05:20:17.986Z",
+      "context": {
+        "sourceTitle": "‘Incredibly DARK Secret!’ Thomas Markle Sr Allegations | Piers Morgan Says “Questions MUST Be Asked”",
+        "rejectReason": "human rejected via /reject",
+        "rejectDetails": {
+          "index": 4
+        }
+      }
+    },
+    {
+      "sourceVideoId": "wZKlhqTjrZo",
+      "kind": "rejected",
+      "recordedAt": "2026-10-28T05:20:17.896Z",
+      "context": {
+        "sourceTitle": "‘Incredibly DARK Secret!’ Thomas Markle Sr Allegations | Piers Morgan Says “Questions MUST Be Asked”",
+        "rejectReason": "human rejected via /reject",
+        "rejectDetails": {
+          "index": 3
+        }
+      }
+    },
+    {
+      "sourceVideoId": "wZKlhqTjrZo",
+      "kind": "rejected",
+      "recordedAt": "2026-10-28T05:20:17.803Z",
+      "context": {
+        "sourceTitle": "‘Incredibly DARK Secret!’ Thomas Markle Sr Allegations | Piers Morgan Says “Questions MUST Be Asked”",
+        "rejectReason": "human rejected via /reject",
+        "rejectDetails": {
+          "index": 2
+        }
+      }
+    },
+    {
+      "sourceVideoId": "wZKlhqTjrZo",
+      "kind": "rejected",
+      "recordedAt": "2026-10-28T05:20:17.711Z",
+      "context": {
+        "sourceTitle": "‘Incredibly DARK Secret!’ Thomas Markle Sr Allegations | Piers Morgan Says “Questions MUST Be Asked”",
+        "rejectReason": "human rejected via /reject",
+        "rejectDetails": {
+          "index": 1
+        }
+      }
+    },
+    {
+      "sourceVideoId": "wZKlhqTjrZo",
+      "kind": "rejected",
+      "recordedAt": "2026-10-28T05:20:17.620Z",
+      "context": {
+        "sourceTitle": "‘Incredibly DARK Secret!’ Thomas Markle Sr Allegations | Piers Morgan Says “Questions MUST Be Asked”",
+        "rejectReason": "human rejected via /reject",
+        "rejectDetails": {
+          "index": 0
+        }
+      }
+    },
+    {
       "sourceVideoId": "wZKlhqTjrZo",
       "clipPath": "work/clipper/polished/clip-05_925-955.polished.mp4",
       "kind": "produced",
@@ -144,66 +228,6 @@
         "decisionRationale": "1 passing clips totaling 4.0 min — under the 7 min long-form floor. Ship 1 shorts individually."
       },
       "recordedAt": "2026-10-26T19:45:33.609Z"
-    },
-    {
-      "sourceVideoId": "wZKlhqTjrZo",
-      "kind": "rejected",
-      "recordedAt": "2026-10-28T05:20:17.620Z",
-      "context": {
-        "sourceTitle": "‘Incredibly DARK Secret!’ Thomas Markle Sr Allegations | Piers Morgan Says “Questions MUST Be Asked”",
-        "rejectReason": "human rejected via /reject",
-        "rejectDetails": {
-          "index": 0
-        }
-      }
-    },
-    {
-      "sourceVideoId": "wZKlhqTjrZo",
-      "kind": "rejected",
-      "recordedAt": "2026-10-28T05:20:17.711Z",
-      "context": {
-        "sourceTitle": "‘Incredibly DARK Secret!’ Thomas Markle Sr Allegations | Piers Morgan Says “Questions MUST Be Asked”",
-        "rejectReason": "human rejected via /reject",
-        "rejectDetails": {
-          "index": 1
-        }
-      }
-    },
-    {
-      "sourceVideoId": "wZKlhqTjrZo",
-      "kind": "rejected",
-      "recordedAt": "2026-10-28T05:20:17.803Z",
-      "context": {
-        "sourceTitle": "‘Incredibly DARK Secret!’ Thomas Markle Sr Allegations | Piers Morgan Says “Questions MUST Be Asked”",
-        "rejectReason": "human rejected via /reject",
-        "rejectDetails": {
-          "index": 2
-        }
-      }
-    },
-    {
-      "sourceVideoId": "wZKlhqTjrZo",
-      "kind": "rejected",
-      "recordedAt": "2026-10-28T05:20:17.896Z",
-      "context": {
-        "sourceTitle": "‘Incredibly DARK Secret!’ Thomas Markle Sr Allegations | Piers Morgan Says “Questions MUST Be Asked”",
-        "rejectReason": "human rejected via /reject",
-        "rejectDetails": {
-          "index": 3
-        }
-      }
-    },
-    {
-      "sourceVideoId": "wZKlhqTjrZo",
-      "kind": "rejected",
-      "recordedAt": "2026-10-28T05:20:17.986Z",
-      "context": {
-        "sourceTitle": "‘Incredibly DARK Secret!’ Thomas Markle Sr Allegations | Piers Morgan Says “Questions MUST Be Asked”",
-        "rejectReason": "human rejected via /reject",
-        "rejectDetails": {
-          "index": 4
-        }
-      }
     }
   ]
 }
