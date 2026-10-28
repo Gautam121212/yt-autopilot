@@ -19,7 +19,7 @@ import { recordProduced, recordRejected } from "../src/lib/clipper/outcomes.js";
 import { upsert } from "../src/lib/clipper/state.js";
 import { checkCropSafety } from "../src/lib/clipper/crop-safety.js";
 import { qcCheck } from "../src/lib/clipper/qc.js";
-import { transcribeToSRT } from "../src/lib/clipper/captions.js";
+import { transcribeToSRT, speechDensity } from "../src/lib/clipper/captions.js";
 import type { ClipCandidate } from "../src/lib/yt-clipper.js";
 
 type SectionsFile = {
@@ -60,6 +60,7 @@ async function main() {
   await mkdir(snappedDir, { recursive: true });
   const scoredByPick: Array<{ pick: ClipCandidate; score: ScoreResult }> = [];
 
+  const MIN_SPEECH_DENSITY = 0.4;             // M11.2 — ≥40% of clip must be speech
   for (const s of sf.sections) {
     const rawPath = path.join(sectionsDir, s.path);
     const pick = sf.picks.find((p) => p.rank === s.rank);
@@ -69,6 +70,24 @@ async function main() {
     // that fall at sentence endings. Non-fatal if whisper unavailable; snap falls back to pure
     // silence detection.
     const rawSrt = await transcribeToSRT(rawPath, "tiny");
+    // M11.2 — speech-density gate. If the clip has <40% speech coverage, a cold viewer walks
+    // in on gameplay / music / ambient footage with no narration. Reject before wasting polish
+    // and encode time. Only skippable if whisper didn't run (no SRT) — then we accept the clip
+    // because we can't honestly judge.
+    if (rawSrt) {
+      const clipDur = pick.endSec - pick.startSec;
+      const density = await speechDensity(rawSrt, clipDur);
+      if (density < MIN_SPEECH_DENSITY) {
+        console.warn(`    [speech-density] ${(density * 100).toFixed(0)}% < ${MIN_SPEECH_DENSITY * 100}% — rejecting as non-narrated`);
+        await recordRejected(sf.meta.id, {
+          sourceTitle: sf.meta.title, sourceChannel: sf.meta.uploader,
+          clipScore: 0, rejectReason: `non-narrated (speech density ${(density * 100).toFixed(0)}%)`,
+          rejectDetails: { speechDensity: density, clipDurationSec: clipDur },
+        });
+        continue;
+      }
+      console.log(`    [speech-density] ${(density * 100).toFixed(0)}% ✓`);
+    }
     const snapped = await snapToSilence(rawPath, snappedDir, rawSrt ?? undefined);
     const polished = await polish(snapped, polishedDir);
     const probeBand = format === "long" ? "long" : "shorts";

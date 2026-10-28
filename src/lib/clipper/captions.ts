@@ -10,6 +10,7 @@
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +25,29 @@ async function runCapture(cmd: string, args: string[]): Promise<{ stdout: string
     p.on("error", reject);
     p.on("close", (code) => resolve({ stdout, stderr, code: code ?? 0 }));
   });
+}
+
+/** M11.2 — speech-density signal. Sum of all SRT cue durations / clip duration. A value below
+ *  0.4 means the clip is predominantly silence or music (gameplay compilation, ambient footage,
+ *  B-roll loop) — a cold viewer has no narration to follow, so the clip fails the standalone-
+ *  understanding bar. The processor uses this to reject such clips before snap/polish/render. */
+export async function speechDensity(srtPath: string, clipDurationSec: number): Promise<number> {
+  if (!existsSync(srtPath) || clipDurationSec <= 0) return 0;
+  try {
+    const raw = await readFile(srtPath, "utf8");
+    const blocks = raw.split(/\n\n+/).map((b) => b.trim()).filter(Boolean);
+    let speechSec = 0;
+    for (const b of blocks) {
+      const lines = b.split("\n");
+      if (lines.length < 2) continue;
+      const m = /(\d\d):(\d\d):(\d\d),(\d\d\d)\s*-->\s*(\d\d):(\d\d):(\d\d),(\d\d\d)/.exec(lines[1]!);
+      if (!m) continue;
+      const start = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(m[4]) / 1000;
+      const end = Number(m[5]) * 3600 + Number(m[6]) * 60 + Number(m[7]) + Number(m[8]) / 1000;
+      speechSec += Math.max(0, end - start);
+    }
+    return Math.min(1, speechSec / clipDurationSec);
+  } catch { return 0; }
 }
 
 /** Transcribe the polished clip's audio and write an SRT alongside it. Returns the SRT path on

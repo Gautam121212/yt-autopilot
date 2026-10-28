@@ -626,9 +626,13 @@ async function enrichWithNarrative(ranked: DiscoveredVideo[]): Promise<Discovere
       narrative_viral: verdict.viralRating,
       narrative_should_clip: verdict.shouldClip ? 1 : 0,
     };
-    // Hard-reject filler + anything the judge says shouldn't be clipped, no matter the channel.
-    if (verdict.type === "filler" || !verdict.shouldClip) {
-      v.score = -1;                           // sorts to the bottom
+    // M11.1 — HARD narrative gate. Reject if filler OR shouldClip=false OR viralRating<40.
+    // viralRating=40 is "below average" per the Mistral rubric; anything less and the clip is
+    // likely non-viral regardless of channel size. Only applies when classifier returned a
+    // verdict — null = signal unavailable, score unchanged.
+    const VIRAL_FLOOR = 40;
+    if (verdict.type === "filler" || !verdict.shouldClip || verdict.viralRating < VIRAL_FLOOR) {
+      v.score = -1;                           // sorts to the bottom and gets filtered out below
       console.log(`  ${v.id} "${v.title.slice(0, 60)}" → type=${verdict.type} viral=${verdict.viralRating} REJECTED: ${verdict.rationale.slice(0, 80)}`);
       continue;
     }
