@@ -2,6 +2,58 @@
   "version": 1,
   "records": [
     {
+      "sourceVideoId": "1Ejm-eWBrZE",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "JINNALA || Season 3 || Episode 24 || Gambia Mandinka Movie",
+        "sourceChannel": "Gam Pulse Studio 🇬🇲",
+        "clipScore": 30,
+        "rejectReason": "pre-ship score 3/10 < 8",
+        "rejectDetails": {
+          "preShipScore": 3,
+          "preShipDimensions": {
+            "hookFirstSecond": 1,
+            "payoffBeforeEnd": 2,
+            "standaloneClarity": 2,
+            "retentionBait": 3,
+            "emotionalPeak": 2
+          },
+          "preShipLearnReasons": [
+            "First 5 seconds: No hook word, no action, no question—just random Mandinka phrases with no context or visuals to anchor interest. **hookFirstSecond = 1**",
+            "No discernible payoff in the 176s clip. The transcript is a series of unconnected questions, statements, and dialogue without resolution, emotional climax, or insight. **payoffBeforeEnd = 2**",
+            "Standalone clarity is impossible. A cold viewer has no idea what is being discussed, who the characters are, or why this matters. **standaloneClarity = 2**",
+            "Retention bait is weak: The clip relies on repetitive questioning without progression, tension, or loop. **retentionBait = 3**",
+            "No emotional peak or memorable moment—just a stream of untranslated Mandinka dialogue with no visual storytelling or emotional payoff. **emotionalPeak = 2**"
+          ]
+        }
+      },
+      "recordedAt": "2026-10-28T16:49:56.973Z"
+    },
+    {
+      "sourceVideoId": "1Ejm-eWBrZE",
+      "clipPath": "work/clipper/polished/clip-01_832-1072.snapped.polished.recovered.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "JINNALA || Season 3 || Episode 24 || Gambia Mandinka Movie",
+        "sourceChannel": "Gam Pulse Studio 🇬🇲",
+        "clipScore": 70,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio"
+        ],
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "decisionFormat": "long",
+        "decisionRationale": "1 passing clips totaling 2.9 min — under the 7 min long-form floor. Ship 1 shorts individually."
+      },
+      "recordedAt": "2026-10-28T16:47:43.265Z"
+    },
+    {
       "sourceVideoId": "4jhbUTuZnBs",
       "clipPath": "work/clipper/polished/clip-01_441-681.snapped.polished.mp4",
       "kind": "produced",
