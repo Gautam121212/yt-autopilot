@@ -44,13 +44,19 @@ export async function polish(inputPath: string, outDir: string): Promise<PolishR
   const m = await measure(inputPath);
   // Pass 2 — apply correction using measured values. Linear mode is more accurate when measured
   // values are supplied explicitly (per ffmpeg docs).
-  const loudnorm = `loudnorm=I=-14:TP=-1.5:LRA=11:measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}:measured_thresh=${m.input_thresh}:offset=${m.target_offset}:linear=true:print_format=summary`;
+  // M11.6 — tighten the TP ceiling in loudnorm to -2.0 (was -1.5). Trial #4 had broadcast-source
+  // audio (news clips) hit true_peak >= 0 dBFS even after -1.5 ceiling + alimiter, failing the
+  // critical gate. Extra 0.5 dB headroom gives the alimiter room to clamp inter-sample peaks.
+  const loudnorm = `loudnorm=I=-14:TP=-2.0:LRA=11:measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}:measured_thresh=${m.input_thresh}:offset=${m.target_offset}:linear=true:print_format=summary`;
   // alimiter after loudnorm: hard-clamp sample peaks. level_out=0.9 brings the final peak well
   // under -1 dBFS. loudnorm sets integrated loudness target but doesn't guarantee peak; alimiter
   // is the brick wall. (True inter-sample peaks can still be slightly higher than sample peaks
   // due to filter interpolation — that's why the score step treats non-clipping ISP as a point
   // penalty rather than a critical fail.)
-  const alimit = "alimiter=level_in=1:level_out=0.9:limit=0.794:attack=1:release=50:asc=1";
+  // M11.6 — tighter sample-peak ceiling. Was limit=0.794 (-2 dBFS sample peak), which still let
+  // inter-sample true peaks spike above 0 on compressed broadcast audio. 0.63 ≈ -4 dBFS sample
+  // peak, leaving ~3 dB headroom for inter-sample peaks to stay below the -1 dBTP target.
+  const alimit = "alimiter=level_in=1:level_out=0.9:limit=0.63:attack=1:release=50:asc=1";
   await exec("ffmpeg", [
     "-y", "-v", "error",
     "-i", inputPath,

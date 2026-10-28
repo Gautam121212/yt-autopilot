@@ -238,6 +238,20 @@ async function main() {
       process.exit(0);
     }
   } else {
+    // M11.4 — handle empty-chosen on the long path cleanly. Trial #4 crashed here with
+    // "concatLong: no clips" after the decider correctly said "drop this source — do not ship
+    // bad work." The shorts path exits cleanly in this case; long needs the same treatment.
+    if (!decision.chosen.length) {
+      console.error("\n✗ no clips passed scoring/recovery for long format. Dropping source.");
+      await writeManifest(out, {
+        source: { url: sf.url, title: sf.meta.title, uploader: sf.meta.uploader, durationSec: sf.meta.durationSec },
+        provenance: sf.provenance ?? null,
+        decision: { ...decision, format: "none", chosen: [], rationale: decision.rationale + " [all failed scoring]" },
+        scoredAll: scored, outputs: [],
+      });
+      await upsert(sf.meta.id, { title: sf.meta.title, channelTitle: sf.meta.uploader, status: "dropped", notes: "all clips failed scoring" });
+      process.exit(0);
+    }
     const o = await concatLong(decision.chosen.map((c) => c.path), finalDir);
     outputs.push(o);
     // QC skipped for long-form: it stays 16:9 so the shorts-shape dimension check doesn't apply,

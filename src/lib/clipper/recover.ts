@@ -22,20 +22,26 @@ function autoEditorBin(): string {
 export async function recover(inputPath: string, outDir: string): Promise<RecoverResult> {
   const base = path.basename(inputPath, path.extname(inputPath));
   const output = path.join(outDir, `${base}.recovered.mp4`);
-  // auto-editor flags:
-  //   --margin 0.2sec  → keep 200ms around each kept segment so words aren't clipped mid-syllable
-  //   --silent-threshold 0.04 → audio under 4% is treated as silent (default-ish, works well on speech)
-  //   --no-open → don't try to open the result in a player
-  //   --output <path>
-  const args = ["--margin", "0.2sec", "--silent-threshold", "0.04", "--no-open", inputPath, "--output", output];
+  // M11.5 — auto-editor renamed --silent-threshold in newer releases (trial #4 CI run failed
+  // with "Unknown option: --silent-threshold"). Modern syntax: --edit audio:threshold=0.04.
+  // The older flag is kept as a positional fallback in the catch below for older installs.
+  const argsModern = ["--margin", "0.2sec", "--edit", "audio:threshold=0.04", "--no-open", inputPath, "--output", output];
+  const argsLegacy = ["--margin", "0.2sec", "--silent-threshold", "0.04", "--no-open", inputPath, "--output", output];
   try {
-    const r = await exec(autoEditorBin(), args, { maxBuffer: 32 * 1024 * 1024 });
+    const r = await exec(autoEditorBin(), argsModern, { maxBuffer: 32 * 1024 * 1024 });
     return { inputPath, outputPath: output, stderr: r.stderr };
   } catch (e) {
     const msg = (e as Error).message;
-    // Fallback: some installs have a broken wrapper script but the module itself works.
+    // Fallback 1: unknown-option on modern syntax → try legacy flag (older auto-editor).
+    if (/Unknown option/i.test(msg)) {
+      try {
+        const r = await exec(autoEditorBin(), argsLegacy, { maxBuffer: 32 * 1024 * 1024 });
+        return { inputPath, outputPath: output, stderr: r.stderr };
+      } catch { /* fall through */ }
+    }
+    // Fallback 2: broken wrapper script but module works.
     if (/ENOENT|Permission denied|not found/i.test(msg)) {
-      const r = await exec("python3", ["-m", "auto_editor", ...args], { maxBuffer: 32 * 1024 * 1024 });
+      const r = await exec("python3", ["-m", "auto_editor", ...argsModern], { maxBuffer: 32 * 1024 * 1024 });
       return { inputPath, outputPath: output, stderr: r.stderr };
     }
     throw e;
