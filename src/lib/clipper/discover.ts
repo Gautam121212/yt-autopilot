@@ -378,12 +378,18 @@ const CREATOR_BONUS = 1.5;
  *  the candidate report. */
 export const TOPIC_CATEGORIES = {
   // 1. Extreme challenges, competitions, survival tests, prize-based contests.
+  // M14.5 — removed bare "challenge/challenged/challenging" because trial #8 matched a
+  // 106-min worship livestream ("HALLELUJAH CHALLENGE") on it. Require a competitive /
+  // numeric / prize framing instead.
   "challenges": [
-    "challenge", "challenged", "challenging",
-    "100 vs ", "1 vs ", "vs 100", "vs 10", "last to leave", "last one standing",
-    "survive", "surviving", "survived", "survival",
-    "tournament", "competition", "championship", "$10000", "$100000", "$1000000", "$1,000,000",
+    "100 vs ", "1 vs ", "vs 100", "vs 10", "players vs ", " vs. the",
+    "last to leave", "last one standing", "first to ", "elimination",
+    "survive", "surviving", "survived", "survival", "locked in",
+    "tournament", "competition", "championship", "squid game", "beast games",
+    "$10000", "$100000", "$1000000", "$1,000,000",
     "cheapest vs ", "most expensive", "$1 vs ", "prize", "winner takes",
+    "mrbeast challenge", "beast challenge", "impossible challenge", "extreme challenge",
+    "24 hour challenge", "24-hour challenge", "food challenge", "chubbyemu",
   ],
   // 2. Incredible skills, trick shots, stunts, records, satisfying achievements.
   "skills-stunts": [

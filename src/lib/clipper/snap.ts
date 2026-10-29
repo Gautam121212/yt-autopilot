@@ -118,9 +118,10 @@ function pickSentenceEnd(
     if (cur.endSec < earliest || cur.endSec > latest) continue;
     const next = cues[i + 1];
     // Pause length = gap between this cue's end and the next cue's start. If there is no
-    // next cue (end of SRT), approximate by any detected silence that starts at or after this
-    // cue's end.
-    let pauseLen = next ? Math.max(0, next.startSec - cur.endSec) : Infinity;
+    // next cue (end of SRT), use a MODEST default so this candidate still competes but
+    // doesn't automatically dominate — otherwise the LAST cue always wins (trial #8 picked
+    // 109.94s on a 110s clip because "no next cue" was scored as Infinity pause).
+    let pauseLen = next ? Math.max(0, next.startSec - cur.endSec) : LONG_PAUSE_SEC;
     if (!next) {
       const trailingSilence = silences.find((s) => s.start >= cur.endSec - 0.1 && s.start < cur.endSec + 2);
       if (trailingSilence) pauseLen = trailingSilence.end - trailingSilence.start;
@@ -137,9 +138,15 @@ function pickSentenceEnd(
     });
   }
   if (!candidates.length) return null;
-  // Sort by score DESC, then by distFromPreferred ASC. Highest-score candidate closest to the
-  // planned end wins. If several share the top score, the one needing the smallest shift wins.
-  candidates.sort((a, b) => b.score - a.score || a.distFromPreferred - b.distFromPreferred);
+  // M14.5 — combined score: a strong end-of-thought is worth about 5s of distance from the
+  // planned end. So "long-pause 15s past planned" (score 2, dist 15) scores 2 − 15/5 = −1,
+  // while "medium-pause 2s past planned" (score 1, dist 2) scores 1 − 0.4 = 0.6 — the closer
+  // option wins. This stops snap from running all the way to the far edge of the tail buffer
+  // just because the LAST sentence end happened to be a sentence end.
+  const DISTANCE_WEIGHT = 1 / 5;
+  candidates.sort((a, b) =>
+    (b.score - b.distFromPreferred * DISTANCE_WEIGHT) -
+    (a.score - a.distFromPreferred * DISTANCE_WEIGHT));
   return candidates[0]!.t;
 }
 

@@ -35,6 +35,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { checkCropSafety } from "../src/lib/clipper/crop-safety.js";
 import { qcCheck } from "../src/lib/clipper/qc.js";
+import { snapToSilence } from "../src/lib/clipper/snap.js";
 
 const exec = promisify(execFile);
 
@@ -144,6 +145,10 @@ async function discoverBlocklistTest(): Promise<TestResult[]> {
     { id: "t2", title: "Driving around my neighborhood for 10 minutes", channelTitle: "Nobody Famous", mustReject: true, label: "no-topic (idle driving)" },
     { id: "t3", title: "She was reunited with her mother after 20 years", channelTitle: "Random Channel", mustReject: false, label: "topic: human-interest" },
     { id: "t4", title: "I built a working jetpack from scratch", channelTitle: "Experiment Channel", mustReject: false, label: "topic: experiments+transformations" },
+    // M14.5 — bare "challenge" in a worship/religious livestream title must NOT qualify.
+    { id: "t5", title: "HALLELUJAH CHALLENGE || OCT 2026 || DAY 24", channelTitle: "Nathaniel Bassey Main", mustReject: true, label: "trial-#8 worship livestream (bare 'challenge')", defaultAudioLanguage: "en-GB" },
+    // Keep: a MrBeast-style challenge with real competitive framing.
+    { id: "t6", title: "100 Players vs. The Hunger Games Challenge", channelTitle: "Random Channel", mustReject: false, label: "legit 100 vs challenge keeps" },
   ];
   const videos = cases.map((c) => ({
     id: c.id, title: c.title, channelId: "UC" + c.id, channelTitle: c.channelTitle,
@@ -167,6 +172,35 @@ async function synthPortraitTest(tmpDir: string): Promise<TestResult[]> {
   await exec("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1080x1920:duration=3:rate=30", "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000", "-shortest", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-t", "3", file]);
   const cs = await checkCropSafety(file);
   return [expect("Portrait source → safe, source already portrait", cs.layout === "center-crop" && /already portrait/.test(cs.reason), `got layout=${cs.layout} reason=${cs.reason}`)];
+}
+
+/** M14.5 — snap end-tiebreak smoke test. Builds a 60s clip with a weak sentence end at 38.5s
+ *  (close to planned-end of 40s = dur−20) and a stronger end-of-thought at 44.0s. The old
+ *  logic (score DESC, distance ASC) could silently prefer whichever came first; the new
+ *  logic (score − distance/5) must pick 44.0 because its long pause outweighs the extra 4s.
+ *  Also verifies that a trailing cue at 55s (end-of-SRT) does NOT dominate — this was
+ *  trial #8's bug (109.94s end on a 110s clip because "no next cue" = Infinity pause). */
+async function snapEndTiebreakTest(tmpDir: string): Promise<TestResult[]> {
+  const src = path.join(tmpDir, "snap_src.mp4");
+  await exec("ffmpeg", ["-y", "-v", "error",
+    "-f", "lavfi", "-i", "testsrc2=s=1280x720:d=60:r=30",
+    "-f", "lavfi", "-i", "anullsrc=cl=stereo:r=48000", "-shortest", "-t", "60",
+    "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", src]);
+  const srtPath = path.join(tmpDir, "snap_src.srt");
+  await writeFile(srtPath, [
+    "1\n00:00:00,000 --> 00:00:03,000\nThis is the opening.",
+    "2\n00:00:35,000 --> 00:00:38,500\nHe paused briefly.",
+    "3\n00:00:38,700 --> 00:00:44,000\nThen he made the final point.",
+    "4\n00:00:55,000 --> 00:00:58,000\nTrailing extra content.",
+  ].join("\n\n") + "\n", "utf8");
+  const out = await snapToSilence(src, tmpDir, srtPath);
+  const probe = await exec("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out]);
+  const outDur = parseFloat(probe.stdout.trim());
+  return [
+    expect("Snap end-tiebreak picks strong end-of-thought, not trailing SRT edge",
+      outDur >= 42 && outDur <= 46,
+      `expected ~44s (close long-pause), got ${outDur.toFixed(2)}s — if close to 58s, the no-next-cue Infinity bug returned`),
+  ];
 }
 
 /** Synthetic 16:9 with a centered colored square → center-crop should call it safe. */
@@ -205,6 +239,9 @@ async function main() {
   results.push(...await discoverBlocklistTest());
 
   if (!narrativeOnly) {
+    console.log(`\n[Snap end-tiebreak test]`);
+    results.push(...await snapEndTiebreakTest(tmpDir));
+
     console.log(`\n[Challenging-case tests]`);
     results.push(...await synthPortraitTest(tmpDir));
     results.push(...await synthCenteredTest(tmpDir));
