@@ -2,6 +2,58 @@
   "version": 1,
   "records": [
     {
+      "sourceVideoId": "SvCnXn1Vyq8",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "BREAKING: New Canada-U.S. Trade Deal Sparks SHOCKWAVES",
+        "sourceChannel": "Claus Kellerman POV",
+        "clipScore": 30,
+        "rejectReason": "pre-ship score 3/10 < 8",
+        "rejectDetails": {
+          "preShipScore": 3,
+          "preShipDimensions": {
+            "hookFirstSecond": 2,
+            "payoffBeforeEnd": 4,
+            "standaloneClarity": 3,
+            "retentionBait": 4,
+            "emotionalPeak": 2
+          },
+          "preShipLearnReasons": [
+            "Lacks a strong hook in the first second: ‘Snag here is that’ is weak and unengaging. No clear question, surprise, or immediate action hook.",
+            "No concrete payoff before the end: The clip ends with a vague ‘progress being made’ without a clear reward (laugh, insight, or emotional impact).",
+            "StandaloneClarity ≤ 3: A cold viewer would have no idea who Jameson Greer, Howard Lutnik, or why Canada is being framed as an ‘evil empire’—this is a niche political rant.",
+            "RetentionBait is weak: The countdown to midterms and ‘burning down the House’ are clichéd political tropes with no visual or escalating tension.",
+            "EmotionalPeak ≤ 2: ‘Canada is the nicest people’ is undercut by sarcasm, but there’s no catharsis, shock, or awe—just rambling anger."
+          ]
+        }
+      },
+      "recordedAt": "2026-10-29T16:08:29.868Z"
+    },
+    {
+      "sourceVideoId": "SvCnXn1Vyq8",
+      "clipPath": "work/clipper/polished/clip-01_230-470.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "BREAKING: New Canada-U.S. Trade Deal Sparks SHOCKWAVES",
+        "sourceChannel": "Claus Kellerman POV",
+        "clipScore": 70,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio"
+        ],
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "decisionFormat": "long",
+        "decisionRationale": "1 passing clips totaling 4.0 min — under the 7 min long-form floor. Ship 1 shorts individually."
+      },
+      "recordedAt": "2026-10-29T16:06:02.895Z"
+    },
+    {
       "sourceVideoId": "lltPSOBtQq0",
       "clipPath": "work/clipper/polished/clip-01_316-556.polished.mp4",
       "kind": "produced",
