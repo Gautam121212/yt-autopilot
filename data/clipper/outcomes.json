@@ -2,6 +2,95 @@
   "version": 1,
   "records": [
     {
+      "sourceVideoId": "POXgmQxKj0Y",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "HALLELUJAH CHALLENGE || OCT 2026 || DAY 24",
+        "sourceChannel": "Nathaniel Bassey Main",
+        "clipScore": 70,
+        "rejectReason": "qc-fail: frozen frames: 10 stretch(es) totaling 62.1s",
+        "rejectDetails": {
+          "qcReasons": [
+            "frozen frames: 10 stretch(es) totaling 62.1s",
+            "source had faces but final shows them in only 38% of samples (<40%)"
+          ],
+          "dims": {
+            "width": 1080,
+            "height": 1920
+          },
+          "duration": 110.121,
+          "blackRatio": 0,
+          "facesIn": 42,
+          "slicedSamples": 0
+        }
+      },
+      "recordedAt": "2026-10-29T16:49:07.479Z"
+    },
+    {
+      "sourceVideoId": "POXgmQxKj0Y",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "HALLELUJAH CHALLENGE || OCT 2026 || DAY 24",
+        "sourceChannel": "Nathaniel Bassey Main",
+        "clipScore": 63,
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "criticalFails": [],
+        "rejectReason": "score 63<80"
+      },
+      "recordedAt": "2026-10-29T16:46:52.410Z"
+    },
+    {
+      "sourceVideoId": "POXgmQxKj0Y",
+      "clipPath": "work/clipper/polished/clip-02_5630-5720.snapped.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "HALLELUJAH CHALLENGE || OCT 2026 || DAY 24",
+        "sourceChannel": "Nathaniel Bassey Main",
+        "clipScore": 70,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio"
+        ],
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "decisionFormat": "shorts",
+        "decisionRationale": "2 passing clips totaling 3.5 min — under the 7 min long-form floor. Ship 2 shorts individually."
+      },
+      "recordedAt": "2026-10-29T16:46:52.409Z"
+    },
+    {
+      "sourceVideoId": "POXgmQxKj0Y",
+      "clipPath": "work/clipper/polished/clip-01_5120-5210.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "HALLELUJAH CHALLENGE || OCT 2026 || DAY 24",
+        "sourceChannel": "Nathaniel Bassey Main",
+        "clipScore": 70,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio"
+        ],
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "decisionFormat": "shorts",
+        "decisionRationale": "2 passing clips totaling 3.5 min — under the 7 min long-form floor. Ship 2 shorts individually."
+      },
+      "recordedAt": "2026-10-29T16:46:52.404Z"
+    },
+    {
       "sourceVideoId": "SvCnXn1Vyq8",
       "kind": "rejected",
       "context": {
