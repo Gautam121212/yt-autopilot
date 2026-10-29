@@ -27,12 +27,21 @@ export type AttributionOpts = { channel: string; title: string };
 function escDrawtext(s: string, maxChars = 100): string {
   let text = s;
   if (text.length > maxChars) text = text.slice(0, maxChars - 1).trimEnd() + "…";
+  // M13.1 — ffmpeg filtergraph parsing of drawtext text with ESCAPED colons/commas was wedging
+  // on titles like "BREAKING: New Canada-U.S. Trade Deal..." in trial #7: the escape sequence
+  // `\\:` is correct per docs but the chain parser downstream choked. Sidestep the whole mess
+  // by substituting visually-identical Unicode variants that are NOT filtergraph specials.
+  //   :  →  ꞉ (U+A789 Modifier Letter Colon)
+  //   ,  →  ‚ (U+201A Single Low-9 Quotation Mark — reads like a tiny comma)
+  //   %  →  ％ (U+FF05 Fullwidth Percent Sign)
+  //   '  →  ’ (U+2019 Right Single Quotation Mark)
+  //   \  →  dropped (never a legitimate user glyph in a title)
   return text
-    .replace(/\\/g, "\\\\\\\\")   // \ → \\\\
-    .replace(/:/g, "\\\\:")       // : → \\:
-    .replace(/'/g, "\\u2019")     // ' → right-single-quote (safer than escape for drawtext)
-    .replace(/,/g, "\\\\,")       // , → \\,
-    .replace(/%/g, "\\\\%");      // % → \\%
+    .replace(/\\/g, "")
+    .replace(/:/g, "꞉")
+    .replace(/,/g, "‚")
+    .replace(/%/g, "％")
+    .replace(/'/g, "’");
 }
 
 /** M6 — layout decision passed down from crop-safety:
