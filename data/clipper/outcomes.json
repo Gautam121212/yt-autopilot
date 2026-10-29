@@ -2,6 +2,30 @@
   "version": 1,
   "records": [
     {
+      "sourceVideoId": "lltPSOBtQq0",
+      "clipPath": "work/clipper/polished/clip-01_316-556.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "The Worst Barbie Movie I've Ever Seen",
+        "sourceChannel": "imactuallyLazy",
+        "clipScore": 70,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio"
+        ],
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "decisionFormat": "long",
+        "decisionRationale": "1 passing clips totaling 4.0 min — under the 7 min long-form floor. Ship 1 shorts individually."
+      },
+      "recordedAt": "2026-10-29T10:12:11.714Z"
+    },
+    {
       "sourceVideoId": "1Ejm-eWBrZE",
       "kind": "rejected",
       "context": {
