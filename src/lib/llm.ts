@@ -565,8 +565,39 @@ export async function askJson<T>(o: {
         const m = needsSightNamed ? usableNamed.vision! : (o.tier === "heavy" ? usableNamed.heavy : usableNamed.light);
         console.log(`    [llm] ${o.role} -> ${namedName} (${m})`);
         try {
-          const out = await openaiCompatible(m, o.system, body, Math.min(budget, o.maxTokens ?? 16000),
+          // M13 — transient-retry wrapper around the named primary. Rate-limit and truncation
+          // are already handled by the outer attempt loop. This handles the OTHER failure modes
+          // that caused trial #6's narrative classifier to silently drop to Gemini on every call:
+          // network resets, upstream 5xx, DNS blips, request timeouts, and the catch-all
+          // "openai-compat failed after N tries" from withRetry. Up to 2 extra tries with
+          // exponential backoff before letting the error bubble up to the fallback path.
+          const callNamed = () => openaiCompatible(m, o.system, body, Math.min(budget, o.maxTokens ?? 16000),
             o.images, timeoutFor(o.tier), usableNamed.baseUrl, usableNamed.key, o.visionMaxTokens);
+          let out: string;
+          try {
+            out = await callNamed();
+          } catch (transient) {
+            const tmsg = (transient as Error).message || "";
+            const isTransient = !(transient instanceof RateLimitError)
+              && !(transient instanceof TruncatedError)
+              && !isAuthError(tmsg)
+              && !/\b402\b|insufficient credits|requires more credits/i.test(tmsg)
+              && /ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|network|fetch failed|aborted|timeout|socket hang up|\b5\d\d\b|openai-compat failed/i.test(tmsg);
+            if (!isTransient) throw transient;
+            // Two extra tries with 2s then 6s backoff. If still failing after that, the next
+            // provider gets a crack (or we fall through to Gemini).
+            const waits = [2000, 6000];
+            let lastTransientErr: Error = transient as Error;
+            let settled = false;
+            for (const w of waits) {
+              console.warn(`    [llm] ${namedName} transient failure (${tmsg.slice(0, 100)}); waiting ${w}ms and retrying it`);
+              await new Promise((r) => setTimeout(r, w));
+              try { out = await callNamed(); settled = true; break; }
+              catch (tr2) { lastTransientErr = tr2 as Error; }
+            }
+            if (!settled) throw lastTransientErr;
+            out = out!;
+          }
           try { raw = extractJson(out); } catch (e) { raw = undefined; lastErr = (e as Error).message; }
           const lastChance = attempt === 3 && o.role !== "write";
           if (raw === undefined && lastChance) {

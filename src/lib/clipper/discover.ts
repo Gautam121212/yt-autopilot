@@ -74,6 +74,11 @@ export type DiscoveredVideo = {
   categoryId: string;
   regionSource?: string;    // region that surfaced it in trending
   thumbnails?: Record<string, { url: string; width: number; height: number }>;
+  /** M13 — YouTube snippet language hints. Either/both may be present. We prefer defaultAudioLanguage
+   *  (what the audience hears) over defaultLanguage (metadata locale). Used to hard-reject non-English
+   *  videos at filter time, after the Gambian-Mandinka clip slipped through in trial #6. */
+  defaultAudioLanguage?: string;
+  defaultLanguage?: string;
   /** Composite score (higher = more viral-worthy). Derived in rank(). */
   score?: number;
   /** Signal breakdown for the log. */
@@ -93,7 +98,7 @@ async function videosList(apiKey: string, ids: string[]): Promise<DiscoveredVide
     const r = await fetchOk(url, { method: "GET" });
     const data = await r.json() as { items: Array<{
       id: string;
-      snippet: { title: string; channelId: string; channelTitle: string; publishedAt: string; categoryId: string; thumbnails?: Record<string, { url: string; width: number; height: number }> };
+      snippet: { title: string; channelId: string; channelTitle: string; publishedAt: string; categoryId: string; defaultAudioLanguage?: string; defaultLanguage?: string; thumbnails?: Record<string, { url: string; width: number; height: number }> };
       statistics: { viewCount?: string; likeCount?: string; commentCount?: string };
       contentDetails: { duration: string };
     }> };
@@ -109,6 +114,8 @@ async function videosList(apiKey: string, ids: string[]): Promise<DiscoveredVide
         likeCount: Number(it.statistics.likeCount ?? 0),
         commentCount: Number(it.statistics.commentCount ?? 0),
         categoryId: it.snippet.categoryId,
+        defaultAudioLanguage: it.snippet.defaultAudioLanguage,
+        defaultLanguage: it.snippet.defaultLanguage,
         thumbnails: it.snippet.thumbnails,
       });
     }
@@ -136,7 +143,7 @@ async function trendingInRegion(apiKey: string, regionCode: string, max: number,
   const r = resp;
   const data = await r.json() as { items: Array<{
     id: string;
-    snippet: { title: string; channelId: string; channelTitle: string; publishedAt: string; categoryId: string; thumbnails?: Record<string, { url: string; width: number; height: number }> };
+    snippet: { title: string; channelId: string; channelTitle: string; publishedAt: string; categoryId: string; defaultAudioLanguage?: string; defaultLanguage?: string; thumbnails?: Record<string, { url: string; width: number; height: number }> };
     statistics: { viewCount?: string; likeCount?: string; commentCount?: string };
     contentDetails: { duration: string };
   }> };
@@ -151,6 +158,8 @@ async function trendingInRegion(apiKey: string, regionCode: string, max: number,
     likeCount: Number(it.statistics.likeCount ?? 0),
     commentCount: Number(it.statistics.commentCount ?? 0),
     categoryId: it.snippet.categoryId,
+    defaultAudioLanguage: it.snippet.defaultAudioLanguage,
+    defaultLanguage: it.snippet.defaultLanguage,
     regionSource: regionCode,
     thumbnails: it.snippet.thumbnails,
   }));
@@ -437,6 +446,38 @@ function matchesLifestyleBlocklist(title: string, channel: string): string | nul
   return null;
 }
 
+/** M13 — English-only gate. Trial #6 shipped a Mandinka-language Gambian film because the narrative
+ *  classifier failed on quota and no language check ran. Two checks:
+ *   1) YouTube's own snippet.defaultAudioLanguage / defaultLanguage. "en", "en-US", "en-GB" pass.
+ *      Any other explicit tag (hi, ta, ur, bn, es, pt, fr, ar, zh, …) rejects. Field is often absent;
+ *      a missing field alone does NOT reject — we fall through to script detection.
+ *   2) Title script fingerprint. If a title's non-space characters are >=40% in a non-Latin script
+ *      (Devanagari, Tamil, Bengali, Telugu, Gurmukhi, Malayalam, Kannada, Gujarati, Odia,
+ *      Arabic/Persian, Hebrew, Thai, CJK Han/Hangul/Hiragana/Katakana, Cyrillic, Greek), reject.
+ *      Latin + emoji + punctuation + a few romanised foreign words still pass. The threshold is
+ *      generous because MrBeast titles sometimes have one Hindi/Mandarin word for a thumbnail hook.
+ */
+const NON_LATIN_SCRIPT_RE = /[Ѐ-ӿͰ-Ͽ֐-׿؀-ۿݐ-ݿऀ-ॿঀ-৿਀-੿઀-૿଀-୿஀-௿ఀ-౿ಀ-೿ഀ-ൿ฀-๿぀-ゟ゠-ヿ㐀-䶿一-鿿가-힯]/g;
+const NON_LATIN_SCRIPT_REJECT_RATIO = 0.40;
+
+/** Returns a reason string if the video is NOT English, or null if it passes. */
+function matchesNonEnglish(v: DiscoveredVideo): string | null {
+  // 1) Explicit language tag — authoritative when present.
+  const langs = [v.defaultAudioLanguage, v.defaultLanguage].filter((x): x is string => !!x);
+  for (const lang of langs) {
+    const code = lang.toLowerCase().split("-")[0];
+    if (code && code !== "en") return `lang=${lang}`;
+  }
+  // 2) Title script fingerprint — catches videos with no language tag.
+  const titleNoSpace = v.title.replace(/\s+/g, "");
+  if (titleNoSpace.length === 0) return null;
+  const nonLatinMatches = titleNoSpace.match(NON_LATIN_SCRIPT_RE);
+  const nonLatinChars = nonLatinMatches ? nonLatinMatches.length : 0;
+  const ratio = nonLatinChars / titleNoSpace.length;
+  if (ratio >= NON_LATIN_SCRIPT_REJECT_RATIO) return `non-latin-script-ratio=${ratio.toFixed(2)}`;
+  return null;
+}
+
 /** Hard filters applied before ranking: duration band, min views, dedupe, blacklist, lifestyle. */
 export async function filter(videos: DiscoveredVideo[], cfg: DiscoverConfig): Promise<DiscoveredVideo[]> {
   const minViews = cfg.minViews ?? 100_000;
@@ -447,12 +488,16 @@ export async function filter(videos: DiscoveredVideo[], cfg: DiscoverConfig): Pr
   const out: DiscoveredVideo[] = [];
   let blockedByLifestyle = 0;
   let blockedByGossip = 0;
+  let blockedByLanguage = 0;
   for (const v of videos) {
     if (seen.has(v.id)) continue;
     if (v.viewCount < minViews) continue;
     if (daysSince(v.publishedAt) > maxAgeDays) continue;
     if (v.durationSec < minD || v.durationSec > maxD) continue;
     if (await isReviewed(v.id)) continue;
+    // M13 — English-only gate. Checked BEFORE lifestyle/gossip so stats are accurate.
+    const nonEn = matchesNonEnglish(v);
+    if (nonEn) { blockedByLanguage++; continue; }
     const match = matchesLifestyleBlocklist(v.title, v.channelTitle);
     if (match) { blockedByLifestyle++; continue; }
     // M10.3 — celebrity-gossip gate. Reject if ANY gossip term matches AND no genre keyword
@@ -464,6 +509,7 @@ export async function filter(videos: DiscoveredVideo[], cfg: DiscoverConfig): Pr
     seen.add(v.id);
     out.push(v);
   }
+  if (blockedByLanguage) console.log(`[discover] rejected ${blockedByLanguage} non-English videos (lang tag or non-latin script)`);
   if (blockedByLifestyle) console.log(`[discover] rejected ${blockedByLifestyle} lifestyle/vlog videos (title/channel match)`);
   if (blockedByGossip) console.log(`[discover] rejected ${blockedByGossip} celebrity-gossip videos (gossip term, no genre keyword)`);
   return out;

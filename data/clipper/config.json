@@ -1,6 +1,7 @@
 {
   "_comment": "Discovery config. Edit the channels[] array and regions as you want. The default niches match the YouTube categories people engage with most (podcasts/interviews, entertainment, comedy, news, music). Set apiKey via YT_API_KEY env var — never in this file.",
-  "regionCodes": ["IN", "US", "GB"],
+  "_regionsNote": "English-speaking markets only. IN was dropped M13 because it was pulling Hindi/Mandinka/foreign-language content past the pre-ship scorer.",
+  "regionCodes": ["US", "GB", "CA", "AU"],
   "categoryIds": ["22", "24", "23", "25", "10"],
   "_categoryNames": {
     "22": "People & Blogs (podcasts/interviews)",

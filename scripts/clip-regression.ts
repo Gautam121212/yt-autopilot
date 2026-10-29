@@ -125,17 +125,26 @@ async function m4Short03Test(samplesDir: string): Promise<TestResult[]> {
 async function discoverBlocklistTest(): Promise<TestResult[]> {
   const { filter } = await import("../src/lib/clipper/discover.js");
   const now = new Date(Date.now() - 86_400_000).toISOString();
-  const cases = [
+  const cases: Array<{ id: string; title: string; channelTitle: string; mustReject: boolean; label: string; defaultAudioLanguage?: string; defaultLanguage?: string }> = [
     { id: "f1", title: "A Day In My Chateau Life", channelTitle: "Random Channel", mustReject: true, label: "chateau in title" },
     { id: "f2", title: "Renovating the Dining Room", channelTitle: "The Chateau Diaries", mustReject: true, label: "The Chateau Diaries channel" },
     { id: "f3", title: "GRWM for the awards show", channelTitle: "SomeOne", mustReject: true, label: "GRWM" },
     { id: "f4", title: "I Spent 100 Hours in a Shark Cage", channelTitle: "Mark Rober", mustReject: false, label: "shark-cage challenge" },
     { id: "f5", title: "World's Largest 100-Person Dodgeball Tournament", channelTitle: "Dude Perfect", mustReject: false, label: "dodgeball tournament" },
+    // M13 — English-only gate. First four MUST reject (non-English). Last two MUST keep (English).
+    { id: "e1", title: "JINNALA || Season 3 || Episode 24 || Gambian Movie", channelTitle: "Gam Pulse Studio", mustReject: true, label: "trial-#6 Mandinka film (lang tag)", defaultAudioLanguage: "mnk" },
+    { id: "e2", title: "मैंने 50 घंटे पानी में बिताए — पैसे जीतने के लिए", channelTitle: "Hindi Challenge Channel", mustReject: true, label: "Devanagari (Hindi) title ≥40%" },
+    { id: "e3", title: "我花了100个小时做疯狂挑战", channelTitle: "CN Channel", mustReject: true, label: "Chinese title ≥40%" },
+    { id: "e4", title: "100 Horas de Experimento Louco com $1,000,000", channelTitle: "BR Channel", mustReject: true, label: "Portuguese via lang tag", defaultLanguage: "pt-BR" },
+    { id: "e5", title: "I Spent 50 Hours Surviving Hidden Challenge", channelTitle: "Mark Rober", mustReject: false, label: "English keep (no lang tag)" },
+    { id: "e6", title: "World's Largest Reaction Experiment", channelTitle: "Dude Perfect", mustReject: false, label: "English + en-US lang tag", defaultAudioLanguage: "en-US" },
   ];
   const videos = cases.map((c) => ({
     id: c.id, title: c.title, channelId: "UC" + c.id, channelTitle: c.channelTitle,
     publishedAt: now, durationSec: 30 * 60, viewCount: 500_000,
     likeCount: 10_000, commentCount: 500, categoryId: "22",
+    defaultAudioLanguage: c.defaultAudioLanguage,
+    defaultLanguage: c.defaultLanguage,
   }));
   const kept = await filter(videos, { apiKey: "", regionCodes: [] });
   const keptIds = new Set(kept.map((v) => v.id));
