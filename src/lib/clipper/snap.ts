@@ -22,12 +22,25 @@ import { promisify } from "node:util";
 const exec = promisify(execFile);
 
 const SEARCH_WINDOW_SEC = 5.0;      // M10.4: widened 2→5s so we can REACH a real sentence
+// M14.1 — the clip END may extend BEYOND the planned window if a cleaner sentence-end lives there.
+// Trial #7b landed at 239.98s on a 240.04s window because snap had only 5s to search inside the
+// planned end — the natural end-of-thought was likely ~5-20s later and we clipped mid-sentence.
+// Allowing extension (bounded) fixes the "ends on awkward moment" complaint without blowing the
+// shorts/long duration envelope: assemble.ts has its own ceilings (long: ~300s, shorts: ~75s).
+const SEARCH_EXTEND_END_SEC = 20.0;
+const SEARCH_EXTEND_START_SEC = 5.0;  // can only trim intro, never extend before 0
 const SILENCE_NOISE_DB = -30;       // what we count as "silence"
 const SILENCE_MIN_SEC = 0.25;       // ignore clicks; need at least 250ms of continuous silence
+// M14.1 — a GREAT end-of-thought is followed by a long pause. 500ms+ = presenter is done making
+// their point. Used to score candidate end positions (longer pause = better).
+const LONG_PAUSE_SEC = 0.5;
 const SENTENCE_END_RE = /[.!?](["')\]]*)\s*$/;
 // M10.4: hook-starter cues — a cue begins a strong hook if its text starts with one of these.
 // We prefer them for the start boundary over a plain sentence-start.
 const HOOK_STARTER_RE = /^(so|now|watch|look|here|this|wait|okay|and then|first|if you|imagine|what if|the thing is|the problem|here['’]s|let me|guess what|you['’]ll never|turns out)\b/i;
+// M14.1 — if the cue IMMEDIATELY AFTER our chosen end starts with one of these, the "sentence end"
+// we picked is actually a comma dressed up as a period — the speaker was mid-thought. Reject.
+const CONJUNCTION_LEAD_RE = /^(and|but|so|because|which|that|who|where|then|also|although|though|yet|however|moreover|plus|still|anyway|or)\b/i;
 
 type SilenceRange = { start: number; end: number };
 type Cue = { startSec: number; endSec: number; text: string; endsAtSentence: boolean; isHookStart: boolean };
@@ -81,15 +94,53 @@ function pickSentenceStart(cues: Cue[], earliest: number, latest: number): numbe
   return Math.max(...pool.map((s) => s.t));
 }
 
-/** M10.4 — pick the clip END within [earliest, latest]. A good end is where a cue ENDS a
- *  sentence — the viewer leaves on a complete thought, no mid-word cut, no dangling conjunction.
- *  Returns the EARLIEST valid end (so we don't tack on dead space after the payoff). */
-function pickSentenceEnd(cues: Cue[], earliest: number, latest: number): number | null {
-  const ends = cues
-    .filter((c) => c.endsAtSentence && c.endSec >= earliest && c.endSec <= latest)
-    .map((c) => c.endSec);
-  if (!ends.length) return null;
-  return Math.min(...ends);
+/** M10.4 + M14.1 — pick the clip END within [earliest, latest]. A good end is where:
+ *   1. The current cue ends with sentence-terminal punctuation (period/question/exclaim).
+ *   2. The NEXT cue (if any) does NOT start with a conjunction — "but/and/so/..." means the
+ *      speaker was mid-thought and we picked a decorated comma.
+ *   3. The gap AFTER this cue is LONG (≥500ms) — presenter paused, which is where editors cut.
+ *
+ *  Each candidate is scored (longer-pause + non-conjunction-next = higher). Ties broken by
+ *  taking the one CLOSEST to `preferred` so we don't massively extend or shrink unless we have to.
+ *  Trial #7b landed on a 60ms-shift end — now we can extend to the real pause 1-15s later. */
+function pickSentenceEnd(
+  cues: Cue[],
+  earliest: number,
+  latest: number,
+  preferred: number,
+  silences: SilenceRange[] = [],
+): number | null {
+  type Candidate = { t: number; score: number; distFromPreferred: number; reason: string };
+  const candidates: Candidate[] = [];
+  for (let i = 0; i < cues.length; i++) {
+    const cur = cues[i]!;
+    if (!cur.endsAtSentence) continue;
+    if (cur.endSec < earliest || cur.endSec > latest) continue;
+    const next = cues[i + 1];
+    // Pause length = gap between this cue's end and the next cue's start. If there is no
+    // next cue (end of SRT), approximate by any detected silence that starts at or after this
+    // cue's end.
+    let pauseLen = next ? Math.max(0, next.startSec - cur.endSec) : Infinity;
+    if (!next) {
+      const trailingSilence = silences.find((s) => s.start >= cur.endSec - 0.1 && s.start < cur.endSec + 2);
+      if (trailingSilence) pauseLen = trailingSilence.end - trailingSilence.start;
+    }
+    const nextStartsWithConj = next ? CONJUNCTION_LEAD_RE.test(next.text) : false;
+    if (nextStartsWithConj) continue;                 // M14.1 — hard reject conjunction-lead
+    // Score: 2 if pause >= LONG_PAUSE_SEC (real end-of-thought), 1 if any pause, 0 if dense.
+    const pauseScore = pauseLen >= LONG_PAUSE_SEC ? 2 : pauseLen > 0.15 ? 1 : 0;
+    candidates.push({
+      t: cur.endSec,
+      score: pauseScore,
+      distFromPreferred: Math.abs(cur.endSec - preferred),
+      reason: pauseLen >= LONG_PAUSE_SEC ? `long-pause(${pauseLen.toFixed(2)}s)` : `pause(${pauseLen.toFixed(2)}s)`,
+    });
+  }
+  if (!candidates.length) return null;
+  // Sort by score DESC, then by distFromPreferred ASC. Highest-score candidate closest to the
+  // planned end wins. If several share the top score, the one needing the smallest shift wins.
+  candidates.sort((a, b) => b.score - a.score || a.distFromPreferred - b.distFromPreferred);
+  return candidates[0]!.t;
 }
 
 async function detectSilences(inputPath: string): Promise<SilenceRange[]> {
@@ -130,11 +181,20 @@ export async function snapToSilence(inputPath: string, outDir: string, srtPath?:
   let endSec = dur;
   let strategy = "silence-only";
 
-  // M10.4 — PRIMARY path: cue-driven sentence boundaries. Only engages when the SRT is
-  // informative (≥3 cues, ≥1 sentence-end in each half of the search window).
+  // M10.4 + M14.1 — PRIMARY path: cue-driven sentence boundaries.
+  //   The on-disk clip now carries EXTRACT_TAIL_BUFFER_SEC extra footage past the LLM-picked
+  //   end (extract.ts adds it). Planned end ≈ dur − 20s. Snap can land anywhere in a wide
+  //   window around that planned end:
+  //     Start: [0, +5s] from the clip start — trim intro only.
+  //     End:   [planned − 5s, dur] — can EXTEND up to +20s into the tail to catch a long
+  //            pause end-of-thought. Scoring prefers long-pause + no-conjunction-next;
+  //            ties prefer the position closest to the planned end so we don't drift far.
   if (cues.length >= 3) {
-    const startPick = pickSentenceStart(cues, 0, SEARCH_WINDOW_SEC);
-    const endPick = pickSentenceEnd(cues, dur - SEARCH_WINDOW_SEC, dur);
+    const plannedEnd = Math.max(0, dur - 20.0);        // where the LLM originally wanted to end
+    const startPick = pickSentenceStart(cues, 0, SEARCH_EXTEND_START_SEC);
+    const endSearchLo = Math.max(0, plannedEnd - SEARCH_WINDOW_SEC);
+    const endSearchHi = dur;                           // honor the tail buffer in full
+    const endPick = pickSentenceEnd(cues, endSearchLo, endSearchHi, plannedEnd, silences);
     if (startPick !== null && endPick !== null && endPick - startPick >= 10) {
       startSec = startPick;
       endSec = endPick;
@@ -144,6 +204,7 @@ export async function snapToSilence(inputPath: string, outDir: string, srtPath?:
 
   // FALLBACK — M8.5 silence snap biased toward sentence boundaries.
   if (strategy === "silence-only" && silences.length) {
+    const plannedEnd = Math.max(0, dur - 20.0);        // M14.1 — respect extract tail buffer
     const sentenceEnds = cues.filter((c) => c.endsAtSentence).map((c) => c.endSec);
     const sentenceStarts = cues.filter((c, i) => (i === 0 || cues[i - 1]!.endsAtSentence)).map((c) => c.startSec);
     let startCandidates = silences.filter((s) => s.end <= SEARCH_WINDOW_SEC).map((s) => s.end);
@@ -152,12 +213,16 @@ export async function snapToSilence(inputPath: string, outDir: string, srtPath?:
       if (aligned.length) startCandidates = aligned;
     }
     startSec = startCandidates.length ? Math.max(...startCandidates) : 0;
-    let endCandidates = silences.filter((s) => s.start >= dur - SEARCH_WINDOW_SEC).map((s) => s.start);
+    // End can live anywhere in [plannedEnd − 5s, dur] — a long silence beyond plannedEnd is fine.
+    let endCandidates = silences.filter((s) => s.start >= plannedEnd - SEARCH_WINDOW_SEC && s.start <= dur).map((s) => s.start);
     if (sentenceEnds.length) {
       const aligned = endCandidates.filter((t) => sentenceEnds.some((se) => Math.abs(se - t) < 0.3));
       if (aligned.length) endCandidates = aligned;
     }
-    endSec = endCandidates.length ? Math.min(...endCandidates) : dur;
+    // Prefer the end CLOSEST to plannedEnd (either side), not just the earliest.
+    endSec = endCandidates.length
+      ? endCandidates.reduce((best, t) => Math.abs(t - plannedEnd) < Math.abs(best - plannedEnd) ? t : best, endCandidates[0]!)
+      : dur;
     strategy = "silence-biased";
   }
 

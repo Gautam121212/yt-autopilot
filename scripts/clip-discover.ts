@@ -17,7 +17,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { discover, type DiscoverConfig, type DiscoveredVideo } from "../src/lib/clipper/discover.js";
+import { discover, writeCandidateReport, type DiscoverConfig, type DiscoveredVideo } from "../src/lib/clipper/discover.js";
 import { upsert } from "../src/lib/clipper/state.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -79,8 +79,16 @@ async function main() {
     const p = picks[i]!;
     const mins = Math.round(p.durationSec / 60);
     const vpdK = Math.round((p.signals?.views_per_day ?? 0) / 1000);
-    console.log(`  ${String(i + 1).padStart(2)}  ${p.id}  score=${Math.round((p.score ?? 0) * 10) / 10}  ${vpdK}k v/day  ${mins}min  "${p.title.slice(0, 70)}"`);
+    const topicStr = p.topics?.length ? ` [${p.topics.join("/")}]` : "";
+    const s100 = p.score100 !== undefined ? ` score100=${p.score100}` : "";
+    console.log(`  ${String(i + 1).padStart(2)}  ${p.id}  score=${Math.round((p.score ?? 0) * 10) / 10}${s100}  ${vpdK}k v/day  ${mins}min${topicStr}  "${p.title.slice(0, 70)}"`);
   }
+
+  // M14.3 — write the candidate report BEFORE committing to the queue so a run that fails
+  // downstream still leaves evidence of what was picked and why.
+  const reportPath = path.resolve("work/clipper/candidate-report.md");
+  await writeCandidateReport(picks, reportPath);
+  console.log(`\n✓ wrote candidate report: ${reportPath} (+ .json sibling)`);
 
   if (dry) { console.log("\n(dry run — queue and state not touched)"); return; }
 

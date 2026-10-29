@@ -108,6 +108,16 @@ jobs:
               echo "hasPick=0" >> $GITHUB_OUTPUT
             fi
           fi
+      # M14.3 — surface the candidate report as an artifact so the user can see WHY each
+      # candidate was ranked. Only runs when discover produced one (not for direct-URL mode).
+      - name: Upload candidate report
+        if: always() && hashFiles('work/clipper/candidate-report.md') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-report
+          path: |
+            work/clipper/candidate-report.md
+            work/clipper/candidate-report.json
 
   # ────────────── Job 2: plan — LLM pick (self-hosted mac, native browser cookies) ─────
   # Runs on the Mac because the caption fetch needs YouTube auth. Mac has Safari logged in, so we

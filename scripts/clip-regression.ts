@@ -138,6 +138,12 @@ async function discoverBlocklistTest(): Promise<TestResult[]> {
     { id: "e4", title: "100 Horas de Experimento Louco com $1,000,000", channelTitle: "BR Channel", mustReject: true, label: "Portuguese via lang tag", defaultLanguage: "pt-BR" },
     { id: "e5", title: "I Spent 50 Hours Surviving Hidden Challenge", channelTitle: "Mark Rober", mustReject: false, label: "English keep (no lang tag)" },
     { id: "e6", title: "World's Largest Reaction Experiment", channelTitle: "Dude Perfect", mustReject: false, label: "English + en-US lang tag", defaultAudioLanguage: "en-US" },
+    // M14.2 — strict topic taxonomy gate. First two MUST reject (English + no category match).
+    // Last two MUST keep (clearly match a category).
+    { id: "t1", title: "Monday Thoughts on Local Pond Fish", channelTitle: "Some Random Guy", mustReject: true, label: "no-topic (random pond, no category)" },
+    { id: "t2", title: "Driving around my neighborhood for 10 minutes", channelTitle: "Nobody Famous", mustReject: true, label: "no-topic (idle driving)" },
+    { id: "t3", title: "She was reunited with her mother after 20 years", channelTitle: "Random Channel", mustReject: false, label: "topic: human-interest" },
+    { id: "t4", title: "I built a working jetpack from scratch", channelTitle: "Experiment Channel", mustReject: false, label: "topic: experiments+transformations" },
   ];
   const videos = cases.map((c) => ({
     id: c.id, title: c.title, channelId: "UC" + c.id, channelTitle: c.channelTitle,

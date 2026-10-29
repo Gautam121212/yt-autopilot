@@ -79,8 +79,21 @@ export type DiscoveredVideo = {
    *  videos at filter time, after the Gambian-Mandinka clip slipped through in trial #6. */
   defaultAudioLanguage?: string;
   defaultLanguage?: string;
+  /** M14.2 — matched topic categories per the 10-category taxonomy. Populated in filter(). */
+  topics?: TopicCategory[];
   /** Composite score (higher = more viral-worthy). Derived in rank(). */
   score?: number;
+  /** M14.3 — 100-pt scaled score with named subscores, per spec D. Populated after enrich. */
+  score100?: number;
+  subscores?: {
+    hook: number;              // 0-25
+    suspense: number;          // 0-20
+    clarity: number;           // 0-15
+    payoff: number;            // 0-15
+    vertical: number;          // 0-10
+    trend: number;             // 0-10
+    replay: number;            // 0-5
+  };
   /** Signal breakdown for the log. */
   signals?: Record<string, number>;
 };
@@ -357,28 +370,105 @@ const CREATOR_ALLOWLIST = new Set<string>([
 ]);
 const CREATOR_BONUS = 1.5;
 
-/** M7.1 — genre keywords that signal viral-worthy content. Each hit adds flat points to score.
- *  Chosen to match the spec's "challenges, experiments, competitions, stunts, reactions". */
-const GENRE_KEYWORDS = [
-  // Challenge framings
-  "challenge", "challenged", "challenging",
-  "100 vs ", "1 vs ", "vs 100", "vs 10", "world's ", "worlds ",
-  "last to leave", "last one standing", "survive", "surviving", "survived",
-  // Experiment / money
-  "i tried", "i spent", "i gave", "i bought", "i built", "i made", "i ate",
-  "$10000", "$100000", "$1000000", "$1,000,000", "$1 vs ", "cheapest vs ",
-  "most expensive", "trillion", "billion dollar",
-  // Competition / stunt
-  "tournament", "competition", "championship", "world record",
-  "impossible", "extreme", "insane", "crazy", "stunt", "trick shot", "no scope",
-  // Reaction / surprise
-  "reaction", "reacts to", "reacting to", "surprised", "surprise ",
-  "shocked", "unexpected", "plot twist",
-  // Entertainment storytelling
-  "story time", "went wrong", "we did it", "finally", "first time",
-] as const;
-const GENRE_KEYWORD_POINTS = 20;             // M10.3 raised 8→20 — spec explicitly asks for these genres
-const GENRE_KEYWORD_CAP = 3;
+/** M14.2 — strict 10-category topic taxonomy (per spec section A). Each category has its own
+ *  keyword cluster. A candidate is ELIGIBLE only if its title/channel matches at least one
+ *  category — otherwise it's rejected at filter time (even if it was trending in a region).
+ *  This replaces M7.1's additive-only genre bonus with an eligibility gate PLUS a bonus.
+ *  Order of listing matches the spec's taxonomy exactly so category tags remain readable in
+ *  the candidate report. */
+export const TOPIC_CATEGORIES = {
+  // 1. Extreme challenges, competitions, survival tests, prize-based contests.
+  "challenges": [
+    "challenge", "challenged", "challenging",
+    "100 vs ", "1 vs ", "vs 100", "vs 10", "last to leave", "last one standing",
+    "survive", "surviving", "survived", "survival",
+    "tournament", "competition", "championship", "$10000", "$100000", "$1000000", "$1,000,000",
+    "cheapest vs ", "most expensive", "$1 vs ", "prize", "winner takes",
+  ],
+  // 2. Incredible skills, trick shots, stunts, records, satisfying achievements.
+  "skills-stunts": [
+    "trick shot", "trickshot", "no scope", "stunt", "stunts",
+    "world record", "world's largest", "world's smallest", "world's longest",
+    "worlds largest", "worlds smallest", "worlds longest",
+    "impossible shot", "insane shot", "crazy shot", "first ever", "nobody has",
+    "mastered", "perfect", "flawless", "satisfying",
+  ],
+  // 3. Unexpected experiments, mysteries, myth-busting, surprising discoveries.
+  "experiments": [
+    "i tried", "i tested", "i put", "i mixed", "i built", "i made", "i ate",
+    "experiment", "experimenting", "myth", "mythbuster", "debunk",
+    "what happens if", "what if", "we tested", "we tried",
+    "secret", "mystery", "unexplained", "discovered",
+  ],
+  // 4. Funny interactions, entertaining reactions, unexpected social situations.
+  "funny-reactions": [
+    "reaction", "reacts to", "reacting to",
+    "funny", "hilarious", "comedy", "prank", "pranks", "pranked",
+    "awkward", "cringe", "roasted", "exposed on", "called out",
+    "surprised", "surprise ", "shocked", "unexpected", "plot twist",
+  ],
+  // 5. Podcast moments: compelling stories, surprising insights, meaningful disagreements.
+  "podcast-moments": [
+    "podcast", "interview", "conversation with", "sat down with",
+    "unfiltered", "candid", "told me", "revealed", "admits",
+    "controversial opinion", "unpopular opinion", "hot take",
+    "disagree", "debate", "argue", "pushed back",
+  ],
+  // 6. Sports highlights, dramatic comebacks, decisive moments, extraordinary performances.
+  "sports-highlights": [
+    "goal", "goals", "touchdown", "home run", "homerun", "slam dunk", "dunk",
+    "comeback", "upset", "overtime", "walk-off", "walk off", "buzzer beater",
+    "nba", "nfl", "fifa", "champions league", "super bowl", "world cup",
+    "match-winning", "match winning", "highlight", "highlights", "final play",
+  ],
+  // 7. Transformations, restoration, before-and-after reveals, impressive builds.
+  "transformations": [
+    "transformation", "transforming", "transformed",
+    "before and after", "before vs after", "makeover", "restore", "restored", "restoration",
+    "renovation", "renovated", "built from scratch", "we built", "custom build",
+    "reveal", "revealing", "revealed",
+  ],
+  // 8. Unusual facts, fascinating explanations, compelling demonstrations.
+  "fascinating-explainers": [
+    "did you know", "fun fact", "actually", "the truth about", "the real reason",
+    "explained", "explains", "how it works", "how to", "why do", "why does", "why we",
+    "fascinating", "unusual", "weirdest", "strangest",
+    "inside", "behind the scenes", "behind-the-scenes",
+  ],
+  // 9. Business experiments, ambitious projects, entrepreneurial lessons, money stories.
+  "business-money": [
+    "startup", "entrepreneur", "founder", "built a business", "built my business",
+    "i spent", "i gave", "i bought", "i invested", "i turned",
+    "million dollar", "trillion", "billion dollar", "net worth",
+    "business lesson", "biggest lesson", "biggest mistake", "how i made",
+    "scam", "pyramid scheme", "exposed scam",
+  ],
+  // 10. Relationship stories, human-interest moments, emotional revelations.
+  "human-interest": [
+    "proposal", "proposed to", "wedding", "reunited", "reunion", "meeting",
+    "adopted", "homeless", "rescued", "saving", "saved a",
+    "tears", "crying", "emotional", "heartfelt", "heartbreaking", "touching",
+    "stranger", "random act", "paid for", "surprise gift", "surprised my",
+  ],
+} as const satisfies Record<string, readonly string[]>;
+export type TopicCategory = keyof typeof TOPIC_CATEGORIES;
+
+const GENRE_KEYWORD_POINTS = 20;             // bonus per matched category
+const GENRE_KEYWORD_CAP = 3;                 // at most 3 categories count toward the bonus
+
+/** Classify a title into its matched categories. First-match ordering is the spec order; a
+ *  title can match multiple categories (e.g. "I spent $1,000,000 on a challenge" = business
+ *  + challenges). Empty array = NO match → eligibility gate rejects. */
+export function classifyTopics(title: string, channel: string = ""): TopicCategory[] {
+  const hay = (title + " || " + channel).toLowerCase();
+  const matched: TopicCategory[] = [];
+  for (const cat of Object.keys(TOPIC_CATEGORIES) as TopicCategory[]) {
+    for (const kw of TOPIC_CATEGORIES[cat]) {
+      if (hay.includes(kw)) { matched.push(cat); break; }
+    }
+  }
+  return matched;
+}
 
 /** M10.3 — celebrity-gossip blocklist. Trial run #2 shipped Piers Morgan tabloid coverage of
  *  Thomas Markle because News & Politics (category 25) + viral news + no narrative classifier
@@ -406,17 +496,11 @@ const PENALIZED_CATEGORIES: Record<string, number> = {
   "19": 0.8,    // Travel & Events
 };
 
-/** Count distinct genre-keyword matches in a title, capped at GENRE_KEYWORD_CAP so a stuffed
- *  title ("CHALLENGE EXPERIMENT STUNT REACTION IMPOSSIBLE") can't game the ranker. */
-function countGenreHits(title: string): number {
-  const hay = title.toLowerCase();
-  let n = 0;
-  const seen = new Set<string>();
-  for (const kw of GENRE_KEYWORDS) {
-    if (seen.has(kw)) continue;
-    if (hay.includes(kw)) { n++; seen.add(kw); if (n >= GENRE_KEYWORD_CAP) break; }
-  }
-  return n;
+/** M14.2 — count DISTINCT matched topic categories in a title, capped at GENRE_KEYWORD_CAP.
+ *  This replaces M7.1's raw keyword-hit count: a stuffed title ("CHALLENGE EXPERIMENT STUNT")
+ *  across 3 categories still only hits the cap. */
+function countGenreHits(title: string, channel: string = ""): number {
+  return Math.min(GENRE_KEYWORD_CAP, classifyTopics(title, channel).length);
 }
 
 /** M6.2 — lifestyle/vlog blocklist. The M4 run shipped three clips of a French chateau daily-vlog
@@ -489,6 +573,7 @@ export async function filter(videos: DiscoveredVideo[], cfg: DiscoverConfig): Pr
   let blockedByLifestyle = 0;
   let blockedByGossip = 0;
   let blockedByLanguage = 0;
+  let blockedByTopic = 0;
   for (const v of videos) {
     if (seen.has(v.id)) continue;
     if (v.viewCount < minViews) continue;
@@ -500,6 +585,16 @@ export async function filter(videos: DiscoveredVideo[], cfg: DiscoverConfig): Pr
     if (nonEn) { blockedByLanguage++; continue; }
     const match = matchesLifestyleBlocklist(v.title, v.channelTitle);
     if (match) { blockedByLifestyle++; continue; }
+    // M14.2 — STRICT topic taxonomy gate. A candidate must match at least one of the 10
+    // categories by title or channel keyword. "I'm just a guy filming his cat" is viral-shaped
+    // but doesn't fit the taxonomy and gets dropped. An allowlist creator skips this gate —
+    // their uploads implicitly define their category, and the narrative classifier will catch
+    // filler at the next stage. News/politics category (25) ALSO skips this gate because the
+    // category itself qualifies as journalism-type content (penalty applies elsewhere).
+    const inAllowlist = CREATOR_ALLOWLIST.has(v.channelTitle.toLowerCase());
+    const topics = classifyTopics(v.title, v.channelTitle);
+    if (!topics.length && !inAllowlist) { blockedByTopic++; continue; }
+    v.topics = topics;
     // M10.3 — celebrity-gossip gate. Reject if ANY gossip term matches AND no genre keyword
     // rescues it. ("100 celebrities VS Mr. Beast" is a challenge; "Markle allegations" is gossip.)
     const hay = (v.title + " || " + v.channelTitle).toLowerCase();
@@ -512,6 +607,7 @@ export async function filter(videos: DiscoveredVideo[], cfg: DiscoverConfig): Pr
   if (blockedByLanguage) console.log(`[discover] rejected ${blockedByLanguage} non-English videos (lang tag or non-latin script)`);
   if (blockedByLifestyle) console.log(`[discover] rejected ${blockedByLifestyle} lifestyle/vlog videos (title/channel match)`);
   if (blockedByGossip) console.log(`[discover] rejected ${blockedByGossip} celebrity-gossip videos (gossip term, no genre keyword)`);
+  if (blockedByTopic) console.log(`[discover] rejected ${blockedByTopic} videos outside the 10-category taxonomy (M14.2 strict topic gate)`);
   return out;
 }
 
@@ -634,7 +730,97 @@ export async function discover(cfg: DiscoverConfig, topN = 20): Promise<Discover
   // M8.2: LLM narrative-type classifier on the top-K. Rejects "filler" verdicts outright, boosts
   // high viralRating. Null (LLM unavailable) → signal marked "unavailable" and score unchanged.
   const classified = await enrichWithNarrative(enriched);
+  // M14.3 — compute the 100-pt scaled score with named subscores on every surviving candidate.
+  for (const v of classified) attachScore100(v);
   return classified.slice(0, topN);
+}
+
+/** M14.3 — 100-point composite score per spec D (hook 25 / suspense 20 / clarity 15 / payoff 15 /
+ *  vertical 10 / trend 10 / replay 5). Each sub-component is derived from existing signals so
+ *  it's reproducible and the breakdown is readable in the candidate report. Signals that are
+ *  genuinely unavailable (null narrative, no baseline) get 0 — NOT fabricated — per spec rule.
+ *
+ *  The underlying scalar `score` (used for sorting) is kept as-is: it mixes dozens of channel/
+ *  category/velocity factors tuned over M3-M12. This routine OVERLAYS the readable 7-dimension
+ *  view that the candidate report + the user's spec expects. */
+function attachScore100(v: DiscoveredVideo): void {
+  const s = v.signals ?? {};
+  // Narrative-classifier subscores are 0-10. Rescale to the spec's weights.
+  const nHook = (s["narrative_hook"] ?? 0) / 10;             // 0..1
+  const nNovelty = (s["narrative_novelty"] ?? 0) / 10;
+  const nPayoff = (s["narrative_payoff"] ?? 0) / 10;
+  const nClarity = (s["narrative_clarity"] ?? 0) / 10;
+  const nEmotion = (s["narrative_hook"] ?? s["narrative_novelty"] ?? 0) / 10;
+  const nViral = (s["narrative_viral"] ?? 0) / 100;          // 0..1
+  // Trend = baseline multiple + cross-platform mentions, each 0..1 then averaged.
+  const trendBaseline = Math.min(1, Math.max(0, Math.log2(Math.max(0.25, s["baseline_multiple"] ?? 1)) / 2));
+  const trendMentions = Math.min(1, Math.log10(1 + (s["cross_platform_hits"] ?? 0)) / 2);
+  const trendBlend = (trendBaseline + trendMentions) / 2;
+  // Vertical difficulty — we don't have the final crop verdict yet (it runs post-extract on
+  // the actual pixels). Approximate: category 10 (Music), 17 (Sports), 20 (Gaming) are high-
+  // motion / vertical-friendly; 25 (News) is talking-head and typically mid; defaults to 0.7.
+  const verticalByCat: Record<string, number> = { "10": 0.9, "17": 0.9, "20": 0.9, "24": 0.85, "23": 0.85, "22": 0.7, "25": 0.6 };
+  const vertEase = verticalByCat[v.categoryId] ?? 0.7;
+  // Replay potential — tied to novelty + emotional intensity (high-novelty + high-emotion
+  // moments get re-watched). Signals from the narrative classifier.
+  const replay = (nNovelty + nEmotion) / 2;
+  const hook = Math.round(nHook * 25);
+  const suspense = Math.round(((nNovelty + nViral) / 2) * 20);
+  const clarity = Math.round(nClarity * 15);
+  const payoff = Math.round(nPayoff * 15);
+  const vertical = Math.round(vertEase * 10);
+  const trend = Math.round(trendBlend * 10);
+  const replayPts = Math.round(replay * 5);
+  v.subscores = { hook, suspense, clarity, payoff, vertical, trend, replay: replayPts };
+  v.score100 = hook + suspense + clarity + payoff + vertical + trend + replayPts;
+}
+
+/** M14.3 — write a human-readable candidate report to disk (markdown) alongside the structured
+ *  JSON the plan job already consumes. Called from scripts/clip-discover.ts. */
+export async function writeCandidateReport(
+  videos: DiscoveredVideo[],
+  outPath: string,
+): Promise<void> {
+  const { writeFile, mkdir } = await import("node:fs/promises");
+  await mkdir(path.dirname(outPath), { recursive: true });
+  const today = new Date().toISOString().slice(0, 10);
+  const lines: string[] = [];
+  lines.push(`# Candidate Report — ${today}`);
+  lines.push(``);
+  lines.push(`${videos.length} candidates ranked. Only those with score ≥ eligibility threshold reach the plan stage.`);
+  lines.push(``);
+  for (let i = 0; i < videos.length; i++) {
+    const v = videos[i]!;
+    const s = v.subscores;
+    const sig = v.signals ?? {};
+    lines.push(`## ${i + 1}. ${v.title}`);
+    lines.push(``);
+    lines.push(`- **Creator**: ${v.channelTitle}`);
+    lines.push(`- **URL**: https://www.youtube.com/watch?v=${v.id}`);
+    lines.push(`- **Published**: ${v.publishedAt.slice(0, 10)} · **Duration**: ${(v.durationSec / 60).toFixed(1)}min · **Views**: ${v.viewCount.toLocaleString()}`);
+    lines.push(`- **Category** (YT): ${v.categoryId} · **Topics** (M14): ${(v.topics ?? []).join(", ") || "allowlist-only"}`);
+    lines.push(`- **Score (0-100)**: ${v.score100 ?? "n/a"} ${s ? `= hook ${s.hook}/25 + suspense ${s.suspense}/20 + clarity ${s.clarity}/15 + payoff ${s.payoff}/15 + vertical ${s.vertical}/10 + trend ${s.trend}/10 + replay ${s.replay}/5` : ""}`);
+    lines.push(`- **Composite internal score** (sort key): ${(v.score ?? 0).toFixed(1)}`);
+    if (sig["baseline_multiple"]) lines.push(`- **Baseline multiple**: ${(sig["baseline_multiple"]).toFixed(2)}× channel median`);
+    if (sig["cross_platform_hits"]) lines.push(`- **Cross-platform mentions**: ${sig["cross_platform_hits"]} (Reddit + web)`);
+    if (sig["narrative_viral"] !== undefined) lines.push(`- **Narrative viral rating** (classifier): ${sig["narrative_viral"]}/100`);
+    if (sig["narrative_topicality"] !== undefined) lines.push(`- **Topicality** (today-vs-published): ${sig["narrative_topicality"]}/10`);
+    const defAudio = v.defaultAudioLanguage ?? "–";
+    lines.push(`- **Language**: audio=${defAudio} · meta=${v.defaultLanguage ?? "–"}`);
+    lines.push(``);
+  }
+  await writeFile(outPath, lines.join("\n"), "utf8");
+  // Mirror a JSON file so downstream tools don't have to parse markdown.
+  const jsonPath = outPath.replace(/\.md$/, ".json");
+  await writeFile(jsonPath, JSON.stringify(videos.map((v) => ({
+    id: v.id, title: v.title, channel: v.channelTitle,
+    url: `https://www.youtube.com/watch?v=${v.id}`,
+    publishedAt: v.publishedAt, durationSec: v.durationSec, viewCount: v.viewCount,
+    categoryId: v.categoryId, topics: v.topics ?? [],
+    score100: v.score100, subscores: v.subscores, score: v.score,
+    signals: v.signals,
+    defaultAudioLanguage: v.defaultAudioLanguage, defaultLanguage: v.defaultLanguage,
+  })), null, 2), "utf8");
 }
 
 /** M8.2 — LLM narrative classifier for top candidates. Spec section 4 scoring: hook / novelty /
