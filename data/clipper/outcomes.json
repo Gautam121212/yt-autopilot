@@ -2,6 +2,121 @@
   "version": 1,
   "records": [
     {
+      "sourceVideoId": "DRWqTb_8sgo",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "Penny Wong admits to citing inaccurate figures in UN speech criticising Israel",
+        "sourceChannel": "News24",
+        "clipScore": 70,
+        "rejectReason": "qc-fail: frozen frames: 2 stretch(es) totaling 7.6s",
+        "rejectDetails": {
+          "qcReasons": [
+            "frozen frames: 2 stretch(es) totaling 7.6s"
+          ],
+          "dims": {
+            "width": 1080,
+            "height": 1920
+          },
+          "duration": 61.1,
+          "blackRatio": 0,
+          "facesIn": 59,
+          "slicedSamples": 0
+        }
+      },
+      "recordedAt": "2026-10-29T17:14:24.712Z"
+    },
+    {
+      "sourceVideoId": "DRWqTb_8sgo",
+      "clipPath": "work/clipper/polished/clip-04_440-500.snapped.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "Penny Wong admits to citing inaccurate figures in UN speech criticising Israel",
+        "sourceChannel": "News24",
+        "clipScore": 70,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio"
+        ],
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "decisionFormat": "shorts",
+        "decisionRationale": "3 passing clips totaling 3.2 min — under the 7 min long-form floor. Ship 3 shorts individually."
+      },
+      "recordedAt": "2026-10-29T17:12:24.042Z"
+    },
+    {
+      "sourceVideoId": "DRWqTb_8sgo",
+      "clipPath": "work/clipper/polished/clip-03_21-81.snapped.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "Penny Wong admits to citing inaccurate figures in UN speech criticising Israel",
+        "sourceChannel": "News24",
+        "clipScore": 70,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio"
+        ],
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "decisionFormat": "shorts",
+        "decisionRationale": "3 passing clips totaling 3.2 min — under the 7 min long-form floor. Ship 3 shorts individually."
+      },
+      "recordedAt": "2026-10-29T17:12:24.041Z"
+    },
+    {
+      "sourceVideoId": "DRWqTb_8sgo",
+      "clipPath": "work/clipper/polished/clip-02_525-585.snapped.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "Penny Wong admits to citing inaccurate figures in UN speech criticising Israel",
+        "sourceChannel": "News24",
+        "clipScore": 70,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio"
+        ],
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "decisionFormat": "shorts",
+        "decisionRationale": "3 passing clips totaling 3.2 min — under the 7 min long-form floor. Ship 3 shorts individually."
+      },
+      "recordedAt": "2026-10-29T17:12:24.040Z"
+    },
+    {
+      "sourceVideoId": "DRWqTb_8sgo",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "Penny Wong admits to citing inaccurate figures in UN speech criticising Israel",
+        "sourceChannel": "News24",
+        "clipScore": 65,
+        "gatesFailed": [
+          "loudness",
+          "true_peak",
+          "duration_band"
+        ],
+        "criticalFails": [
+          "true_peak"
+        ],
+        "rejectReason": "critical: true_peak"
+      },
+      "recordedAt": "2026-10-29T17:12:24.032Z"
+    },
+    {
       "sourceVideoId": "POXgmQxKj0Y",
       "kind": "rejected",
       "context": {
