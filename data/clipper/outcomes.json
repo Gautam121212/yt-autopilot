@@ -2,6 +2,58 @@
   "version": 1,
   "records": [
     {
+      "sourceVideoId": "juYhWmRcrIA",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "Mystery Boogeyman?! | Final Life | Ep.1",
+        "sourceChannel": "SmallishBeans",
+        "clipScore": 50,
+        "rejectReason": "pre-ship score 5/10 < 8",
+        "rejectDetails": {
+          "preShipScore": 5,
+          "preShipDimensions": {
+            "hookFirstSecond": 2,
+            "payoffBeforeEnd": 5,
+            "standaloneClarity": 6,
+            "retentionBait": 5,
+            "emotionalPeak": 4
+          },
+          "preShipLearnReasons": [
+            "Hook is weak: opening line 'And then I said...' lacks urgency or surprise—no clear hook word or question in the first second. The 'boogeyman' reveal is buried in the second line, not immediate.",
+            "Payoff is diluted: while there are moments of mild surprise (e.g., 'Oh my gosh. Did you see the boogeyman over my head?'), they are scattered and lack a *clear* emotional or revelatory climax within the clip’s duration. The 'boogeyman' is never definitively confirmed or resolved.",
+            "StandaloneClarity is mediocre: A stranger would assume this is a *Final Life* episode (a game series) but wouldn’t grasp the stakes without prior knowledge of the show’s lore. Terms like 'Jojo,' 'Fruit Bows,' or 'donkey' require context.",
+            "RetentionBait is passive: The clip relies on vague reactions ('Oh my gosh') and repetitive phrasing ('They're running from me') without a structured narrative arc or question loop. No tension or mystery is sustained beyond fleeting moments.",
+            "EmotionalPeak is underwhelming: The highest moments ('Oh my gosh. He's got Bowie so quick.') are brief and lack catharsis, shock, or awe. The 'boogeyman' is more of a running gag than a terrifying or revelatory payoff."
+          ]
+        }
+      },
+      "recordedAt": "2026-10-31T09:56:40.133Z"
+    },
+    {
+      "sourceVideoId": "juYhWmRcrIA",
+      "clipPath": "work/clipper/polished/clip-01_2189-2429.snapped.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "Mystery Boogeyman?! | Final Life | Ep.1",
+        "sourceChannel": "SmallishBeans",
+        "clipScore": 70,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio"
+        ],
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "decisionFormat": "long",
+        "decisionRationale": "1 passing clips totaling 4.0 min — under the 7 min long-form floor. Ship 1 shorts individually."
+      },
+      "recordedAt": "2026-10-31T09:53:02.008Z"
+    },
+    {
       "sourceVideoId": "DRWqTb_8sgo",
       "kind": "rejected",
       "context": {
