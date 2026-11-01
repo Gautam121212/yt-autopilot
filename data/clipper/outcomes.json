@@ -2,6 +2,25 @@
   "version": 1,
   "records": [
     {
+      "sourceVideoId": "sOjlTJ7YgcY",
+      "kind": "rejected",
+      "context": {
+        "sourceTitle": "Mark Carney WARNS America About Trade War - Canada Can Outlast the U.S. (American Reaction)",
+        "sourceChannel": "Tyler Bucket",
+        "clipScore": 58,
+        "gatesFailed": [
+          "loudness",
+          "true_peak",
+          "duration_band"
+        ],
+        "criticalFails": [
+          "true_peak"
+        ],
+        "rejectReason": "critical: true_peak"
+      },
+      "recordedAt": "2026-11-01T10:44:00.361Z"
+    },
+    {
       "sourceVideoId": "juYhWmRcrIA",
       "kind": "rejected",
       "context": {
