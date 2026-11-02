@@ -2,6 +2,30 @@
   "version": 1,
   "records": [
     {
+      "sourceVideoId": "ZT-k42SC7L0",
+      "clipPath": "work/clipper/polished/clip-01_1294-1534.snapped.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "10,000 VS 10,000 Player Minecraft War",
+        "sourceChannel": "FlameFrags",
+        "clipScore": 70,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio"
+        ],
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "decisionFormat": "long",
+        "decisionRationale": "1 passing clips totaling 4.1 min — under the 7 min long-form floor. Ship 1 shorts individually."
+      },
+      "recordedAt": "2026-11-02T11:18:49.078Z"
+    },
+    {
       "sourceVideoId": "sOjlTJ7YgcY",
       "kind": "rejected",
       "context": {
