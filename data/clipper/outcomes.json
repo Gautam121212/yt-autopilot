@@ -2,6 +2,30 @@
   "version": 1,
   "records": [
     {
+      "sourceVideoId": "jgxfs3G9TIk",
+      "clipPath": "work/clipper/polished/clip-01_1266-1506.snapped.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "\"TREACHERY!\" El-Sayed vs Haley Stevens - Midterms Debate from DC with Mehdi Hasan & Cenk Uygur",
+        "sourceChannel": "Piers Morgan Uncensored",
+        "clipScore": 70,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio"
+        ],
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "decisionFormat": "long",
+        "decisionRationale": "1 passing clips totaling 4.1 min — under the 7 min long-form floor. Ship 1 shorts individually."
+      },
+      "recordedAt": "2026-11-04T11:06:26.633Z"
+    },
+    {
       "sourceVideoId": "ZT-k42SC7L0",
       "clipPath": "work/clipper/polished/clip-01_1294-1534.snapped.polished.mp4",
       "kind": "produced",
