@@ -2,6 +2,30 @@
   "version": 1,
   "records": [
     {
+      "sourceVideoId": "q6tFekbtzNw",
+      "clipPath": "work/clipper/polished/clip-01_594-835.snapped.polished.mp4",
+      "kind": "produced",
+      "context": {
+        "sourceTitle": "I BOUGHT MY DREAM CAR!! (2027 Rolls Royce)",
+        "sourceChannel": "FaZe Rug",
+        "clipScore": 70,
+        "gatesPassed": [
+          "clean_start",
+          "clean_end",
+          "true_peak",
+          "silence_ratio",
+          "speech_ratio"
+        ],
+        "gatesFailed": [
+          "loudness",
+          "duration_band"
+        ],
+        "decisionFormat": "long",
+        "decisionRationale": "1 passing clips totaling 4.2 min — under the 7 min long-form floor. Ship 1 shorts individually."
+      },
+      "recordedAt": "2026-11-05T11:10:33.907Z"
+    },
+    {
       "sourceVideoId": "jgxfs3G9TIk",
       "clipPath": "work/clipper/polished/clip-01_1266-1506.snapped.polished.mp4",
       "kind": "produced",
